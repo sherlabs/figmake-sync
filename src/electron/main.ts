@@ -588,8 +588,8 @@ async function bootstrap(): Promise<void> {
   service = new FigmakeSyncService({ sharedBrowserProfileDir: sharedProfileDir });
 
   if (process.platform === "darwin") {
-    app.dock.setIcon(getAppIconPath());
-    await app.dock.show();
+    app.dock?.setIcon(getAppIconPath());
+    await app.dock?.show();
   }
 
   Menu.setApplicationMenu(null);
