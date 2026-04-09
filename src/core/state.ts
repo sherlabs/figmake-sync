@@ -236,6 +236,7 @@ export class ProjectStateStore {
   private static readonly PRESERVE_ON_REPLACE = new Set([
     STATE_DIRECTORY_NAME,
     "node_modules",
+    "dist",
     ".gitignore",
     ".git",
   ]);

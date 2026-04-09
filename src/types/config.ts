@@ -7,6 +7,7 @@ export const DEFAULT_IGNORE_PATTERNS = [
   ".figmake-sync/**",
   ".git/**",
   "node_modules/**",
+  "dist/**",
   ".gitignore",
   ".DS_Store",
   "package-lock.json",
