@@ -352,6 +352,25 @@ function registerIpcHandlers(): void {
     return service.inspectProject(rootDir);
   });
 
+  ipcMain.handle(
+    "figmake:add-ignore-pattern",
+    async (_event, rootDir: string, pattern: string) => {
+      const { ProjectStateStore } = await import("../core/state.js");
+      const { updateProjectConfig } = await import("../types/config.js");
+      const store = new ProjectStateStore(rootDir);
+      const config = await store.loadProjectConfig();
+      const ignore = [...config.sync.ignore];
+      if (!ignore.includes(pattern)) {
+        ignore.push(pattern);
+        const updated = updateProjectConfig(config, {
+          sync: { ...config.sync, ignore },
+        } as Partial<typeof config>);
+        await store.saveProjectConfig(updated);
+      }
+      return { success: true };
+    },
+  );
+
   ipcMain.handle("figmake:install-browser", async () =>
     withOperationLock(async () =>
       installPlaywrightBrowser({

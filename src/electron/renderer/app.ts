@@ -376,11 +376,21 @@ function renderChanges(project: ProjectState): void {
     badge.className = `file-badge ${file.status}`;
     badge.textContent = file.status;
 
+    const ignoreBtn = document.createElement("button");
+    ignoreBtn.className = "file-ignore-btn";
+    ignoreBtn.title = `Ignore ${file.path}`;
+    ignoreBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 2l12 12M14 2L2 14" stroke-linecap="round"/></svg>`;
+    ignoreBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      void ignoreFile(project, file.path);
+    });
+
     item.innerHTML = `
       <span class="file-icon ${file.status}">${iconSvg}</span>
       <span class="file-name" title="${file.path}">${file.path.split("/").pop()}</span>
     `;
     item.appendChild(badge);
+    item.appendChild(ignoreBtn);
 
     item.addEventListener("click", () => {
       void selectFile(project, file.path, file.status);
@@ -486,6 +496,22 @@ function renderFullFile(content: string, cls: "addition" | "deletion" | "context
     const prefix = cls === "addition" ? "+" : cls === "deletion" ? "-" : " ";
     return `<div class="diff-line ${cls}"><span class="diff-line-num">${i + 1}</span><span class="diff-line-num">${cls === "addition" ? i + 1 : ""}</span><span class="diff-line-content">${prefix} ${escapeHtml(line) || " "}</span></div>`;
   }).join("");
+}
+
+async function ignoreFile(project: ProjectState, filePath: string): Promise<void> {
+  if (!project.rootDir) return;
+  const api = getDesktopApi();
+  try {
+    await api.addIgnorePattern(project.rootDir, filePath);
+    // Re-run status to refresh the changes list
+    const opts: DesktopProjectCommandOptions = { rootDir: project.rootDir, ...project.options };
+    const statusResult = await api.statusProject(opts);
+    project.lastDiff = statusResult.diff ?? null;
+    await refreshProject(project);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    alert(`Failed to ignore file:\n\n${msg}`);
+  }
 }
 
 function escapeHtml(text: string): string {

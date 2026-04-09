@@ -1584,6 +1584,27 @@ button.primary.small {
 .file-badge.deleted { background: rgb(239 68 68 / 0.15); color: var(--error); }
 .file-badge.renamed { background: rgb(245 158 11 / 0.15); color: var(--warning); }
 
+.file-ignore-btn {
+  display: none;
+  padding: 0.125rem;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  line-height: 0;
+}
+
+.file-item:hover .file-ignore-btn {
+  display: inline-flex;
+}
+
+.file-ignore-btn:hover {
+  color: var(--error);
+  background: rgb(239 68 68 / 0.1);
+}
+
 .diff-viewer {
   display: flex;
   flex-direction: column;

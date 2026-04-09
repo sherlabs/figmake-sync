@@ -43,6 +43,7 @@ export interface FigmakeDesktopApi {
   verifyProject(options: DesktopProjectCommandOptions): Promise<VerifyResult>;
   openInEditor(editor: string, path: string): Promise<{ success: boolean; error?: string }>;
   readFile(filePath: string): Promise<string>;
+  addIgnorePattern(rootDir: string, pattern: string): Promise<{ success: boolean }>;
   checkAuthStatus(): Promise<{ authenticated: boolean; profileDir: string }>;
   onProgress(listener: (event: DesktopProgressEvent) => void): () => void;
 }
