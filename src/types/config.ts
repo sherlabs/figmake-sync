@@ -7,7 +7,12 @@ export const DEFAULT_IGNORE_PATTERNS = [
   ".figmake-sync/**",
   ".git/**",
   "node_modules/**",
+  ".gitignore",
   ".DS_Store",
+  "package-lock.json",
+  "yarn.lock",
+  "pnpm-lock.yaml",
+  "bun.lock",
 ] as const;
 
 export const DEFAULT_POST_UPLOAD_PROMPT_TEMPLATE =
