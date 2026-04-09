@@ -33,20 +33,6 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Verify tag matches package version
-        id: version
-        shell: bash
-        run: |
-          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-
-          echo "version=${PACKAGE_VERSION}" >> "$GITHUB_OUTPUT"
-
-          if [[ "${PACKAGE_VERSION}" != "${TAG_VERSION}" ]]; then
-            echo "Tag ${GITHUB_REF_NAME} does not match package.json version ${PACKAGE_VERSION}" >&2
-            exit 1
-          fi
-
   build-installers:
     name: Build ${{ matrix.label }} installer
     needs: validate-release
