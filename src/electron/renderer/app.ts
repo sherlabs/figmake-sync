@@ -811,28 +811,38 @@ function checkBrowserInstalled(): void {
 
 async function installBrowser(): Promise<void> {
   const project = state.activeProjectId ? state.projects.get(state.activeProjectId) : null;
-  
+  const statusEl = document.querySelector("[data-onboarding-status]") as HTMLElement;
+  const btn = document.querySelector("[data-action='install-browser']") as HTMLButtonElement;
+
   try {
     setBusy(true);
+    if (btn) btn.disabled = true;
+    if (statusEl) statusEl.textContent = "Downloading browser...";
+
     const result = await getDesktopApi().installBrowser();
     ge.onboardingBanner.setAttribute("hidden", "");
     localStorage.setItem("browserInstalled", "1");
-    
+
     // Show success in active project if open
     if (project) {
-      const msg = result.status === "already-installed" 
-        ? "Browser already installed ✓" 
-        : "Browser installed successfully ✓";
+      const msg = result.status === "already-installed"
+        ? "Browser already installed"
+        : "Browser installed successfully";
       showResult(project, true, msg);
+    } else {
+      // Show success in banner briefly before hiding
+      if (statusEl) statusEl.textContent = "Browser installed successfully";
     }
   } catch (error) {
     console.error("Browser install failed:", error);
+    if (statusEl) statusEl.textContent = `Install failed: ${error instanceof Error ? error.message : "Unknown error"}`;
     if (project) {
       const msg = error instanceof Error ? error.message : "Browser install failed";
       showResult(project, false, msg);
     }
   } finally {
     setBusy(false);
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -964,7 +974,15 @@ async function boot(): Promise<void> {
   // Progress events
   api.onProgress?.((event: DesktopProgressEvent) => {
     const project = state.activeProjectId ? state.projects.get(state.activeProjectId) : null;
-    if (project) showProgress(project, event);
+    if (project) {
+      showProgress(project, event);
+    } else {
+      // Show progress in onboarding banner if no project is active
+      const statusEl = document.querySelector("[data-onboarding-status]") as HTMLElement;
+      if (statusEl && event.message) {
+        statusEl.textContent = event.message;
+      }
+    }
   });
 
   // Restore last project
