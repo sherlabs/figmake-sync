@@ -46,7 +46,7 @@
     "@types/fs-extra": "^11.0.4",
     "@types/node": "^22.10.1",
     "cross-env": "^10.1.0",
-    "electron": "^34.5.4",
+    "electron": "^41.2.0",
     "electron-builder": "^26.8.1",
     "eslint": "^9.16.0",
     "globals": "^15.13.0",
