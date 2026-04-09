@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>figmake-sync</title>
+    <link rel="icon" href="./assets/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./assets/icon-512.png" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="hero">
+        <div class="hero-brand">
+          <img class="hero-icon" src="./assets/icon.svg" alt="figmake-sync" width="40" height="40" />
+          <h1>figmake-sync</h1>
+        </div>
+        <div class="status-pill" data-busy-indicator data-busy="false">Ready</div>
+      </header>
+
+      <div class="onboarding-banner" data-onboarding-banner hidden>
+        <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v3.5M8 10.5v.5" stroke-linecap="round"/></svg>
+        <div class="onboarding-text">
+          <strong>One-time setup required</strong>
+          <span>Install a browser to enable Figma rendering</span>
+        </div>
+        <button class="primary small" data-action="install-browser">Install Browser</button>
+      </div>
+
+      <div class="home-screen" data-home-screen>
+        <div class="home-header">
+          <h2>Projects</h2>
+          <div class="home-actions">
+            <div class="auth-status" data-auth-status>
+              <div class="auth-status-indicator" data-auth-indicator="unknown">
+                <span class="auth-dot"></span>
+                <span class="auth-label" data-auth-label>Checking…</span>
+              </div>
+              <button class="auth-action-btn" data-action="figma-auth" data-auth-btn>
+                Authenticate
+              </button>
+            </div>
+            <button class="primary" data-action="add-project">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M8 3v10M3 8h10" stroke-linecap="round"/></svg>
+              New Project
+            </button>
+          </div>
+        </div>
+        <div class="project-grid" data-project-grid></div>
+        <div class="empty-state" data-no-projects hidden>
+          <div class="empty-state-icon">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+          <p>No projects yet</p>
+          <p class="empty-state-hint">Add a folder and link a Figma project to get started</p>
+          <button class="primary" data-action="add-first-project" style="margin-top:1.25rem">New Project</button>
+        </div>
+      </div>
+
+      <div class="project-detail" data-project-detail hidden>
+        <div class="detail-header">
+          <button class="back-button" data-action="back-to-home">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 12L6 8l4-4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Projects
+          </button>
+          <div class="detail-header-title">
+            <h2 class="project-title" data-project-title>Project</h2>
+            <span class="detail-path" data-detail-path></span>
+          </div>
+          <div class="editor-actions">
+            <button class="editor-btn" data-action="open-vscode" title="Open in VS Code">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M11.5 1L5.5 7l-3-3L1 5.5l4.5 4.5L13 3.5z"/><path d="M14.5 1.5v13l-3-2.5v-8z"/></svg>
+            </button>
+            <button class="editor-btn" data-action="open-cursor" title="Open in Cursor">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2l12 5-5 1-1 5z"/></svg>
+            </button>
+            <button class="editor-btn" data-action="open-windsurf" title="Open in Windsurf">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1l6 4v6l-6 4-6-4V5z"/></svg>
+            </button>
+            <button class="editor-btn" data-action="open-claude" title="Open in Claude Desktop">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="6"/><path d="M8 4v4l3 2" stroke="white" stroke-width="1.5" fill="none"/></svg>
+            </button>
+            <button class="editor-btn" data-action="open-zed" title="Open in Zed">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2 3h12l-6 5 6 5H2l6-5z"/></svg>
+            </button>
+          </div>
+          <span class="badge" data-project-badge data-linked="false">Unlinked</span>
+        </div>
+
+        <nav class="detail-tabs" data-detail-tabs>
+          <button class="detail-tab active" data-tab="sync">Sync</button>
+          <button class="detail-tab" data-tab="changes">Changes</button>
+          <button class="detail-tab" data-tab="logs">Logs</button>
+          <button class="detail-tab" data-tab="setup">Setup</button>
+        </nav>
+
+        <div class="detail-content" data-detail-content></div>
+      </div>
+
+      <template id="project-card-template">
+        <div class="project-card" data-project-id="">
+          <div class="project-card-header">
+            <div class="project-card-icon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <div class="project-card-title-row">
+              <h3 class="project-card-name">Project Name</h3>
+              <span class="project-card-badge">Unlinked</span>
+            </div>
+            <button class="project-card-delete" data-action="delete-project" title="Remove">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3l10 10M13 3L3 13" stroke-linecap="round"/></svg>
+              </button>
+          </div>
+          <div class="project-card-path"></div>
+          <div class="project-card-stats">
+            <div class="stat-item">
+              <span class="stat-label">Pull</span>
+              <span class="stat-value" data-stat-pull>â</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">Push</span>
+              <span class="stat-value" data-stat-push>â</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">Verify</span>
+              <span class="stat-value" data-stat-verify>â</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">Changes</span>
+              <span class="stat-value" data-stat-changes>0</span>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <template id="project-template">
+        <div class="project-view" data-project-id="">
+
+          <div class="tab-panel" data-panel="sync">
+            <div class="setup-wizard" data-setup-step="folder" hidden>
+              <div class="wizard-icon">
+                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </div>
+              <h3>Choose a local folder</h3>
+              <p>Select the directory where your Figma files will be synced to</p>
+              <button class="primary" data-action="choose-folder">Choose Folder</button>
+            </div>
+
+            <div class="setup-wizard" data-setup-step="link" hidden>
+              <div class="wizard-icon">
+                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" stroke-linecap="round" stroke-linejoin="round"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </div>
+              <div class="wizard-folder-row">
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7v7a1 1 0 001 1h8a1 1 0 001-1V7M1 5h14M6 5V3h4v2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <span data-folder-path class="wizard-folder-path">No folder selected</span>
+                <button class="btn-link" data-action="choose-folder">Change</button>
+              </div>
+              <h3>Link a Figma project</h3>
+              <p>Paste your Figma Make URL to connect this folder</p>
+              <form class="wizard-form" data-init-form>
+                <input type="url" placeholder="https://www.figma.com/make/..." data-figma-url />
+                <button class="primary" type="submit">Link Project</button>
+              </form>
+            </div>
+
+            <div data-linked-state hidden>
+              <div class="sync-actions">
+                <button class="sync-btn pull" data-command="pull">
+                  <svg width="24" height="24" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M8 11V3M5 8l3 3 3-3" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 13h12" stroke-linecap="round"/></svg>
+                  <span class="sync-btn-label">Pull</span>
+                  <span class="sync-btn-desc">Download from Figma</span>
+                </button>
+                <button class="sync-btn push" data-command="push">
+                  <svg width="24" height="24" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M8 5v8M5 8l3-3 3 3" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 3h12" stroke-linecap="round"/></svg>
+                  <span class="sync-btn-label">Push</span>
+                  <span class="sync-btn-desc">Upload to Figma</span>
+                </button>
+                <button class="sync-btn sync" data-command="sync-from-figma">
+                  <svg width="24" height="24" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M2 8a6 6 0 0110.47-3.97M14 8a6 6 0 01-10.47 3.97" stroke-linecap="round"/><path d="M12.47 4.03L12 6.5l2.5-.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3.53 11.97L4 9.5l-2.5.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  <span class="sync-btn-label">Sync</span>
+                  <span class="sync-btn-desc">Full round-trip</span>
+                </button>
+                <button class="sync-btn secondary-action" data-command="status">
+                  <svg width="24" height="24" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="8" cy="8" r="6"/><path d="M8 5v3.5l2 1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  <span class="sync-btn-label">Status</span>
+                  <span class="sync-btn-desc">Check differences</span>
+                </button>
+              </div>
+
+              <div class="sync-stats" data-sync-stats>
+                <div class="sync-stat-item">
+                  <span class="sync-stat-label">Last Pull</span>
+                  <span class="sync-stat-value" data-sync-stat-pull>—</span>
+                </div>
+                <div class="sync-stat-item">
+                  <span class="sync-stat-label">Last Push</span>
+                  <span class="sync-stat-value" data-sync-stat-push>—</span>
+                </div>
+                <div class="sync-stat-item">
+                  <span class="sync-stat-label">Last Verify</span>
+                  <span class="sync-stat-value" data-sync-stat-verify>—</span>
+                </div>
+                <div class="sync-stat-item">
+                  <span class="sync-stat-label">Changes</span>
+                  <span class="sync-stat-value" data-sync-stat-changes>0 files</span>
+                </div>
+              </div>
+
+              <div class="progress-block" data-progress-panel hidden>
+                <div class="progress-block-header">
+                  <span data-progress-title>Running…</span>
+                  <span class="progress-pct" data-progress-percent></span>
+                </div>
+                <div class="progress-bar">
+                  <div class="progress-fill" data-progress-fill></div>
+                </div>
+                <p class="progress-hint" data-progress-subtext></p>
+              </div>
+
+              <div class="result-banner" data-result-banner hidden>
+                <svg class="result-icon" data-result-icon width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8l4 4 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <span data-result-message>Done</span>
+                <button class="btn-link" data-tab-link="logs">View logs →</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="tab-panel" data-panel="changes" hidden>
+            <div class="changes-empty" data-changes-empty>
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25"><path d="M12 10v6m-3-3l3 3 3-3" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 17v3a2 2 0 002 2h14a2 2 0 002-2v-3" stroke-linecap="round"/><path d="M12 3v7" stroke-linecap="round"/><circle cx="12" cy="12" r="9" stroke-linecap="round"/></svg>
+              <p>No changes detected</p>
+              <span>Check for differences between local files and Figma</span>
+              <button class="primary" data-command="status" style="margin-top: 1rem;">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="8" cy="8" r="6"/><path d="M8 5v3.5l2 1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                Check Status
+              </button>
+            </div>
+            <div class="changes-layout" data-changes-layout hidden>
+              <div class="changes-sidebar">
+                <div class="changes-header">
+                  <span class="changes-count" data-changes-count>0 files changed</span>
+                  <button class="changes-refresh-btn" data-command="status" title="Refresh">
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 8a6 6 0 0110.47-3.97M14 8a6 6 0 01-10.47 3.97" stroke-linecap="round"/><path d="M12.47 4.03L12 6.5l2.5-.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3.53 11.97L4 9.5l-2.5.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
+                </div>
+                <div class="file-list" data-file-list></div>
+              </div>
+              <div class="diff-viewer" data-diff-viewer>
+                <div class="diff-header" data-diff-header>
+                  <span class="diff-filename" data-diff-filename>Select a file</span>
+                  <div class="diff-header-actions">
+                    <span class="diff-stats" data-diff-stats></span>
+                    <button class="diff-copy-btn" data-action="copy-file" title="Copy file content" hidden>
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="5" width="8" height="8" rx="1.5"/><path d="M3 11V3a1.5 1.5 0 011.5-1.5H11" stroke-linecap="round"/></svg>
+                    </button>
+                  </div>
+                </div>
+                <div class="diff-content" data-diff-content>
+                  <p class="diff-placeholder">Select a file from the list to view changes</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="tab-panel" data-panel="logs" hidden>
+            <div class="activity-list" data-activity>
+              <p class="logs-empty">No activity yet — run a command to see output here</p>
+            </div>
+            <div class="output-block" data-output-block hidden>
+              <div class="output-block-header">
+                <span>Output</span>
+                <button class="btn-link" data-action="clear-output">Clear</button>
+              </div>
+              <pre data-output></pre>
+            </div>
+            <div class="screenshot-block" data-screenshot-panel hidden>
+              <div class="screenshot-block-header">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 6v2M8 10v.5" stroke-linecap="round"/><path d="M2.73 13h10.54L8 3 2.73 13z" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <strong>Playwright failure</strong>
+                <span data-screenshot-caption></span>
+              </div>
+              <img class="screenshot-img" data-screenshot-img alt="Error screenshot" />
+            </div>
+          </div>
+
+          <div class="tab-panel" data-panel="setup" hidden>
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <p class="panel-label">Workspace</p>
+                  <h2 data-folder-path-display>No folder selected</h2>
+                </div>
+                <button class="secondary" data-action="choose-folder">Change Folder</button>
+              </div>
+              <div class="meta-grid">
+                <div class="meta-item"><span class="meta-label">Figma URL</span><div class="meta-value" data-linked-url>—</div></div>
+                <div class="meta-item"><span class="meta-label">Last Pull</span><div class="meta-value" data-meta="last-pull">—</div></div>
+                <div class="meta-item"><span class="meta-label">Last Push</span><div class="meta-value" data-meta="last-push">—</div></div>
+                <div class="meta-item"><span class="meta-label">Last Verify</span><div class="meta-value" data-meta="last-verify">—</div></div>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <p class="panel-label">Authentication</p>
+                  <h2>Figma Account</h2>
+                </div>
+              </div>
+              <div class="setup-actions-row">
+                <button class="secondary" data-command="auth">Authenticate with Figma</button>
+                <button class="secondary" data-command="verify">Verify Connection</button>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <p class="panel-label">Options</p>
+                  <h2>Sync Behaviour</h2>
+                </div>
+              </div>
+              <div class="options-list">
+                <label class="toggle-row">
+                  <input type="checkbox" data-option="dry-run" />
+                  <div>
+                    <span class="toggle-label">Dry run</span>
+                    <span class="toggle-desc">Preview changes without applying them</span>
+                  </div>
+                </label>
+                <label class="toggle-row">
+                  <input type="checkbox" data-option="verbose" />
+                  <div>
+                    <span class="toggle-label">Verbose logs</span>
+                    <span class="toggle-desc">Show detailed output in Logs tab</span>
+                  </div>
+                </label>
+                <label class="toggle-row">
+                  <input type="checkbox" data-option="prompt" />
+                  <div>
+                    <span class="toggle-label">Prompt after uploads</span>
+                    <span class="toggle-desc">Pause and confirm before finalising push</span>
+                  </div>
+                </label>
+                <div class="select-row">
+                  <div>
+                    <span class="toggle-label">Pull strategy</span>
+                    <span class="toggle-desc">How to handle conflicting local files</span>
+                  </div>
+                  <select data-option="strategy">
+                    <option value="backup">Backup (safe)</option>
+                    <option value="merge">Merge</option>
+                    <option value="abort">Abort on conflict</option>
+                  </select>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel" data-empty-state>
+              <div class="panel-head">
+                <div>
+                  <p class="panel-label">Link</p>
+                  <h2>Connect Figma Project</h2>
+                </div>
+              </div>
+              <form class="wizard-form" data-init-form>
+                <input type="url" placeholder="https://www.figma.com/make/..." data-figma-url />
+                <button class="primary" type="submit">Link Project</button>
+              </form>
+            </section>
+          </div>
+
+        </div>
+      </template>
+    </div>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

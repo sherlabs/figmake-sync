@@ -1,0 +1,600 @@
+import type {
+  DesktopProjectCommandOptions,
+  DesktopProgressEvent,
+  FigmakeDesktopApi,
+} from "../contracts.js";
+import type {
+  ProjectInspection,
+  PullResult,
+  PushResult,
+  StatusResult,
+  VerifyResult,
+} from "../../core/service.js";
+import type { BrowserInstallResult } from "../../browser/install.js";
+
+declare global {
+  interface Window {
+    figmakeSyncDesktop: FigmakeDesktopApi;
+  }
+}
+
+interface ProjectState {
+  id: string;
+  rootDir: string;
+  figmaMakeUrl: string;
+  linkedProject: ProjectInspection | null;
+  options: Omit<DesktopProjectCommandOptions, "rootDir">;
+  viewElement: HTMLElement | null;
+}
+
+interface AppState {
+  projects: Map<string, ProjectState>;
+  activeProjectId: string | null;
+  busy: boolean;
+}
+
+const HEARTBEAT_INTERVAL_MS = 1000;
+
+const globalElements = {
+  tabBar: document.querySelector<HTMLElement>("[data-tab-bar]"),
+  tabList: document.querySelector<HTMLElement>("[data-tab-list]"),
+  projectContainer: document.querySelector<HTMLElement>("[data-project-container]"),
+  noProjects: document.querySelector<HTMLElement>("[data-no-projects]"),
+  busyIndicator: document.querySelector<HTMLElement>("[data-busy-indicator]"),
+};
+
+const state: AppState = {
+  projects: new Map(),
+  activeProjectId: null,
+  busy: false,
+};
+
+let lastProgressEvent: DesktopProgressEvent | null = null;
+let progressHeartbeatTimer: number | null = null;
+let projectIdCounter = 0;
+
+function getDesktopApi(): FigmakeDesktopApi {
+  if (!window.figmakeSyncDesktop) {
+    throw new Error(
+      "Desktop bridge is unavailable. The Electron preload script did not initialize correctly.",
+    );
+  }
+
+  return window.figmakeSyncDesktop;
+}
+
+function assertElement<T extends Element>(element: T | null, label: string): T {
+  if (!element) {
+    throw new Error(`Missing renderer element: ${label}`);
+  }
+
+  return element;
+}
+
+function appendActivity(
+  message: string,
+  timestamp = new Date().toISOString(),
+): void {
+  const activity = assertElement(elements.activity, "activity");
+  const item = document.createElement("div");
+  const timeLabel = new Date(timestamp).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  item.className = "activity-item";
+  item.textContent = `${timeLabel}  ${message}`;
+  activity.prepend(item);
+}
+
+function formatProgressTimestamp(timestamp: string): string {
+  return new Date(timestamp).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+
+
+function ensureProgressHeartbeat(): void {
+  if (progressHeartbeatTimer !== null) {
+    return;
+  }
+
+  progressHeartbeatTimer = window.setInterval(() => {
+    if (!state.busy || !lastProgressEvent) {
+      return;
+    }
+
+    const ageSeconds = Math.max(
+      0,
+      Math.floor(
+        (Date.now() - new Date(lastProgressEvent.timestamp).getTime()) / 1000,
+      ),
+    );
+
+    const subtext = assertElement(elements.progressSubtext, "progressSubtext");
+
+    if (lastProgressEvent.scope === "browser-install") {
+      subtext.textContent = ageSeconds === 0
+        ? "Receiving installer output..."
+        : `Still working. Last installer update was ${ageSeconds}s ago.`;
+      return;
+    }
+
+    subtext.textContent = ageSeconds === 0
+      ? "Receiving updates..."
+      : `Last update arrived ${ageSeconds}s ago.`;
+  }, HEARTBEAT_INTERVAL_MS);
+}
+
+function renderProgress(event?: DesktopProgressEvent): void {
+  const panel = assertElement(elements.progressPanel, "progressPanel");
+  const fill = assertElement(elements.progressFill, "progressFill");
+  const title = assertElement(elements.progressTitle, "progressTitle");
+  const percent = assertElement(elements.progressPercent, "progressPercent");
+  const subtext = assertElement(elements.progressSubtext, "progressSubtext");
+  lastProgressEvent = event ?? null;
+
+  if (!event) {
+    panel.dataset.active = "false";
+    title.textContent = "Idle";
+    percent.textContent = "—";
+    subtext.textContent = "No active operation";
+    fill.style.width = "0%";
+    fill.dataset.indeterminate = "false";
+    return;
+  }
+
+  panel.dataset.active = "true";
+  title.textContent = event.scope === "browser-install" ? "Installing Browser" : "Running Operation";
+
+  if (typeof event.percent === "number") {
+    const boundedPercent = Math.min(100, Math.max(0, event.percent));
+    percent.textContent = `${boundedPercent}%`;
+    fill.style.width = `${boundedPercent}%`;
+    fill.dataset.indeterminate = "false";
+  } else {
+    percent.textContent = "Running";
+    fill.style.width = "";
+    fill.dataset.indeterminate = "true";
+  }
+
+  subtext.textContent = event.scope === "browser-install"
+    ? `Last update: ${formatProgressTimestamp(event.timestamp)}`
+    : event.message;
+}
+
+function handleProgressEvent(event: DesktopProgressEvent): void {
+  if (event.scope === "browser-install" && lastProgressEvent?.scope !== "browser-install") {
+    lastHeartbeatLogAtSeconds = 0;
+  }
+
+  renderProgress(event);
+  appendActivity(event.message, event.timestamp);
+}
+
+function formatTimestamp(value: string | undefined): string {
+  if (!value) {
+    return "Not yet";
+  }
+
+  return new Date(value).toLocaleString();
+}
+
+function renderOutput(title: string, payload: unknown): void {
+  const output = assertElement(elements.output, "output");
+  const body =
+    typeof payload === "string"
+      ? payload
+      : payload !== undefined
+        ? JSON.stringify(payload, null, 2)
+        : "No additional details.";
+
+  output.textContent = `${title}\n\n${body}`;
+}
+
+function updateSummary(summary?: {
+  added: number;
+  modified: number;
+  deleted: number;
+  renamed: number;
+}): void {
+  for (const key of summaryKeys) {
+    const node = summaryElements[key];
+
+    if (node) {
+      node.textContent = String(summary?.[key] ?? 0);
+    }
+  }
+}
+
+function setBusy(nextBusy: boolean): void {
+  state.busy = nextBusy;
+  const busyIndicator = assertElement(elements.busyIndicator, "busyIndicator");
+  busyIndicator.textContent = nextBusy ? "Working..." : "Ready";
+  busyIndicator.dataset.busy = String(nextBusy);
+
+  document.querySelectorAll<HTMLButtonElement>("button").forEach((button) => {
+    button.disabled = nextBusy;
+  });
+}
+
+function syncOptionsFromUi(): void {
+  state.options = {
+    dryRun: assertElement(elements.dryRunToggle, "dryRunToggle").checked,
+    verbose: assertElement(elements.verboseToggle, "verboseToggle").checked,
+    prompt: assertElement(elements.promptToggle, "promptToggle").checked,
+    strategy: assertElement(elements.strategySelect, "strategySelect")
+      .value as DesktopProjectCommandOptions["strategy"],
+  };
+}
+
+function renderProject(project: ProjectInspection | null): void {
+  state.linkedProject = project;
+
+  if (project) {
+    state.rootDir = project.rootDir;
+    state.figmaMakeUrl = project.config?.figmaMakeUrl ?? state.figmaMakeUrl;
+  }
+
+  const folderPath = assertElement(elements.folderPath, "folderPath");
+  const badge = assertElement(elements.projectBadge, "projectBadge");
+  const linkedUrl = assertElement(elements.linkedUrl, "linkedUrl");
+
+  folderPath.textContent = state.rootDir || "Choose a local folder to get started";
+  badge.textContent = project?.linked ? "Linked" : "Unlinked";
+  badge.dataset.linked = String(Boolean(project?.linked));
+  linkedUrl.textContent = project?.config?.figmaMakeUrl ?? "—";
+
+  assertElement(elements.metaLastPull, "metaLastPull").textContent =
+    formatTimestamp(project?.metadata?.lastPullAt);
+  assertElement(elements.metaLastPush, "metaLastPush").textContent =
+    formatTimestamp(project?.metadata?.lastPushAt);
+  assertElement(elements.metaLastVerify, "metaLastVerify").textContent =
+    formatTimestamp(project?.metadata?.lastVerifyAt);
+
+  const emptyState = assertElement(elements.emptyState, "emptyState");
+  const linkedState = assertElement(elements.linkedState, "linkedState");
+
+  emptyState.hidden = Boolean(project?.linked);
+  linkedState.hidden = !project?.linked;
+  assertElement(elements.urlInput, "urlInput").value = state.figmaMakeUrl;
+
+  updateSummary(project?.statusSummary);
+}
+
+function buildCommandOptions(): DesktopProjectCommandOptions {
+  syncOptionsFromUi();
+
+  if (!state.rootDir) {
+    throw new Error("Choose a local folder first.");
+  }
+
+  return {
+    rootDir: state.rootDir,
+    ...state.options,
+  };
+}
+
+async function refreshProject(): Promise<void> {
+  if (!state.rootDir) {
+    return;
+  }
+
+  const project = await getDesktopApi().inspectProject(state.rootDir);
+  renderProject(project);
+}
+
+async function runCommand<T>(
+  label: string,
+  operation: () => Promise<T>,
+  onSuccess?: (result: T) => Promise<void> | void,
+): Promise<void> {
+  try {
+    setBusy(true);
+    ensureProgressHeartbeat();
+    renderProgress({
+      message: `${label} started`,
+      timestamp: new Date().toISOString(),
+      scope: "command",
+    });
+    appendActivity(`${label} started`);
+    const result = await operation();
+    await onSuccess?.(result);
+    renderProgress({
+      message: `${label} finished`,
+      timestamp: new Date().toISOString(),
+      percent: 100,
+      scope: "command",
+    });
+    appendActivity(`${label} finished`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unexpected error";
+    renderProgress({
+      message: `${label} failed`,
+      timestamp: new Date().toISOString(),
+      scope: "command",
+    });
+    appendActivity(`${label} failed: ${message}`);
+    renderOutput(`${label} failed`, message);
+  } finally {
+    setBusy(false);
+  }
+}
+
+function formatStatusResult(result: StatusResult): Record<string, unknown> {
+  return {
+    hasBaseline: result.hasBaseline,
+    summary: result.summary,
+    diff: result.diff
+      ? {
+          added: result.diff.added.map((entry) => entry.path),
+          modified: result.diff.modified.map((entry) => entry.current.path),
+          deleted: result.diff.deleted.map((entry) => entry.path),
+          renamed: result.diff.renamed,
+        }
+      : undefined,
+  };
+}
+
+function formatPullResult(result: PullResult): Record<string, unknown> {
+  return {
+    strategy: result.strategy,
+    extractedFiles: result.extractedFiles,
+    backupDir: result.backupDir,
+    dryRun: result.dryRun,
+    conflicts: result.conflicts,
+    remoteSummary: result.remoteSummary,
+  };
+}
+
+function formatPushResult(result: PushResult): Record<string, unknown> {
+  return {
+    dryRun: result.dryRun,
+    summary: result.summary,
+    unresolved: result.unresolved,
+  };
+}
+
+function formatVerifyResult(result: VerifyResult): Record<string, unknown> {
+  return {
+    drift: formatStatusResult(result.drift),
+    preview: result.preview,
+  };
+}
+
+function formatBrowserInstallResult(
+  result: BrowserInstallResult,
+): Record<string, unknown> {
+  return {
+    browser: result.browser,
+    status: result.status,
+  };
+}
+
+async function boot(): Promise<void> {
+  let desktopApi: FigmakeDesktopApi;
+
+  try {
+    desktopApi = getDesktopApi();
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Unexpected startup error";
+    renderOutput("Desktop bridge unavailable", message);
+    appendActivity(`Startup failed: ${message}`);
+    return;
+  }
+
+  ensureProgressHeartbeat();
+
+  desktopApi.onProgress((event) => {
+    handleProgressEvent(event);
+  });
+
+  assertElement(
+    elements.installBrowserButton,
+    "installBrowserButton",
+  ).addEventListener("click", () => {
+    void runCommand(
+      "Install Browser",
+      () => desktopApi.installBrowser(),
+      (result) => {
+        renderOutput("Browser installed", formatBrowserInstallResult(result));
+      },
+    );
+  });
+
+  assertElement(
+    elements.chooseFolderButton,
+    "chooseFolderButton",
+  ).addEventListener("click", () => {
+    void runCommand("Choose Folder", async () => {
+      const project = await desktopApi.selectProjectDirectory();
+
+      if (project) {
+        renderProject(project);
+        renderOutput("Folder ready", {
+          rootDir: project.rootDir,
+          linked: project.linked,
+        });
+      }
+
+      return project;
+    });
+  });
+
+  assertElement(elements.initForm, "initForm").addEventListener(
+    "submit",
+    (event) => {
+      event.preventDefault();
+
+      void (async () => {
+        if (!state.rootDir) {
+          renderOutput(
+            "Initialize Project",
+            "Choose a local folder before linking a Figma Make URL.",
+          );
+          return;
+        }
+
+        const url = assertElement(elements.urlInput, "urlInput").value.trim();
+
+        if (!url) {
+          renderOutput("Initialize Project", "Enter a Figma Make URL first.");
+          return;
+        }
+
+        state.figmaMakeUrl = url;
+
+        await runCommand(
+          "Initialize Project",
+          () => desktopApi.initProject(state.rootDir, url),
+          async (result) => {
+            renderOutput("Project linked", result);
+            await refreshProject();
+          },
+        );
+      })();
+    },
+  );
+
+  assertElement(elements.authButton, "authButton").addEventListener(
+    "click",
+    () => {
+      void runCommand(
+        "Authenticate Session",
+        () => desktopApi.authProject(buildCommandOptions()),
+        async () => {
+          renderOutput("Authentication saved", {
+            rootDir: state.rootDir,
+          });
+          await refreshProject();
+        },
+      );
+    },
+  );
+
+  assertElement(elements.pullButton, "pullButton").addEventListener(
+    "click",
+    () => {
+      void runCommand(
+        "Pull From Figma",
+        () => desktopApi.pullProject(buildCommandOptions()),
+        async (result) => {
+          renderOutput("Pull completed", formatPullResult(result));
+          await refreshProject();
+        },
+      );
+    },
+  );
+
+  assertElement(elements.syncButton, "syncButton").addEventListener(
+    "click",
+    () => {
+      void runCommand(
+        "Safe Sync From Figma",
+        () => desktopApi.syncFromFigma(buildCommandOptions()),
+        async (result) => {
+          renderOutput("Safe sync completed", formatPullResult(result));
+          await refreshProject();
+        },
+      );
+    },
+  );
+
+  assertElement(elements.statusButton, "statusButton").addEventListener(
+    "click",
+    () => {
+      void runCommand(
+        "Status",
+        () => desktopApi.statusProject(buildCommandOptions()),
+        async (result) => {
+          updateSummary(result.summary);
+          renderOutput("Local status", formatStatusResult(result));
+          await refreshProject();
+        },
+      );
+    },
+  );
+
+  assertElement(elements.pushButton, "pushButton").addEventListener(
+    "click",
+    () => {
+      void runCommand(
+        "Push To Figma",
+        () => desktopApi.pushProject(buildCommandOptions()),
+        async (result) => {
+          updateSummary(result.summary);
+          renderOutput("Push completed", formatPushResult(result));
+          await refreshProject();
+        },
+      );
+    },
+  );
+
+  assertElement(elements.verifyButton, "verifyButton").addEventListener(
+    "click",
+    () => {
+      void runCommand(
+        "Verify Drift",
+        () => desktopApi.verifyProject(buildCommandOptions()),
+        async (result) => {
+          updateSummary(result.drift.summary);
+          renderOutput("Verification completed", formatVerifyResult(result));
+          await refreshProject();
+        },
+      );
+    },
+  );
+
+  document
+    .querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-option]")
+    .forEach((node) => {
+      node.addEventListener("change", () => {
+        syncOptionsFromUi();
+      });
+    });
+
+  // Collapsible options
+  const collapseToggle = elements.collapseToggle;
+  const collapseContent = elements.collapseContent;
+  if (collapseToggle && collapseContent) {
+    collapseToggle.addEventListener("click", () => {
+      const isHidden = collapseContent.hasAttribute("hidden");
+      if (isHidden) {
+        collapseContent.removeAttribute("hidden");
+        collapseToggle.setAttribute("aria-expanded", "true");
+      } else {
+        collapseContent.setAttribute("hidden", "");
+        collapseToggle.setAttribute("aria-expanded", "false");
+      }
+    });
+  }
+
+  const appState = await desktopApi.loadAppState();
+
+  if (appState.lastProjectRoot) {
+    try {
+      const project = await desktopApi.inspectProject(appState.lastProjectRoot);
+      renderProject(project);
+      renderOutput("Recovered last project", {
+        rootDir: project.rootDir,
+        linked: project.linked,
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unexpected error";
+      renderOutput("Startup warning", message);
+      appendActivity(`Startup warning: ${message}`);
+    }
+  } else {
+    renderOutput(
+      "Welcome",
+      "Choose a local folder, link it to a Figma Make URL, and then use the action buttons to sync without touching the CLI.",
+    );
+  }
+}
+
+void boot();

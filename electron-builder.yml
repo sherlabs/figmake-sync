@@ -1,0 +1,36 @@
+appId: com.figmake.sync
+productName: figmake-sync
+directories:
+  output: release
+  buildResources: src/electron/renderer/assets
+files:
+  - dist/**/*
+  - package.json
+asar: true
+npmRebuild: false
+mac:
+  category: public.app-category.developer-tools
+  icon: icon.icns
+  target:
+    - target: dmg
+      arch:
+        - universal
+    - target: zip
+      arch:
+        - universal
+  artifactName: ${productName}-${version}-mac-${arch}.${ext}
+win:
+  icon: icon-256.png
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: ${productName}-${version}-windows-${arch}-installer.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  allowElevation: true
+  perMachine: false
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: figmake-sync

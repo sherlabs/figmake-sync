@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "projectId": "replace-with-generated-id",
+  "figmaMakeUrl": "https://www.figma.com/make/your-project",
+  "localRoot": "/absolute/path/to/project",
+  "createdAt": "2026-04-09T00:00:00.000Z",
+  "updatedAt": "2026-04-09T00:00:00.000Z",
+  "adapter": {
+    "profileDir": ".figmake-sync/browser-profile",
+    "headless": false,
+    "slowMoMs": 0,
+    "actionTimeoutMs": 45000,
+    "navigationTimeoutMs": 120000,
+    "downloadTimeoutMs": 180000,
+    "selectorOverrides": {},
+    "promptAfterUpload": false,
+    "postUploadPromptTemplate": "I added the following files.\n{{files}}\nEnsure imports and references are wired correctly without changing unrelated functionality."
+  },
+  "sync": {
+    "ignore": [".figmake-sync/**", ".git/**", "node_modules/**", ".DS_Store"],
+    "safePullStrategy": "backup",
+    "backupRetention": 20
+  },
+  "logging": {
+    "level": "info"
+  }
+}
