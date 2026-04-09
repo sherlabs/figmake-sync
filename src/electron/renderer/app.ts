@@ -5,13 +5,10 @@ import type {
 } from "../contracts.js";
 import type {
   ProjectInspection,
-  PullResult,
-  PushResult,
   StatusResult,
-  VerifyResult,
 } from "../../core/service.js";
-import type { ManifestDiff } from "../../diff/manifest.js";
-import type { BrowserInstallResult } from "../../browser/install.js";
+import type { PullStrategy } from "../../types/config.js";
+import type { ManifestDiff, ManifestEntry, ManifestRename } from "../../diff/manifest.js";
 
 declare global {
   interface Window {
@@ -38,8 +35,6 @@ interface AppState {
   currentView: "home" | "detail";
 }
 
-const HEARTBEAT_INTERVAL_MS = 1000;
-
 const ge = {
   homeScreen: document.querySelector<HTMLElement>("[data-home-screen]")!,
   projectDetail: document.querySelector<HTMLElement>("[data-project-detail]")!,
@@ -64,7 +59,6 @@ const state: AppState = {
 
 let projectIdCounter = 0;
 let progressHeartbeatTimer: number | null = null;
-let lastProgressEvent: DesktopProgressEvent | null = null;
 
 function getDesktopApi(): FigmakeDesktopApi {
   if (!window.figmakeSyncDesktop) throw new Error("Desktop bridge unavailable");
@@ -220,34 +214,42 @@ function bindProjectEvents(project: ProjectState): void {
 
   // Choose folder
   view.querySelectorAll("[data-action='choose-folder']").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const inspection = await getDesktopApi().selectProjectDirectory();
-      if (inspection) {
-        project.rootDir = inspection.rootDir;
-        project.linkedProject = inspection;
-        renderProject(project);
-        renderProjectCard(project);
-      }
+    btn.addEventListener("click", () => {
+      void (async () => {
+        const inspection = await getDesktopApi().selectProjectDirectory();
+        if (inspection) {
+          project.rootDir = inspection.rootDir;
+          project.linkedProject = inspection;
+          renderProject(project);
+          renderProjectCard(project);
+        }
+      })();
     });
   });
 
   // Link form
-  els.initForm.addEventListener("submit", async (e) => {
+  els.initForm.addEventListener("submit", (e) => {
     e.preventDefault();
-    const url = els.urlInput.value.trim();
-    if (!url || !project.rootDir) return;
-    project.figmaMakeUrl = url;
-    await runCommand(project, "Link", () => getDesktopApi().initProject(project.rootDir, url));
+    void (async () => {
+      const url = els.urlInput.value.trim();
+      if (!url || !project.rootDir) return;
+      project.figmaMakeUrl = url;
+      await runCommand(project, "Link", () => getDesktopApi().initProject(project.rootDir, url));
+    })();
   });
 
   // Command buttons
   view.querySelectorAll<HTMLButtonElement>("[data-command]").forEach((btn) => {
-    btn.addEventListener("click", () => handleCommand(project, btn.dataset.command!));
+    btn.addEventListener("click", () => {
+      void handleCommand(project, btn.dataset.command!);
+    });
   });
 
   // Options
   view.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-option]").forEach((inp) => {
-    inp.addEventListener("change", () => syncOptions(project));
+    inp.addEventListener("change", () => {
+      void syncOptions(project);
+    });
   });
 
   // Tab-link buttons (e.g. "View logs →")
@@ -271,7 +273,7 @@ function syncOptions(project: ProjectState): void {
     dryRun: v.querySelector<HTMLInputElement>("[data-option='dry-run']")?.checked || false,
     verbose: v.querySelector<HTMLInputElement>("[data-option='verbose']")?.checked || false,
     prompt: v.querySelector<HTMLInputElement>("[data-option='prompt']")?.checked || false,
-    strategy: (v.querySelector<HTMLSelectElement>("[data-option='strategy']")?.value as any) || "backup",
+    strategy: (v.querySelector<HTMLSelectElement>("[data-option='strategy']")?.value as PullStrategy | undefined) ?? "backup",
   };
 }
 
@@ -311,7 +313,6 @@ function renderProject(project: ProjectState): void {
   }
 
   // Setup tab
-  const folderName = project.rootDir ? project.rootDir.split("/").pop() || project.rootDir : "No folder selected";
   if (els.folderPathDisplay) els.folderPathDisplay.textContent = project.rootDir || "No folder selected";
   els.linkedUrl.textContent = info?.config?.figmaMakeUrl || "—";
   els.metaLastPull.textContent = formatTs(info?.metadata?.lastPullAt);
@@ -357,12 +358,12 @@ function renderChanges(project: ProjectState): void {
   // Clear and populate file list
   els.fileList.innerHTML = "";
 
-  const files: Array<{ path: string; status: "added" | "modified" | "deleted" | "renamed"; entry: any }> = [];
+  const files: Array<{ path: string; status: "added" | "modified" | "deleted" | "renamed"; entry: ManifestEntry | ManifestRename }> = [];
 
   diff.added.forEach((entry) => files.push({ path: entry.path, status: "added", entry }));
   diff.modified.forEach(({ current }) => files.push({ path: current.path, status: "modified", entry: current }));
   diff.deleted.forEach((entry) => files.push({ path: entry.path, status: "deleted", entry }));
-  diff.renamed.forEach((rename) => files.push({ path: rename.to, status: "renamed", entry: { path: rename.to, from: rename.from } }));
+  diff.renamed.forEach((rename) => files.push({ path: rename.to, status: "renamed", entry: rename }));
 
   files.forEach((file) => {
     const item = document.createElement("div");
@@ -381,7 +382,9 @@ function renderChanges(project: ProjectState): void {
     `;
     item.appendChild(badge);
 
-    item.addEventListener("click", () => selectFile(project, file.path, file.status, file.entry));
+    item.addEventListener("click", () => {
+      void selectFile(project, file.path, file.status);
+    });
     els.fileList.appendChild(item);
   });
 }
@@ -398,7 +401,7 @@ function getFileIcon(status: string): string {
 
 let lastLoadedFileContent = "";
 
-async function selectFile(project: ProjectState, filePath: string, status: string, _entry: any): Promise<void> {
+async function selectFile(project: ProjectState, filePath: string, status: string): Promise<void> {
   if (!project.viewElement) return;
   const els = getPanelEls(project.viewElement);
 
@@ -708,7 +711,6 @@ async function runCommand<T>(
   appendActivity(project, `Started: ${label}`);
   try {
     setBusy(true);
-    lastProgressEvent = null;
 
     const result = await operation();
 
@@ -799,7 +801,7 @@ async function openInEditor(editor: "code" | "cursor" | "windsurf" | "claude" | 
 
 // ── Onboarding ─────────────────────────────────────────────────────────────────
 
-async function checkBrowserInstalled(): Promise<void> {
+function checkBrowserInstalled(): void {
   // The API doesn't expose a direct check; show the banner and dismiss after install
   // If we've already dismissed it (stored in localStorage), skip
   if (!localStorage.getItem("browserInstalled")) {
@@ -915,7 +917,9 @@ async function boot(): Promise<void> {
 
   // Figma Auth (home level)
   document.querySelector("[data-action='figma-auth']")
-    ?.addEventListener("click", runFigmaAuth);
+    ?.addEventListener("click", () => {
+      void runFigmaAuth();
+    });
 
   // Back button
   document.querySelector("[data-action='back-to-home']")!
@@ -931,23 +935,34 @@ async function boot(): Promise<void> {
 
   // Editor open buttons
   document.querySelector("[data-action='open-vscode']")
-    ?.addEventListener("click", () => openInEditor("code"));
+    ?.addEventListener("click", () => {
+      void openInEditor("code");
+    });
   document.querySelector("[data-action='open-cursor']")
-    ?.addEventListener("click", () => openInEditor("cursor"));
+    ?.addEventListener("click", () => {
+      void openInEditor("cursor");
+    });
   document.querySelector("[data-action='open-windsurf']")
-    ?.addEventListener("click", () => openInEditor("windsurf"));
+    ?.addEventListener("click", () => {
+      void openInEditor("windsurf");
+    });
   document.querySelector("[data-action='open-claude']")
-    ?.addEventListener("click", () => openInEditor("claude"));
+    ?.addEventListener("click", () => {
+      void openInEditor("claude");
+    });
   document.querySelector("[data-action='open-zed']")
-    ?.addEventListener("click", () => openInEditor("zed"));
+    ?.addEventListener("click", () => {
+      void openInEditor("zed");
+    });
 
   // Onboarding install-browser button (top level)
   document.querySelector("[data-action='install-browser']")
-    ?.addEventListener("click", installBrowser);
+    ?.addEventListener("click", () => {
+      void installBrowser();
+    });
 
   // Progress events
   api.onProgress?.((event: DesktopProgressEvent) => {
-    lastProgressEvent = event;
     const project = state.activeProjectId ? state.projects.get(state.activeProjectId) : null;
     if (project) showProgress(project, event);
   });
@@ -966,7 +981,7 @@ async function boot(): Promise<void> {
   } catch { /* no saved state */ }
 
   // Check browser installation
-  await checkBrowserInstalled();
+  checkBrowserInstalled();
 
   // Check Figma auth status
   await updateAuthStatus();
