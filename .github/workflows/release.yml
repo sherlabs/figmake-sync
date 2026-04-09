@@ -33,6 +33,10 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Get version
+        id: version
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
   build-installers:
     name: Build ${{ matrix.label }} installer
     needs: validate-release
@@ -100,6 +104,7 @@ jobs:
       - name: Create release and upload installers
         uses: softprops/action-gh-release@v2
         with:
+          token: ${{ secrets.GITHUB_TOKEN }}
           tag_name: ${{ github.ref_name }}
           name: figmake-sync v${{ needs.validate-release.outputs.version }}
           generate_release_notes: true
