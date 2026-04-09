@@ -509,6 +509,7 @@ class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSession {
   }
 
   private async ensureCodeSurfaceReady(): Promise<void> {
+    await this.dismissFloatingOverlays();
     await withRetry(
       async () => {
         const codeEditor = await this.tryFindVisible("codeEditorRoot", 2_000);
@@ -701,13 +702,35 @@ class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSession {
     const saveButton = await this.tryFindVisible("saveButton", 2_000);
 
     if (saveButton) {
-      await saveButton.click();
+      // Dismiss any floating overlays that may intercept pointer events
+      await this.dismissFloatingOverlays();
+
+      try {
+        await saveButton.click({ timeout: 5_000 });
+      } catch {
+        // Overlay may still intercept — force click as fallback
+        await saveButton.click({ force: true });
+      }
       return;
     }
 
     // The current Figma Make editor autosaves changes and may bind Meta+S to
     // formatting or browser-level actions instead of an explicit save.
     await this.handle.page.waitForTimeout(500);
+  }
+
+  private async dismissFloatingOverlays(): Promise<void> {
+    const overlays = this.handle.page.locator(
+      '[data-fpl-floating-overlay="true"]',
+    );
+    const count = await overlays.count();
+    for (let i = 0; i < count; i++) {
+      try {
+        await overlays.nth(i).evaluate((el) => el.remove());
+      } catch {
+        // Overlay already gone
+      }
+    }
   }
 
   private async confirmActiveEditorContent(
