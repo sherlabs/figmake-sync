@@ -346,6 +346,8 @@ function renderChanges(project: ProjectState): void {
   if (!diff || (diff.added.length === 0 && diff.modified.length === 0 && diff.deleted.length === 0 && diff.renamed.length === 0)) {
     els.changesEmpty.removeAttribute("hidden");
     els.changesLayout.setAttribute("hidden", "");
+    // Still render ignored section even when no changes
+    void renderIgnoredFiles(project, els.fileList);
     return;
   }
 
@@ -397,6 +399,53 @@ function renderChanges(project: ProjectState): void {
     });
     els.fileList.appendChild(item);
   });
+
+  void renderIgnoredFiles(project, els.fileList);
+}
+
+async function renderIgnoredFiles(project: ProjectState, container: HTMLElement): Promise<void> {
+  if (!project.rootDir) return;
+  const api = getDesktopApi();
+  try {
+    const patterns = await api.getCustomIgnorePatterns(project.rootDir);
+    if (patterns.length === 0) return;
+
+    // Remove any existing ignored section
+    container.querySelector(".ignored-files-section")?.remove();
+
+    const section = document.createElement("div");
+    section.className = "ignored-files-section";
+
+    const header = document.createElement("div");
+    header.className = "ignored-files-header";
+    header.textContent = `Ignored (${patterns.length})`;
+    section.appendChild(header);
+
+    patterns.forEach((pattern) => {
+      const item = document.createElement("div");
+      item.className = "file-item ignored";
+
+      const unignoreBtn = document.createElement("button");
+      unignoreBtn.className = "file-unignore-btn";
+      unignoreBtn.title = `Stop ignoring ${pattern}`;
+      unignoreBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8h8" stroke-linecap="round"/><path d="M8 4v8" stroke-linecap="round"/></svg>`;
+      unignoreBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        void unignoreFile(project, pattern);
+      });
+
+      item.innerHTML = `
+        <span class="file-icon ignored"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" opacity="0.5"><circle cx="8" cy="8" r="6"/><path d="M4 12L12 4" stroke-linecap="round"/></svg></span>
+        <span class="file-name ignored-name" title="${pattern}">${pattern}</span>
+      `;
+      item.appendChild(unignoreBtn);
+      section.appendChild(item);
+    });
+
+    container.appendChild(section);
+  } catch {
+    // Config not available yet
+  }
 }
 
 function getFileIcon(status: string): string {
@@ -511,6 +560,21 @@ async function ignoreFile(project: ProjectState, filePath: string): Promise<void
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     alert(`Failed to ignore file:\n\n${msg}`);
+  }
+}
+
+async function unignoreFile(project: ProjectState, pattern: string): Promise<void> {
+  if (!project.rootDir) return;
+  const api = getDesktopApi();
+  try {
+    await api.removeIgnorePattern(project.rootDir, pattern);
+    const opts: DesktopProjectCommandOptions = { rootDir: project.rootDir, ...project.options };
+    const statusResult = await api.statusProject(opts);
+    project.lastDiff = statusResult.diff ?? null;
+    await refreshProject(project);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    alert(`Failed to un-ignore file:\n\n${msg}`);
   }
 }
 

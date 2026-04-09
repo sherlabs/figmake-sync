@@ -1605,6 +1605,54 @@ button.primary.small {
   background: rgb(239 68 68 / 0.1);
 }
 
+.ignored-files-section {
+  margin-top: 0.75rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.5rem;
+}
+
+.ignored-files-header {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  padding: 0.25rem 0.75rem;
+}
+
+.file-item.ignored {
+  opacity: 0.5;
+}
+
+.file-item.ignored:hover {
+  opacity: 0.8;
+}
+
+.ignored-name {
+  text-decoration: line-through;
+}
+
+.file-unignore-btn {
+  display: none;
+  padding: 0.125rem;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  line-height: 0;
+}
+
+.file-item.ignored:hover .file-unignore-btn {
+  display: inline-flex;
+}
+
+.file-unignore-btn:hover {
+  color: var(--success);
+  background: rgb(16 185 129 / 0.1);
+}
+
 .diff-viewer {
   display: flex;
   flex-direction: column;

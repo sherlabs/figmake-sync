@@ -32,6 +32,10 @@ const api: FigmakeDesktopApi = {
   readFile: (filePath) => ipcRenderer.invoke("figmake:read-file", filePath),
   addIgnorePattern: (rootDir, pattern) =>
     ipcRenderer.invoke("figmake:add-ignore-pattern", rootDir, pattern),
+  removeIgnorePattern: (rootDir, pattern) =>
+    ipcRenderer.invoke("figmake:remove-ignore-pattern", rootDir, pattern),
+  getCustomIgnorePatterns: (rootDir) =>
+    ipcRenderer.invoke("figmake:get-custom-ignore-patterns", rootDir),
   checkAuthStatus: () => ipcRenderer.invoke("figmake:check-auth-status"),
   onProgress: (listener) => {
     const wrappedListener = (

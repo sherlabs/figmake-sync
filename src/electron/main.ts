@@ -371,6 +371,40 @@ function registerIpcHandlers(): void {
     },
   );
 
+  ipcMain.handle(
+    "figmake:remove-ignore-pattern",
+    async (_event, rootDir: string, pattern: string) => {
+      const { ProjectStateStore } = await import("../core/state.js");
+      const { updateProjectConfig, DEFAULT_IGNORE_PATTERNS } = await import(
+        "../types/config.js"
+      );
+      // Prevent removing default patterns
+      if ((DEFAULT_IGNORE_PATTERNS as readonly string[]).includes(pattern)) {
+        return { success: false, reason: "Cannot remove a default ignore pattern" };
+      }
+      const store = new ProjectStateStore(rootDir);
+      const config = await store.loadProjectConfig();
+      const ignore = config.sync.ignore.filter((p: string) => p !== pattern);
+      const updated = updateProjectConfig(config, {
+        sync: { ...config.sync, ignore },
+      } as Partial<typeof config>);
+      await store.saveProjectConfig(updated);
+      return { success: true };
+    },
+  );
+
+  ipcMain.handle(
+    "figmake:get-custom-ignore-patterns",
+    async (_event, rootDir: string) => {
+      const { ProjectStateStore } = await import("../core/state.js");
+      const { DEFAULT_IGNORE_PATTERNS } = await import("../types/config.js");
+      const store = new ProjectStateStore(rootDir);
+      const config = await store.loadProjectConfig();
+      const defaults = new Set<string>(DEFAULT_IGNORE_PATTERNS);
+      return config.sync.ignore.filter((p: string) => !defaults.has(p));
+    },
+  );
+
   ipcMain.handle("figmake:install-browser", async () =>
     withOperationLock(async () =>
       installPlaywrightBrowser({
