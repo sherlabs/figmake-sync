@@ -18,6 +18,7 @@ const api: FigmakeDesktopApi = {
   initProject: (rootDir, figmaMakeUrl) =>
     ipcRenderer.invoke("figmake:init-project", { rootDir, figmaMakeUrl }),
   authProject: (options) => ipcRenderer.invoke("figmake:auth-project", options),
+  authStandalone: () => ipcRenderer.invoke("figmake:auth-standalone"),
   pullProject: (options) => ipcRenderer.invoke("figmake:pull-project", options),
   syncFromFigma: (options) =>
     ipcRenderer.invoke("figmake:sync-from-figma", options),

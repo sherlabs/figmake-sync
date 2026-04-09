@@ -35,6 +35,7 @@ export interface FigmakeDesktopApi {
   installBrowser(): Promise<BrowserInstallResult>;
   initProject(rootDir: string, figmaMakeUrl: string): Promise<InitResult>;
   authProject(options: DesktopProjectCommandOptions): Promise<void>;
+  authStandalone(): Promise<void>;
   pullProject(options: DesktopProjectCommandOptions): Promise<PullResult>;
   syncFromFigma(options: DesktopProjectCommandOptions): Promise<PullResult>;
   statusProject(options: DesktopProjectCommandOptions): Promise<StatusResult>;

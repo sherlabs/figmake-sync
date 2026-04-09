@@ -17,6 +17,7 @@ import {
   installPlaywrightBrowser,
   isPlaywrightBrowserMissingError,
 } from "../browser/install.js";
+import { BrowserSessionManager } from "../browser/session.js";
 import { FigmakeSyncService } from "../core/service.js";
 import type {
   DesktopAppState,
@@ -392,6 +393,52 @@ function registerIpcHandlers(): void {
         await persistLastProjectRoot(options.rootDir);
         return withBrowserInstallRecovery(() =>
           service.auth(toRuntimeOptions(options)),
+        );
+      }),
+  );
+
+  ipcMain.handle(
+    "figmake:auth-standalone",
+    async () =>
+      withOperationLock(async () => {
+        const profileDir = getSharedBrowserProfileDir();
+        const artifactsDir = path.join(app.getPath("userData"), "artifacts");
+        await fs.ensureDir(profileDir);
+        await fs.ensureDir(artifactsDir);
+
+        const pino = (await import("pino")).default;
+        const logger = pino({ level: "silent" });
+
+        const session = new BrowserSessionManager({
+          userDataDir: profileDir,
+          artifactsDir,
+          headless: false,
+          slowMoMs: 0,
+          actionTimeoutMs: 30_000,
+          navigationTimeoutMs: 60_000,
+          browserChannel: undefined,
+          logger,
+        });
+
+        await withBrowserInstallRecovery(() =>
+          session.authenticate("https://www.figma.com", {
+            waitForCompletion: async (message: string) => {
+              const focusedWindow =
+                BrowserWindow.getFocusedWindow() ?? mainWindow ?? undefined;
+              const dialogOpts: MessageBoxOptions = {
+                type: "info",
+                buttons: ["Done"],
+                title: "Figma Authentication",
+                message: "Sign in to Figma in the browser window that opened.",
+                detail: message,
+              };
+              if (focusedWindow) {
+                await dialog.showMessageBox(focusedWindow, dialogOpts);
+              } else {
+                await dialog.showMessageBox(dialogOpts);
+              }
+            },
+          }),
         );
       }),
   );

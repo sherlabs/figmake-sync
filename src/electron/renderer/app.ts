@@ -882,7 +882,10 @@ async function updateAuthStatus(): Promise<void> {
 }
 
 async function runFigmaAuth(): Promise<void> {
-  // Find the first linked project to use for auth
+  const api = getDesktopApi();
+  const btn = document.querySelector("[data-auth-btn]") as HTMLButtonElement;
+
+  // Find a linked project if available (for project-specific auth)
   let targetProject: ProjectState | undefined;
   for (const p of state.projects.values()) {
     if (p.linkedProject?.linked && p.rootDir) {
@@ -891,27 +894,24 @@ async function runFigmaAuth(): Promise<void> {
     }
   }
 
-  if (!targetProject) {
-    alert("No linked project found.\n\nLink a project first so auth knows which Figma URL to authenticate with.");
-    return;
-  }
-
-  const api = getDesktopApi();
-  const opts: DesktopProjectCommandOptions = { rootDir: targetProject.rootDir, ...targetProject.options };
-
   try {
     setBusy(true);
-    const btn = document.querySelector("[data-auth-btn]") as HTMLButtonElement;
     if (btn) btn.disabled = true;
 
-    await api.authProject(opts);
+    if (targetProject) {
+      const opts: DesktopProjectCommandOptions = { rootDir: targetProject.rootDir, ...targetProject.options };
+      await api.authProject(opts);
+    } else {
+      // No linked project — use standalone auth to figma.com
+      await api.authStandalone();
+    }
+
     await updateAuthStatus();
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     alert(`Figma authentication failed:\n\n${msg}`);
   } finally {
     setBusy(false);
-    const btn = document.querySelector("[data-auth-btn]") as HTMLButtonElement;
     if (btn) btn.disabled = false;
   }
 }
