@@ -787,7 +787,7 @@ function setBusy(busy: boolean): void {
   state.busy = busy;
   ge.busyIndicator.textContent = busy ? "Working…" : "Ready";
   ge.busyIndicator.dataset.busy = String(busy);
-  document.querySelectorAll<HTMLButtonElement>("button:not(.back-button):not([data-action='back-to-home'])")
+  document.querySelectorAll<HTMLButtonElement>("button:not(.back-button):not([data-action='back-to-home']):not(.detail-tab):not([data-tab-link])")
     .forEach((btn) => { btn.disabled = busy; });
 }
 
