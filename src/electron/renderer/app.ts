@@ -654,8 +654,8 @@ function showProgress(project: ProjectState, event: DesktopProgressEvent | null)
     }
   }
 
-  // Switch to sync tab so progress is visible
-  if (state.activeTab !== "sync") switchTab("sync");
+  // Log progress to activity so it's visible in the Logs tab
+  if (event.message) appendActivity(project, event.message);
 }
 
 function showResult(project: ProjectState, success: boolean, message: string): void {
@@ -799,8 +799,23 @@ async function runCommand<T>(
   operation: () => Promise<T>,
 ): Promise<T | undefined> {
   appendActivity(project, `Started: ${label}`);
+  const startTime = Date.now();
+  let elapsedTimer: ReturnType<typeof setInterval> | null = null;
+
   try {
     setBusy(true);
+
+    // Show elapsed time in the progress title
+    if (project.viewElement) {
+      const els = getPanelEls(project.viewElement);
+      elapsedTimer = setInterval(() => {
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        const mins = Math.floor(elapsed / 60);
+        const secs = elapsed % 60;
+        const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+        if (els.progressTitle) els.progressTitle.textContent = `Running… ${timeStr}`;
+      }, 1000);
+    }
 
     const result = await operation();
 
@@ -833,6 +848,7 @@ async function runCommand<T>(
     return undefined;
   } finally {
     setBusy(false);
+    if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
     if (progressHeartbeatTimer) { clearInterval(progressHeartbeatTimer); progressHeartbeatTimer = null; }
     showProgress(project, null);
   }
