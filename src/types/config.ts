@@ -73,6 +73,7 @@ export interface CommandRuntimeOptions {
   yes?: boolean;
   prompt?: boolean;
   strategy?: PullStrategy;
+  headless?: boolean;
   progress?: (message: string) => void;
   confirm?: (message: string, defaultValue?: boolean) => Promise<boolean>;
   waitForManualAction?: (message: string) => Promise<void>;

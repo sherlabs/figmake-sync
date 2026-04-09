@@ -269,12 +269,48 @@ function bindProjectEvents(project: ProjectState): void {
 function syncOptions(project: ProjectState): void {
   if (!project.viewElement) return;
   const v = project.viewElement;
+  const dryRun = v.querySelector<HTMLInputElement>("[data-option='dry-run']")?.checked || false;
+  const verbose = v.querySelector<HTMLInputElement>("[data-option='verbose']")?.checked || false;
+  const showBrowser = v.querySelector<HTMLInputElement>("[data-option='show-browser']")?.checked || false;
+  const prompt = v.querySelector<HTMLInputElement>("[data-option='prompt']")?.checked || false;
+  const strategy = (v.querySelector<HTMLSelectElement>("[data-option='strategy']")?.value as PullStrategy | undefined) ?? "backup";
+
   project.options = {
-    dryRun: v.querySelector<HTMLInputElement>("[data-option='dry-run']")?.checked || false,
-    verbose: v.querySelector<HTMLInputElement>("[data-option='verbose']")?.checked || false,
-    prompt: v.querySelector<HTMLInputElement>("[data-option='prompt']")?.checked || false,
-    strategy: (v.querySelector<HTMLSelectElement>("[data-option='strategy']")?.value as PullStrategy | undefined) ?? "backup",
+    dryRun,
+    verbose,
+    prompt,
+    strategy,
+    headless: !showBrowser,
   };
+
+  // Persist settings
+  localStorage.setItem("figmake-settings", JSON.stringify({ dryRun, verbose, showBrowser, prompt, strategy }));
+}
+
+function restoreOptions(project: ProjectState): void {
+  if (!project.viewElement) return;
+  const v = project.viewElement;
+
+  try {
+    const saved = JSON.parse(localStorage.getItem("figmake-settings") || "{}") as Record<string, unknown>;
+
+    const setCheck = (name: string, value: boolean) => {
+      const el = v.querySelector<HTMLInputElement>(`[data-option='${name}']`);
+      if (el) el.checked = value;
+    };
+
+    setCheck("dry-run", Boolean(saved.dryRun));
+    setCheck("verbose", Boolean(saved.verbose));
+    setCheck("show-browser", Boolean(saved.showBrowser));
+    setCheck("prompt", Boolean(saved.prompt));
+
+    const strategyEl = v.querySelector<HTMLSelectElement>("[data-option='strategy']");
+    if (strategyEl && typeof saved.strategy === "string") strategyEl.value = saved.strategy;
+  } catch {
+    // Ignore parse errors
+  }
+
+  syncOptions(project);
 }
 
 function renderProject(project: ProjectState): void {
@@ -721,6 +757,7 @@ function addProject(): void {
   state.projects.set(id, project);
   ge.projectGrid.appendChild(cardElement);
   bindProjectEvents(project);
+  restoreOptions(project);
   renderProjectCard(project);
   updateHomeUI();
   openProject(id);

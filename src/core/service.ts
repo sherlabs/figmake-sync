@@ -813,10 +813,17 @@ export class FigmakeSyncService {
     const store = new ProjectStateStore(rootDir);
     await store.ensureStateDirectories();
     const config = await store.loadProjectConfig();
+
+    // Apply runtime headless override if provided
+    if (options.headless != null) {
+      config.adapter.headlessAutomation = options.headless;
+    }
+
     const logger = await createProjectLogger({
       logFilePath: store.nextLogFilePath(commandName),
       level: config.logging.level,
       verbose: options.verbose ?? false,
+      ...(options.verbose && options.progress ? { onLog: options.progress } : {}),
     });
 
     return {

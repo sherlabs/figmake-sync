@@ -271,6 +271,7 @@ function toRuntimeOptions(options: DesktopProjectCommandOptions) {
     verbose: options.verbose,
     prompt: options.prompt,
     strategy: options.strategy,
+    ...(options.headless != null ? { headless: options.headless } : {}),
     progress: (message: string) => {
       sendProgress(message);
     },

@@ -19,6 +19,7 @@ export interface DesktopProjectCommandOptions {
   verbose: boolean;
   prompt: boolean;
   strategy: PullStrategy;
+  headless?: boolean;
 }
 
 export interface DesktopProgressEvent {
