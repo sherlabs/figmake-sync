@@ -243,9 +243,28 @@ git push origin v0.1.0
 
 Important notes:
 
-- The workflow builds unsigned installers by default so releases work without Apple or Windows signing secrets.
-- macOS installers can still be downloaded from GitHub Releases, but Gatekeeper may warn until code signing and notarization are added.
-- If you want signed production releases later, this workflow is the right place to add signing and notarization secrets.
+- macOS builds are signed and notarized if Apple signing secrets are configured (recommended for distribution).
+- Windows builds are unsigned by default.
+- Unsigned macOS builds can be run locally by right-clicking the app and selecting "Open" from the context menu.
+
+### macOS Code Signing Setup
+
+To enable signed and notarized macOS builds, add these secrets to your GitHub repository (Settings > Secrets and variables > Actions):
+
+1. **CSC_LINK** - Base64-encoded .p12 certificate file (Developer ID Application certificate)
+   ```bash
+   base64 -i "YourCertificate.p12" | pbcopy
+   ```
+
+2. **CSC_KEY_PASSWORD** - Password for the .p12 certificate
+
+3. **APPLE_ID** - Your Apple Developer account email address
+
+4. **APPLE_APP_SPECIFIC_PASSWORD** - App-specific password from [appleid.apple.com](https://appleid.apple.com) (Security > App-Specific Passwords)
+
+5. **APPLE_TEAM_ID** - Your Apple Developer Team ID (found in [developer.apple.com](https://developer.apple.com) under Membership)
+
+If these secrets are not configured, the workflow will fall back to unsigned builds.
 
 ## Quick Start
 

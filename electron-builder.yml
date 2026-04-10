@@ -12,6 +12,10 @@ publish: null
 mac:
   category: public.app-category.developer-tools
   icon: icon.icns
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.inherit.plist
   target:
     - target: dmg
       arch:
@@ -20,6 +24,8 @@ mac:
       arch:
         - universal
   artifactName: ${productName}-${version}-mac-${arch}.${ext}
+  notarize:
+    teamId: ${env.APPLE_TEAM_ID}
 win:
   icon: icon-256.png
   target:

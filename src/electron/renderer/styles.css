@@ -193,6 +193,26 @@ input::placeholder {
   align-items: center;
 }
 
+.home-footer {
+  margin-top: auto;
+  padding-top: 2rem;
+  text-align: center;
+}
+
+.home-footer .link-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 0.75rem;
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
+}
+
+.home-footer .link-btn:hover {
+  color: #b42318;
+  text-decoration: underline;
+}
+
 /* Auth Status */
 .auth-status {
   display: flex;

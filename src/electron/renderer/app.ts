@@ -995,8 +995,11 @@ async function checkRuntimeDeps(): Promise<void> {
     if (!deps.node) {
       missing.push("Node.js — install from https://nodejs.org or via nvm: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash && nvm install --lts");
     }
-    if (!deps.npm && !deps.pnpm) {
-      missing.push("A package manager (npm or pnpm) — npm comes with Node.js, or install pnpm: npm install -g pnpm");
+    if (!deps.npm) {
+      missing.push("npm — usually bundled with Node.js. Reinstall Node or run: nvm install --lts");
+    }
+    if (!deps.pnpm) {
+      missing.push("pnpm — install via: npm install -g pnpm");
     }
 
     if (missing.length === 0) {

@@ -19,6 +19,7 @@
     "app": "npm run build && electron .",
     "package:dir": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --dir",
     "dist:mac": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg zip --universal",
+    "dist:mac:signed": "npm run build && electron-builder --mac dmg zip --universal",
     "dist:win": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win nsis --x64",
     "dist:all": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg zip --universal --win nsis --x64",
     "lint": "eslint .",

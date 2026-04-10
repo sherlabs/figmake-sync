@@ -14,7 +14,6 @@ concurrency:
 
 env:
   PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
-  CSC_IDENTITY_AUTO_DISCOVERY: "false"
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
@@ -48,7 +47,7 @@ jobs:
         include:
           - os: macos-latest
             label: macOS
-            script: dist:mac
+            script: dist:mac:signed
             artifact: figmake-sync-macos-installers
           - os: windows-latest
             label: Windows
@@ -73,7 +72,18 @@ jobs:
       - name: Run tests
         run: npm test
 
-      - name: Build release artifacts
+      - name: Build release artifacts (macOS signed)
+        if: matrix.os == 'macos-latest'
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run ${{ matrix.script }}
+
+      - name: Build release artifacts (Windows)
+        if: matrix.os == 'windows-latest'
         run: npm run ${{ matrix.script }}
 
       - name: Upload release artifacts
