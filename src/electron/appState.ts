@@ -38,4 +38,12 @@ export class DesktopAppStateStore {
       ...patch,
     });
   }
+
+  async clear(): Promise<DesktopAppState> {
+    if (await fs.pathExists(this.statePath)) {
+      await fs.remove(this.statePath);
+    }
+
+    return desktopAppStateSchema.parse({});
+  }
 }

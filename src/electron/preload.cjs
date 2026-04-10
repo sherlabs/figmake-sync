@@ -8,10 +8,14 @@ const api = {
     ipcRenderer.invoke("figmake:select-project-directory"),
   inspectProject: (rootDir) =>
     ipcRenderer.invoke("figmake:inspect-project", rootDir),
+  deleteProject: (rootDir) =>
+    ipcRenderer.invoke("figmake:delete-project", rootDir),
+  clearAppData: () => ipcRenderer.invoke("figmake:clear-app-data"),
   installBrowser: () => ipcRenderer.invoke("figmake:install-browser"),
   initProject: (rootDir, figmaMakeUrl) =>
     ipcRenderer.invoke("figmake:init-project", { rootDir, figmaMakeUrl }),
   authProject: (options) => ipcRenderer.invoke("figmake:auth-project", options),
+  authStandalone: () => ipcRenderer.invoke("figmake:auth-standalone"),
   pullProject: (options) => ipcRenderer.invoke("figmake:pull-project", options),
   syncFromFigma: (options) =>
     ipcRenderer.invoke("figmake:sync-from-figma", options),
@@ -23,6 +27,13 @@ const api = {
   openInEditor: (editor, path) =>
     ipcRenderer.invoke("figmake:open-in-editor", { editor, path }),
   readFile: (filePath) => ipcRenderer.invoke("figmake:read-file", filePath),
+  addIgnorePattern: (rootDir, pattern) =>
+    ipcRenderer.invoke("figmake:add-ignore-pattern", rootDir, pattern),
+  removeIgnorePattern: (rootDir, pattern) =>
+    ipcRenderer.invoke("figmake:remove-ignore-pattern", rootDir, pattern),
+  getCustomIgnorePatterns: (rootDir) =>
+    ipcRenderer.invoke("figmake:get-custom-ignore-patterns", rootDir),
+  checkRuntimeDeps: () => ipcRenderer.invoke("figmake:check-runtime-deps"),
   checkAuthStatus: () => ipcRenderer.invoke("figmake:check-auth-status"),
   onProgress: (listener) => {
     const wrappedListener = (_event, payload) => {

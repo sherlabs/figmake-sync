@@ -171,6 +171,18 @@ export function resolvePlaywrightCliPath(): string {
   return path.join(path.dirname(packageJsonPath), cliEntry);
 }
 
+export async function isBrowserInstalled(): Promise<boolean> {
+  try {
+    const pw = await import("playwright");
+    const executablePath = pw.chromium.executablePath();
+    if (!executablePath) return false;
+    const fsModule = await import("fs-extra");
+    return fsModule.pathExists(executablePath);
+  } catch {
+    return false;
+  }
+}
+
 export function isPlaywrightBrowserMissingError(error: unknown): boolean {
   const message = getErrorMessage(error);
 

@@ -25,6 +25,7 @@ export async function createProjectLogger(options: {
   logFilePath: string;
   level: LogLevel;
   verbose?: boolean;
+  onLog?: (message: string) => void;
 }): Promise<Logger> {
   await fs.ensureDir(path.dirname(options.logFilePath));
 
@@ -42,13 +43,37 @@ export async function createProjectLogger(options: {
     sync: false,
   });
 
+  const streams: pino.StreamEntry[] = [
+    { stream: consoleStream },
+    { stream: fileStream },
+  ];
+
+  // Forward log messages to the UI when verbose and callback provided
+  if (options.onLog) {
+    const onLog = options.onLog;
+    const callbackStream = new (await import("node:stream")).Writable({
+      write(chunk: Buffer, _encoding, callback) {
+        try {
+          const parsed = JSON.parse(chunk.toString()) as { msg?: string; message?: string };
+          const msg = parsed.msg || parsed.message;
+          if (msg) onLog(msg);
+        } catch {
+          // Not JSON, forward raw
+          onLog(chunk.toString().trim());
+        }
+        callback();
+      },
+    });
+    streams.push({ stream: callbackStream });
+  }
+
   return pino(
     {
       level: resolveLogLevel(options.level, options.verbose ?? false),
       base: null,
       timestamp: pino.stdTimeFunctions.isoTime,
     },
-    pino.multistream([{ stream: consoleStream }, { stream: fileStream }]),
+    pino.multistream(streams),
   );
 }
 

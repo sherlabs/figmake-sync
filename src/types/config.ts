@@ -7,7 +7,13 @@ export const DEFAULT_IGNORE_PATTERNS = [
   ".figmake-sync/**",
   ".git/**",
   "node_modules/**",
+  "dist/**",
+  ".gitignore",
   ".DS_Store",
+  "package-lock.json",
+  "yarn.lock",
+  "pnpm-lock.yaml",
+  "bun.lock",
 ] as const;
 
 export const DEFAULT_POST_UPLOAD_PROMPT_TEMPLATE =
@@ -67,6 +73,7 @@ export interface CommandRuntimeOptions {
   yes?: boolean;
   prompt?: boolean;
   strategy?: PullStrategy;
+  headless?: boolean;
   progress?: (message: string) => void;
   confirm?: (message: string, defaultValue?: boolean) => Promise<boolean>;
   waitForManualAction?: (message: string) => Promise<void>;

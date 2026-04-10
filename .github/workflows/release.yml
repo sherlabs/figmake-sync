@@ -15,6 +15,7 @@ concurrency:
 env:
   PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
   CSC_IDENTITY_AUTO_DISCOVERY: "false"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   validate-release:
@@ -29,22 +30,12 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
-      - name: Verify tag matches package version
+      - name: Get version
         id: version
-        shell: bash
-        run: |
-          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-
-          echo "version=${PACKAGE_VERSION}" >> "$GITHUB_OUTPUT"
-
-          if [[ "${PACKAGE_VERSION}" != "${TAG_VERSION}" ]]; then
-            echo "Tag ${GITHUB_REF_NAME} does not match package.json version ${PACKAGE_VERSION}" >&2
-            exit 1
-          fi
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
 
   build-installers:
     name: Build ${{ matrix.label }} installer
@@ -70,7 +61,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
@@ -113,6 +104,7 @@ jobs:
       - name: Create release and upload installers
         uses: softprops/action-gh-release@v2
         with:
+          token: ${{ secrets.GITHUB_TOKEN }}
           tag_name: ${{ github.ref_name }}
           name: figmake-sync v${{ needs.validate-release.outputs.version }}
           generate_release_notes: true

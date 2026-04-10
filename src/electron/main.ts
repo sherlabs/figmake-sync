@@ -14,9 +14,11 @@ import {
 import fs from "fs-extra";
 
 import {
+  isBrowserInstalled,
   installPlaywrightBrowser,
   isPlaywrightBrowserMissingError,
 } from "../browser/install.js";
+import { BrowserSessionManager } from "../browser/session.js";
 import { FigmakeSyncService } from "../core/service.js";
 import type {
   DesktopAppState,
@@ -222,7 +224,17 @@ async function withOperationLock<T>(operation: () => Promise<T>): Promise<T> {
   }
 }
 
-async function ensureBrowserRuntimeInstalledInteractively(): Promise<void> {
+let browserInstalledThisSession = false;
+
+async function ensureBrowserRuntimeInstalled(): Promise<void> {
+  if (browserInstalledThisSession) return;
+
+  const installed = await isBrowserInstalled();
+  if (installed) {
+    browserInstalledThisSession = true;
+    return;
+  }
+
   const approved = await confirmFromUi(
     "Playwright Chromium is not installed yet. Install the local browser runtime now?",
     true,
@@ -243,11 +255,16 @@ async function ensureBrowserRuntimeInstalledInteractively(): Promise<void> {
       });
     },
   });
+
+  browserInstalledThisSession = true;
 }
 
 async function withBrowserInstallRecovery<T>(
   operation: () => Promise<T>,
 ): Promise<T> {
+  // Proactive check — install once before first attempt
+  await ensureBrowserRuntimeInstalled();
+
   try {
     return await operation();
   } catch (error) {
@@ -255,8 +272,10 @@ async function withBrowserInstallRecovery<T>(
       throw error;
     }
 
-    sendProgress("Playwright browser runtime is missing");
-    await ensureBrowserRuntimeInstalledInteractively();
+    // Edge case: binary disappeared after check (e.g. antivirus quarantine)
+    browserInstalledThisSession = false;
+    sendProgress("Playwright browser runtime is missing — reinstalling");
+    await ensureBrowserRuntimeInstalled();
     sendProgress("Retrying after browser install");
 
     return operation();
@@ -270,6 +289,7 @@ function toRuntimeOptions(options: DesktopProjectCommandOptions) {
     verbose: options.verbose,
     prompt: options.prompt,
     strategy: options.strategy,
+    ...(options.headless != null ? { headless: options.headless } : {}),
     progress: (message: string) => {
       sendProgress(message);
     },
@@ -284,6 +304,22 @@ async function persistLastProjectRoot(
   return getAppStateStore().update({
     lastProjectRoot: rootDir,
   });
+}
+
+async function clearPersistedProjectRootIfMatches(
+  rootDir: string,
+): Promise<boolean> {
+  const appState = await getAppStateStore().load();
+
+  if (appState.lastProjectRoot !== rootDir) {
+    return false;
+  }
+
+  await getAppStateStore().update({
+    lastProjectRoot: null,
+  });
+
+  return true;
 }
 
 function getSharedBrowserProfileDir(): string {
@@ -351,6 +387,168 @@ function registerIpcHandlers(): void {
     return service.inspectProject(rootDir);
   });
 
+  ipcMain.handle(
+    "figmake:delete-project",
+    async (_event, rootDir: string) =>
+      withOperationLock(async () => {
+        const focusedWindow =
+          BrowserWindow.getFocusedWindow() ?? mainWindow ?? undefined;
+        const approved = await confirmFromUi(
+          "Delete this project from figmake-sync? This removes the local .figmake-sync state for the selected folder but keeps your actual project files.",
+        );
+
+        if (!approved) {
+          throw new Error("Project deletion cancelled.");
+        }
+
+        const { resolveProjectStatePaths } = await import("../core/state.js");
+        const paths = resolveProjectStatePaths(rootDir);
+        const removedStateDir = await fs.pathExists(paths.stateDir);
+
+        if (removedStateDir) {
+          await fs.remove(paths.stateDir);
+        }
+
+        const removedFromAppState =
+          await clearPersistedProjectRootIfMatches(rootDir);
+
+        if (focusedWindow) {
+          await dialog.showMessageBox(focusedWindow, {
+            type: "info",
+            buttons: ["OK"],
+            message: "Project deleted from figmake-sync.",
+            detail:
+              "The local .figmake-sync state was removed. Your actual project files were left untouched.",
+          });
+        }
+
+        return {
+          removedStateDir,
+          removedFromAppState,
+        };
+      }),
+  );
+
+  ipcMain.handle(
+    "figmake:clear-app-data",
+    async () =>
+      withOperationLock(async () => {
+        const approved = await confirmFromUi(
+          "Clear figmake-sync app data? This signs you out of the shared Figma browser session and forgets saved app preferences. Local project folders and their .figmake-sync state will not be removed.",
+        );
+
+        if (!approved) {
+          throw new Error("Clear app data cancelled.");
+        }
+
+        const userDataDir = app.getPath("userData");
+        const targets = [
+          path.join(userDataDir, "browser-profile"),
+          path.join(userDataDir, "artifacts"),
+          path.join(userDataDir, "app-state.json"),
+          path.join(userDataDir, "startup.log"),
+        ];
+        const clearedPaths: string[] = [];
+
+        for (const target of targets) {
+          if (await fs.pathExists(target)) {
+            await fs.remove(target);
+            clearedPaths.push(target);
+          }
+        }
+
+        await getAppStateStore().clear();
+        browserInstalledThisSession = false;
+
+        return {
+          clearedPaths,
+        };
+      }),
+  );
+
+  ipcMain.handle(
+    "figmake:add-ignore-pattern",
+    async (_event, rootDir: string, pattern: string) => {
+      const { ProjectStateStore } = await import("../core/state.js");
+      const { updateProjectConfig } = await import("../types/config.js");
+      const store = new ProjectStateStore(rootDir);
+      const config = await store.loadProjectConfig();
+      const ignore = [...config.sync.ignore];
+      if (!ignore.includes(pattern)) {
+        ignore.push(pattern);
+        const updated = updateProjectConfig(config, {
+          sync: { ...config.sync, ignore },
+        } as Partial<typeof config>);
+        await store.saveProjectConfig(updated);
+      }
+      return { success: true };
+    },
+  );
+
+  ipcMain.handle(
+    "figmake:remove-ignore-pattern",
+    async (_event, rootDir: string, pattern: string) => {
+      const { ProjectStateStore } = await import("../core/state.js");
+      const { updateProjectConfig, DEFAULT_IGNORE_PATTERNS } = await import(
+        "../types/config.js"
+      );
+      // Prevent removing default patterns
+      if ((DEFAULT_IGNORE_PATTERNS as readonly string[]).includes(pattern)) {
+        return { success: false, reason: "Cannot remove a default ignore pattern" };
+      }
+      const store = new ProjectStateStore(rootDir);
+      const config = await store.loadProjectConfig();
+      const ignore = config.sync.ignore.filter((p: string) => p !== pattern);
+      const updated = updateProjectConfig(config, {
+        sync: { ...config.sync, ignore },
+      } as Partial<typeof config>);
+      await store.saveProjectConfig(updated);
+      return { success: true };
+    },
+  );
+
+  ipcMain.handle(
+    "figmake:get-custom-ignore-patterns",
+    async (_event, rootDir: string) => {
+      const { ProjectStateStore } = await import("../core/state.js");
+      const { DEFAULT_IGNORE_PATTERNS } = await import("../types/config.js");
+      const store = new ProjectStateStore(rootDir);
+      const config = await store.loadProjectConfig();
+      const defaults = new Set<string>(DEFAULT_IGNORE_PATTERNS);
+      return config.sync.ignore.filter((p: string) => !defaults.has(p));
+    },
+  );
+
+  ipcMain.handle("figmake:check-runtime-deps", async () => {
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const execFileAsync = promisify(execFile);
+
+    async function getVersion(cmd: string): Promise<string | null> {
+      try {
+        const { stdout } = await execFileAsync(cmd, ["--version"], {
+          timeout: 5_000,
+          env: { ...process.env, PATH: process.env.PATH },
+        });
+        return stdout.trim();
+      } catch {
+        return null;
+      }
+    }
+
+    const [nodeVersion, npmVersion, pnpmVersion] = await Promise.all([
+      getVersion("node"),
+      getVersion("npm"),
+      getVersion("pnpm"),
+    ]);
+
+    return {
+      node: nodeVersion,
+      npm: npmVersion,
+      pnpm: pnpmVersion,
+    };
+  });
+
   ipcMain.handle("figmake:install-browser", async () =>
     withOperationLock(async () =>
       installPlaywrightBrowser({
@@ -392,6 +590,52 @@ function registerIpcHandlers(): void {
         await persistLastProjectRoot(options.rootDir);
         return withBrowserInstallRecovery(() =>
           service.auth(toRuntimeOptions(options)),
+        );
+      }),
+  );
+
+  ipcMain.handle(
+    "figmake:auth-standalone",
+    async () =>
+      withOperationLock(async () => {
+        const profileDir = getSharedBrowserProfileDir();
+        const artifactsDir = path.join(app.getPath("userData"), "artifacts");
+        await fs.ensureDir(profileDir);
+        await fs.ensureDir(artifactsDir);
+
+        const pino = (await import("pino")).default;
+        const logger = pino({ level: "silent" });
+
+        const session = new BrowserSessionManager({
+          userDataDir: profileDir,
+          artifactsDir,
+          headless: false,
+          slowMoMs: 0,
+          actionTimeoutMs: 30_000,
+          navigationTimeoutMs: 60_000,
+          browserChannel: undefined,
+          logger,
+        });
+
+        await withBrowserInstallRecovery(() =>
+          session.authenticate("https://www.figma.com", {
+            waitForCompletion: async (message: string) => {
+              const focusedWindow =
+                BrowserWindow.getFocusedWindow() ?? mainWindow ?? undefined;
+              const dialogOpts: MessageBoxOptions = {
+                type: "info",
+                buttons: ["Done"],
+                title: "Figma Authentication",
+                message: "Sign in to Figma in the browser window that opened.",
+                detail: message,
+              };
+              if (focusedWindow) {
+                await dialog.showMessageBox(focusedWindow, dialogOpts);
+              } else {
+                await dialog.showMessageBox(dialogOpts);
+              }
+            },
+          }),
         );
       }),
   );
@@ -541,8 +785,8 @@ async function bootstrap(): Promise<void> {
   service = new FigmakeSyncService({ sharedBrowserProfileDir: sharedProfileDir });
 
   if (process.platform === "darwin") {
-    app.dock.setIcon(getAppIconPath());
-    await app.dock.show();
+    app.dock?.setIcon(getAppIconPath());
+    await app.dock?.show();
   }
 
   Menu.setApplicationMenu(null);

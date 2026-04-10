@@ -5,13 +5,10 @@ import type {
 } from "../contracts.js";
 import type {
   ProjectInspection,
-  PullResult,
-  PushResult,
   StatusResult,
-  VerifyResult,
 } from "../../core/service.js";
-import type { ManifestDiff } from "../../diff/manifest.js";
-import type { BrowserInstallResult } from "../../browser/install.js";
+import type { PullStrategy } from "../../types/config.js";
+import type { ManifestDiff, ManifestEntry, ManifestRename } from "../../diff/manifest.js";
 
 declare global {
   interface Window {
@@ -38,8 +35,6 @@ interface AppState {
   currentView: "home" | "detail";
 }
 
-const HEARTBEAT_INTERVAL_MS = 1000;
-
 const ge = {
   homeScreen: document.querySelector<HTMLElement>("[data-home-screen]")!,
   projectDetail: document.querySelector<HTMLElement>("[data-project-detail]")!,
@@ -52,6 +47,8 @@ const ge = {
   detailPath: document.querySelector<HTMLElement>("[data-detail-path]")!,
   busyIndicator: document.querySelector<HTMLElement>("[data-busy-indicator]")!,
   onboardingBanner: document.querySelector<HTMLElement>("[data-onboarding-banner]")!,
+  depsBanner: document.querySelector<HTMLElement>("[data-deps-banner]")!,
+  depsStatus: document.querySelector<HTMLElement>("[data-deps-status]")!,
 };
 
 const state: AppState = {
@@ -64,7 +61,6 @@ const state: AppState = {
 
 let projectIdCounter = 0;
 let progressHeartbeatTimer: number | null = null;
-let lastProgressEvent: DesktopProgressEvent | null = null;
 
 function getDesktopApi(): FigmakeDesktopApi {
   if (!window.figmakeSyncDesktop) throw new Error("Desktop bridge unavailable");
@@ -103,7 +99,7 @@ function createProjectCard(projectId: string): HTMLElement {
   });
 
   card.querySelector("[data-action='delete-project']")!
-    .addEventListener("click", (e) => { e.stopPropagation(); deleteProject(projectId); });
+    .addEventListener("click", (e) => { e.stopPropagation(); void deleteProject(projectId); });
 
   return card;
 }
@@ -220,34 +216,42 @@ function bindProjectEvents(project: ProjectState): void {
 
   // Choose folder
   view.querySelectorAll("[data-action='choose-folder']").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const inspection = await getDesktopApi().selectProjectDirectory();
-      if (inspection) {
-        project.rootDir = inspection.rootDir;
-        project.linkedProject = inspection;
-        renderProject(project);
-        renderProjectCard(project);
-      }
+    btn.addEventListener("click", () => {
+      void (async () => {
+        const inspection = await getDesktopApi().selectProjectDirectory();
+        if (inspection) {
+          project.rootDir = inspection.rootDir;
+          project.linkedProject = inspection;
+          renderProject(project);
+          renderProjectCard(project);
+        }
+      })();
     });
   });
 
   // Link form
-  els.initForm.addEventListener("submit", async (e) => {
+  els.initForm.addEventListener("submit", (e) => {
     e.preventDefault();
-    const url = els.urlInput.value.trim();
-    if (!url || !project.rootDir) return;
-    project.figmaMakeUrl = url;
-    await runCommand(project, "Link", () => getDesktopApi().initProject(project.rootDir, url));
+    void (async () => {
+      const url = els.urlInput.value.trim();
+      if (!url || !project.rootDir) return;
+      project.figmaMakeUrl = url;
+      await runCommand(project, "Link", () => getDesktopApi().initProject(project.rootDir, url));
+    })();
   });
 
   // Command buttons
   view.querySelectorAll<HTMLButtonElement>("[data-command]").forEach((btn) => {
-    btn.addEventListener("click", () => handleCommand(project, btn.dataset.command!));
+    btn.addEventListener("click", () => {
+      void handleCommand(project, btn.dataset.command!);
+    });
   });
 
   // Options
   view.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-option]").forEach((inp) => {
-    inp.addEventListener("change", () => syncOptions(project));
+    inp.addEventListener("change", () => {
+      void syncOptions(project);
+    });
   });
 
   // Tab-link buttons (e.g. "View logs →")
@@ -262,17 +266,59 @@ function bindProjectEvents(project: ProjectState): void {
       els.outputBlock.setAttribute("hidden", "");
     });
   });
+
+  view.querySelectorAll("[data-action='delete-project']").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      void deleteProject(project.id);
+    });
+  });
 }
 
 function syncOptions(project: ProjectState): void {
   if (!project.viewElement) return;
   const v = project.viewElement;
+  const dryRun = v.querySelector<HTMLInputElement>("[data-option='dry-run']")?.checked || false;
+  const verbose = v.querySelector<HTMLInputElement>("[data-option='verbose']")?.checked || false;
+  const showBrowser = v.querySelector<HTMLInputElement>("[data-option='show-browser']")?.checked || false;
+  const prompt = v.querySelector<HTMLInputElement>("[data-option='prompt']")?.checked || false;
+  const strategy = (v.querySelector<HTMLSelectElement>("[data-option='strategy']")?.value as PullStrategy | undefined) ?? "backup";
+
   project.options = {
-    dryRun: v.querySelector<HTMLInputElement>("[data-option='dry-run']")?.checked || false,
-    verbose: v.querySelector<HTMLInputElement>("[data-option='verbose']")?.checked || false,
-    prompt: v.querySelector<HTMLInputElement>("[data-option='prompt']")?.checked || false,
-    strategy: (v.querySelector<HTMLSelectElement>("[data-option='strategy']")?.value as any) || "backup",
+    dryRun,
+    verbose,
+    prompt,
+    strategy,
+    headless: !showBrowser,
   };
+
+  // Persist settings
+  localStorage.setItem("figmake-settings", JSON.stringify({ dryRun, verbose, showBrowser, prompt, strategy }));
+}
+
+function restoreOptions(project: ProjectState): void {
+  if (!project.viewElement) return;
+  const v = project.viewElement;
+
+  try {
+    const saved = JSON.parse(localStorage.getItem("figmake-settings") || "{}") as Record<string, unknown>;
+
+    const setCheck = (name: string, value: boolean) => {
+      const el = v.querySelector<HTMLInputElement>(`[data-option='${name}']`);
+      if (el) el.checked = value;
+    };
+
+    setCheck("dry-run", Boolean(saved.dryRun));
+    setCheck("verbose", Boolean(saved.verbose));
+    setCheck("show-browser", Boolean(saved.showBrowser));
+    setCheck("prompt", Boolean(saved.prompt));
+
+    const strategyEl = v.querySelector<HTMLSelectElement>("[data-option='strategy']");
+    if (strategyEl && typeof saved.strategy === "string") strategyEl.value = saved.strategy;
+  } catch {
+    // Ignore parse errors
+  }
+
+  syncOptions(project);
 }
 
 function renderProject(project: ProjectState): void {
@@ -311,7 +357,6 @@ function renderProject(project: ProjectState): void {
   }
 
   // Setup tab
-  const folderName = project.rootDir ? project.rootDir.split("/").pop() || project.rootDir : "No folder selected";
   if (els.folderPathDisplay) els.folderPathDisplay.textContent = project.rootDir || "No folder selected";
   els.linkedUrl.textContent = info?.config?.figmaMakeUrl || "—";
   els.metaLastPull.textContent = formatTs(info?.metadata?.lastPullAt);
@@ -345,6 +390,8 @@ function renderChanges(project: ProjectState): void {
   if (!diff || (diff.added.length === 0 && diff.modified.length === 0 && diff.deleted.length === 0 && diff.renamed.length === 0)) {
     els.changesEmpty.removeAttribute("hidden");
     els.changesLayout.setAttribute("hidden", "");
+    // Still render ignored section even when no changes
+    void renderIgnoredFiles(project, els.fileList);
     return;
   }
 
@@ -357,12 +404,12 @@ function renderChanges(project: ProjectState): void {
   // Clear and populate file list
   els.fileList.innerHTML = "";
 
-  const files: Array<{ path: string; status: "added" | "modified" | "deleted" | "renamed"; entry: any }> = [];
+  const files: Array<{ path: string; status: "added" | "modified" | "deleted" | "renamed"; entry: ManifestEntry | ManifestRename }> = [];
 
   diff.added.forEach((entry) => files.push({ path: entry.path, status: "added", entry }));
   diff.modified.forEach(({ current }) => files.push({ path: current.path, status: "modified", entry: current }));
   diff.deleted.forEach((entry) => files.push({ path: entry.path, status: "deleted", entry }));
-  diff.renamed.forEach((rename) => files.push({ path: rename.to, status: "renamed", entry: { path: rename.to, from: rename.from } }));
+  diff.renamed.forEach((rename) => files.push({ path: rename.to, status: "renamed", entry: rename }));
 
   files.forEach((file) => {
     const item = document.createElement("div");
@@ -375,15 +422,74 @@ function renderChanges(project: ProjectState): void {
     badge.className = `file-badge ${file.status}`;
     badge.textContent = file.status;
 
+    const ignoreBtn = document.createElement("button");
+    ignoreBtn.className = "file-ignore-btn";
+    ignoreBtn.title = `Ignore ${file.path}`;
+    ignoreBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 2l12 12M14 2L2 14" stroke-linecap="round"/></svg>`;
+    ignoreBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      void ignoreFile(project, file.path);
+    });
+
     item.innerHTML = `
       <span class="file-icon ${file.status}">${iconSvg}</span>
       <span class="file-name" title="${file.path}">${file.path.split("/").pop()}</span>
     `;
     item.appendChild(badge);
+    item.appendChild(ignoreBtn);
 
-    item.addEventListener("click", () => selectFile(project, file.path, file.status, file.entry));
+    item.addEventListener("click", () => {
+      void selectFile(project, file.path, file.status);
+    });
     els.fileList.appendChild(item);
   });
+
+  void renderIgnoredFiles(project, els.fileList);
+}
+
+async function renderIgnoredFiles(project: ProjectState, container: HTMLElement): Promise<void> {
+  if (!project.rootDir) return;
+  const api = getDesktopApi();
+  try {
+    const patterns = await api.getCustomIgnorePatterns(project.rootDir);
+    if (patterns.length === 0) return;
+
+    // Remove any existing ignored section
+    container.querySelector(".ignored-files-section")?.remove();
+
+    const section = document.createElement("div");
+    section.className = "ignored-files-section";
+
+    const header = document.createElement("div");
+    header.className = "ignored-files-header";
+    header.textContent = `Ignored (${patterns.length})`;
+    section.appendChild(header);
+
+    patterns.forEach((pattern) => {
+      const item = document.createElement("div");
+      item.className = "file-item ignored";
+
+      const unignoreBtn = document.createElement("button");
+      unignoreBtn.className = "file-unignore-btn";
+      unignoreBtn.title = `Stop ignoring ${pattern}`;
+      unignoreBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8h8" stroke-linecap="round"/><path d="M8 4v8" stroke-linecap="round"/></svg>`;
+      unignoreBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        void unignoreFile(project, pattern);
+      });
+
+      item.innerHTML = `
+        <span class="file-icon ignored"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" opacity="0.5"><circle cx="8" cy="8" r="6"/><path d="M4 12L12 4" stroke-linecap="round"/></svg></span>
+        <span class="file-name ignored-name" title="${pattern}">${pattern}</span>
+      `;
+      item.appendChild(unignoreBtn);
+      section.appendChild(item);
+    });
+
+    container.appendChild(section);
+  } catch {
+    // Config not available yet
+  }
 }
 
 function getFileIcon(status: string): string {
@@ -398,7 +504,7 @@ function getFileIcon(status: string): string {
 
 let lastLoadedFileContent = "";
 
-async function selectFile(project: ProjectState, filePath: string, status: string, _entry: any): Promise<void> {
+async function selectFile(project: ProjectState, filePath: string, status: string): Promise<void> {
   if (!project.viewElement) return;
   const els = getPanelEls(project.viewElement);
 
@@ -485,6 +591,37 @@ function renderFullFile(content: string, cls: "addition" | "deletion" | "context
   }).join("");
 }
 
+async function ignoreFile(project: ProjectState, filePath: string): Promise<void> {
+  if (!project.rootDir) return;
+  const api = getDesktopApi();
+  try {
+    await api.addIgnorePattern(project.rootDir, filePath);
+    // Re-run status to refresh the changes list
+    const opts: DesktopProjectCommandOptions = { rootDir: project.rootDir, ...project.options };
+    const statusResult = await api.statusProject(opts);
+    project.lastDiff = statusResult.diff ?? null;
+    await refreshProject(project);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    alert(`Failed to ignore file:\n\n${msg}`);
+  }
+}
+
+async function unignoreFile(project: ProjectState, pattern: string): Promise<void> {
+  if (!project.rootDir) return;
+  const api = getDesktopApi();
+  try {
+    await api.removeIgnorePattern(project.rootDir, pattern);
+    const opts: DesktopProjectCommandOptions = { rootDir: project.rootDir, ...project.options };
+    const statusResult = await api.statusProject(opts);
+    project.lastDiff = statusResult.diff ?? null;
+    await refreshProject(project);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    alert(`Failed to un-ignore file:\n\n${msg}`);
+  }
+}
+
 function escapeHtml(text: string): string {
   const div = document.createElement("div");
   div.textContent = text;
@@ -561,8 +698,8 @@ function showProgress(project: ProjectState, event: DesktopProgressEvent | null)
     }
   }
 
-  // Switch to sync tab so progress is visible
-  if (state.activeTab !== "sync") switchTab("sync");
+  // Log progress to activity so it's visible in the Logs tab
+  if (event.message) appendActivity(project, event.message);
 }
 
 function showResult(project: ProjectState, success: boolean, message: string): void {
@@ -628,19 +765,36 @@ function addProject(): void {
   state.projects.set(id, project);
   ge.projectGrid.appendChild(cardElement);
   bindProjectEvents(project);
+  restoreOptions(project);
   renderProjectCard(project);
   updateHomeUI();
   openProject(id);
 }
 
-function deleteProject(id: string): void {
+async function deleteProject(id: string): Promise<void> {
   const project = state.projects.get(id);
   if (!project) return;
-  if (confirm(`Remove "${getProjectName(project)}" from your projects?`)) {
+
+  try {
+    if (project.rootDir) {
+      await getDesktopApi().deleteProject(project.rootDir);
+    }
+
     project.cardElement?.remove();
     state.projects.delete(id);
-    if (state.activeProjectId === id) showHome();
+
+    if (state.activeProjectId === id) {
+      showHome();
+    }
+
     updateHomeUI();
+    await updateAuthStatus();
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+
+    if (!/cancelled/i.test(msg)) {
+      alert(`Failed to delete project:\n\n${msg}`);
+    }
   }
 }
 
@@ -690,11 +844,22 @@ function updateHomeUI(): void {
   ge.noProjects.toggleAttribute("hidden", state.projects.size > 0);
 }
 
+function resetProjectsUi(): void {
+  state.projects.clear();
+  state.activeProjectId = null;
+  state.currentView = "home";
+  ge.projectGrid.innerHTML = "";
+  ge.detailContent.innerHTML = "";
+  ge.homeScreen.removeAttribute("hidden");
+  ge.projectDetail.setAttribute("hidden", "");
+  updateHomeUI();
+}
+
 function setBusy(busy: boolean): void {
   state.busy = busy;
   ge.busyIndicator.textContent = busy ? "Working…" : "Ready";
   ge.busyIndicator.dataset.busy = String(busy);
-  document.querySelectorAll<HTMLButtonElement>("button:not(.back-button):not([data-action='back-to-home'])")
+  document.querySelectorAll<HTMLButtonElement>("button:not(.back-button):not([data-action='back-to-home']):not(.detail-tab):not([data-tab-link])")
     .forEach((btn) => { btn.disabled = busy; });
 }
 
@@ -706,9 +871,23 @@ async function runCommand<T>(
   operation: () => Promise<T>,
 ): Promise<T | undefined> {
   appendActivity(project, `Started: ${label}`);
+  const startTime = Date.now();
+  let elapsedTimer: ReturnType<typeof setInterval> | null = null;
+
   try {
     setBusy(true);
-    lastProgressEvent = null;
+
+    // Show elapsed time in the progress title
+    if (project.viewElement) {
+      const els = getPanelEls(project.viewElement);
+      elapsedTimer = setInterval(() => {
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        const mins = Math.floor(elapsed / 60);
+        const secs = elapsed % 60;
+        const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+        if (els.progressTitle) els.progressTitle.textContent = `Running… ${timeStr}`;
+      }, 1000);
+    }
 
     const result = await operation();
 
@@ -741,6 +920,7 @@ async function runCommand<T>(
     return undefined;
   } finally {
     setBusy(false);
+    if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
     if (progressHeartbeatTimer) { clearInterval(progressHeartbeatTimer); progressHeartbeatTimer = null; }
     showProgress(project, null);
   }
@@ -799,7 +979,7 @@ async function openInEditor(editor: "code" | "cursor" | "windsurf" | "claude" | 
 
 // ── Onboarding ─────────────────────────────────────────────────────────────────
 
-async function checkBrowserInstalled(): Promise<void> {
+function checkBrowserInstalled(): void {
   // The API doesn't expose a direct check; show the banner and dismiss after install
   // If we've already dismissed it (stored in localStorage), skip
   if (!localStorage.getItem("browserInstalled")) {
@@ -807,27 +987,85 @@ async function checkBrowserInstalled(): Promise<void> {
   }
 }
 
+async function checkRuntimeDeps(): Promise<void> {
+  try {
+    const deps = await getDesktopApi().checkRuntimeDeps();
+    const missing: string[] = [];
+
+    if (!deps.node) {
+      missing.push("Node.js — install from https://nodejs.org or via nvm: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash && nvm install --lts");
+    }
+    if (!deps.npm && !deps.pnpm) {
+      missing.push("A package manager (npm or pnpm) — npm comes with Node.js, or install pnpm: npm install -g pnpm");
+    }
+
+    if (missing.length === 0) {
+      ge.depsBanner.setAttribute("hidden", "");
+      return;
+    }
+
+    ge.depsStatus.innerHTML = missing
+      .map((m) => `<span class="deps-line">${m}</span>`)
+      .join("");
+    ge.depsBanner.removeAttribute("hidden");
+  } catch {
+    // Ignore — deps check is best-effort
+  }
+}
+
 async function installBrowser(): Promise<void> {
   const project = state.activeProjectId ? state.projects.get(state.activeProjectId) : null;
-  
+  const statusEl = document.querySelector("[data-onboarding-status]") as HTMLElement;
+  const btn = document.querySelector("[data-action='install-browser']") as HTMLButtonElement;
+
   try {
     setBusy(true);
+    if (btn) btn.disabled = true;
+    if (statusEl) statusEl.textContent = "Downloading browser...";
+
     const result = await getDesktopApi().installBrowser();
     ge.onboardingBanner.setAttribute("hidden", "");
     localStorage.setItem("browserInstalled", "1");
-    
+
     // Show success in active project if open
     if (project) {
-      const msg = result.status === "already-installed" 
-        ? "Browser already installed ✓" 
-        : "Browser installed successfully ✓";
+      const msg = result.status === "already-installed"
+        ? "Browser already installed"
+        : "Browser installed successfully";
       showResult(project, true, msg);
+    } else {
+      // Show success in banner briefly before hiding
+      if (statusEl) statusEl.textContent = "Browser installed successfully";
     }
   } catch (error) {
     console.error("Browser install failed:", error);
+    if (statusEl) statusEl.textContent = `Install failed: ${error instanceof Error ? error.message : "Unknown error"}`;
     if (project) {
       const msg = error instanceof Error ? error.message : "Browser install failed";
       showResult(project, false, msg);
+    }
+  } finally {
+    setBusy(false);
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function clearAppData(): Promise<void> {
+  try {
+    setBusy(true);
+    await getDesktopApi().clearAppData();
+    localStorage.removeItem("figmake-settings");
+    resetProjectsUi();
+    await updateAuthStatus();
+    showHome();
+    alert(
+      "figmake-sync app data was cleared.\n\nThe shared Figma session and remembered app state were removed. Local project folders were left untouched.",
+    );
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+
+    if (!/cancelled/i.test(msg)) {
+      alert(`Failed to clear app data:\n\n${msg}`);
     }
   } finally {
     setBusy(false);
@@ -870,7 +1108,10 @@ async function updateAuthStatus(): Promise<void> {
 }
 
 async function runFigmaAuth(): Promise<void> {
-  // Find the first linked project to use for auth
+  const api = getDesktopApi();
+  const btn = document.querySelector("[data-auth-btn]") as HTMLButtonElement;
+
+  // Find a linked project if available (for project-specific auth)
   let targetProject: ProjectState | undefined;
   for (const p of state.projects.values()) {
     if (p.linkedProject?.linked && p.rootDir) {
@@ -879,27 +1120,24 @@ async function runFigmaAuth(): Promise<void> {
     }
   }
 
-  if (!targetProject) {
-    alert("No linked project found.\n\nLink a project first so auth knows which Figma URL to authenticate with.");
-    return;
-  }
-
-  const api = getDesktopApi();
-  const opts: DesktopProjectCommandOptions = { rootDir: targetProject.rootDir, ...targetProject.options };
-
   try {
     setBusy(true);
-    const btn = document.querySelector("[data-auth-btn]") as HTMLButtonElement;
     if (btn) btn.disabled = true;
 
-    await api.authProject(opts);
+    if (targetProject) {
+      const opts: DesktopProjectCommandOptions = { rootDir: targetProject.rootDir, ...targetProject.options };
+      await api.authProject(opts);
+    } else {
+      // No linked project — use standalone auth to figma.com
+      await api.authStandalone();
+    }
+
     await updateAuthStatus();
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     alert(`Figma authentication failed:\n\n${msg}`);
   } finally {
     setBusy(false);
-    const btn = document.querySelector("[data-auth-btn]") as HTMLButtonElement;
     if (btn) btn.disabled = false;
   }
 }
@@ -912,10 +1150,16 @@ async function boot(): Promise<void> {
   // Home actions
   document.querySelectorAll("[data-action='add-project'], [data-action='add-first-project']")
     .forEach((btn) => btn.addEventListener("click", addProject));
+  document.querySelector("[data-action='clear-app-data']")
+    ?.addEventListener("click", () => {
+      void clearAppData();
+    });
 
   // Figma Auth (home level)
   document.querySelector("[data-action='figma-auth']")
-    ?.addEventListener("click", runFigmaAuth);
+    ?.addEventListener("click", () => {
+      void runFigmaAuth();
+    });
 
   // Back button
   document.querySelector("[data-action='back-to-home']")!
@@ -931,25 +1175,44 @@ async function boot(): Promise<void> {
 
   // Editor open buttons
   document.querySelector("[data-action='open-vscode']")
-    ?.addEventListener("click", () => openInEditor("code"));
+    ?.addEventListener("click", () => {
+      void openInEditor("code");
+    });
   document.querySelector("[data-action='open-cursor']")
-    ?.addEventListener("click", () => openInEditor("cursor"));
+    ?.addEventListener("click", () => {
+      void openInEditor("cursor");
+    });
   document.querySelector("[data-action='open-windsurf']")
-    ?.addEventListener("click", () => openInEditor("windsurf"));
+    ?.addEventListener("click", () => {
+      void openInEditor("windsurf");
+    });
   document.querySelector("[data-action='open-claude']")
-    ?.addEventListener("click", () => openInEditor("claude"));
+    ?.addEventListener("click", () => {
+      void openInEditor("claude");
+    });
   document.querySelector("[data-action='open-zed']")
-    ?.addEventListener("click", () => openInEditor("zed"));
+    ?.addEventListener("click", () => {
+      void openInEditor("zed");
+    });
 
   // Onboarding install-browser button (top level)
   document.querySelector("[data-action='install-browser']")
-    ?.addEventListener("click", installBrowser);
+    ?.addEventListener("click", () => {
+      void installBrowser();
+    });
 
   // Progress events
   api.onProgress?.((event: DesktopProgressEvent) => {
-    lastProgressEvent = event;
     const project = state.activeProjectId ? state.projects.get(state.activeProjectId) : null;
-    if (project) showProgress(project, event);
+    if (project) {
+      showProgress(project, event);
+    } else {
+      // Show progress in onboarding banner if no project is active
+      const statusEl = document.querySelector("[data-onboarding-status]") as HTMLElement;
+      if (statusEl && event.message) {
+        statusEl.textContent = event.message;
+      }
+    }
   });
 
   // Restore last project
@@ -966,7 +1229,16 @@ async function boot(): Promise<void> {
   } catch { /* no saved state */ }
 
   // Check browser installation
-  await checkBrowserInstalled();
+  checkBrowserInstalled();
+
+  // Check runtime dependencies (node, npm, pnpm)
+  await checkRuntimeDeps();
+
+  // Dismiss deps banner
+  document.querySelector("[data-action='dismiss-deps']")
+    ?.addEventListener("click", () => {
+      ge.depsBanner.setAttribute("hidden", "");
+    });
 
   // Check Figma auth status
   await updateAuthStatus();

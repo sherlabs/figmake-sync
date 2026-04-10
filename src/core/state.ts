@@ -129,6 +129,15 @@ export class ProjectStateStore {
     await this.saveProjectConfig(config);
     await this.writeMetadata(syncMetadataSchema.parse({ version: 1 }));
 
+    // Create .gitignore if it doesn't exist
+    const gitignorePath = path.join(this.paths.rootDir, ".gitignore");
+    if (!(await fs.pathExists(gitignorePath))) {
+      await fs.writeFile(
+        gitignorePath,
+        ["node_modules/", ".figmake-sync/", ""].join("\n"),
+      );
+    }
+
     return config;
   }
 
@@ -224,11 +233,19 @@ export class ProjectStateStore {
     return fs.mkdtemp(path.join(this.paths.tmpDir, `${prefix}-`));
   }
 
+  private static readonly PRESERVE_ON_REPLACE = new Set([
+    STATE_DIRECTORY_NAME,
+    "node_modules",
+    "dist",
+    ".gitignore",
+    ".git",
+  ]);
+
   async replaceWorkspaceFrom(sourceDir: string): Promise<void> {
     const workspaceEntries = await fs.readdir(this.paths.rootDir);
 
     for (const entry of workspaceEntries) {
-      if (entry === STATE_DIRECTORY_NAME) {
+      if (ProjectStateStore.PRESERVE_ON_REPLACE.has(entry)) {
         continue;
       }
 

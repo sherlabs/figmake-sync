@@ -8,6 +8,7 @@ files:
   - package.json
 asar: true
 npmRebuild: false
+publish: null
 mac:
   category: public.app-category.developer-tools
   icon: icon.icns
