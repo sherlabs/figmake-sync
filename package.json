@@ -2,6 +2,7 @@
   "name": "figmake-sync",
   "version": "0.1.0",
   "description": "Local-first macOS sync agent for Figma Make projects using an authenticated local browser session.",
+  "author": "figmake",
   "type": "module",
   "bin": {
     "figmake-sync": "./dist/src/cli/index.js"

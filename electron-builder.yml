@@ -24,8 +24,7 @@ mac:
       arch:
         - universal
   artifactName: ${productName}-${version}-mac-${arch}.${ext}
-  notarize:
-    teamId: ${env.APPLE_TEAM_ID}
+  notarize: true
 win:
   icon: icon-256.png
   target:
