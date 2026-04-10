@@ -519,6 +519,36 @@ function registerIpcHandlers(): void {
     },
   );
 
+  ipcMain.handle("figmake:check-runtime-deps", async () => {
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const execFileAsync = promisify(execFile);
+
+    async function getVersion(cmd: string): Promise<string | null> {
+      try {
+        const { stdout } = await execFileAsync(cmd, ["--version"], {
+          timeout: 5_000,
+          env: { ...process.env, PATH: process.env.PATH },
+        });
+        return stdout.trim();
+      } catch {
+        return null;
+      }
+    }
+
+    const [nodeVersion, npmVersion, pnpmVersion] = await Promise.all([
+      getVersion("node"),
+      getVersion("npm"),
+      getVersion("pnpm"),
+    ]);
+
+    return {
+      node: nodeVersion,
+      npm: npmVersion,
+      pnpm: pnpmVersion,
+    };
+  });
+
   ipcMain.handle("figmake:install-browser", async () =>
     withOperationLock(async () =>
       installPlaywrightBrowser({

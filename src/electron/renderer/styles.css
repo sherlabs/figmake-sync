@@ -1050,6 +1050,44 @@ pre {
   font-weight: 600;
 }
 
+/* Deps Warning Banner */
+.warning-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.875rem 1rem;
+  margin-bottom: 1.5rem;
+  border-radius: var(--radius-sm);
+  background: rgb(245 158 11 / 0.06);
+  border: 1px solid rgb(245 158 11 / 0.25);
+  color: var(--ink);
+}
+
+.warning-banner svg {
+  color: #d97706;
+  flex-shrink: 0;
+}
+
+.deps-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  font-size: 0.875rem;
+}
+
+.deps-text strong {
+  font-weight: 600;
+}
+
+.deps-text span,
+.deps-line {
+  color: var(--muted);
+  font-size: 0.8125rem;
+  display: block;
+  word-break: break-word;
+}
+
 .onboarding-text span {
   color: var(--muted);
   font-size: 0.8125rem;

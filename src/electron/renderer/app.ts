@@ -47,6 +47,8 @@ const ge = {
   detailPath: document.querySelector<HTMLElement>("[data-detail-path]")!,
   busyIndicator: document.querySelector<HTMLElement>("[data-busy-indicator]")!,
   onboardingBanner: document.querySelector<HTMLElement>("[data-onboarding-banner]")!,
+  depsBanner: document.querySelector<HTMLElement>("[data-deps-banner]")!,
+  depsStatus: document.querySelector<HTMLElement>("[data-deps-status]")!,
 };
 
 const state: AppState = {
@@ -985,6 +987,32 @@ function checkBrowserInstalled(): void {
   }
 }
 
+async function checkRuntimeDeps(): Promise<void> {
+  try {
+    const deps = await getDesktopApi().checkRuntimeDeps();
+    const missing: string[] = [];
+
+    if (!deps.node) {
+      missing.push("Node.js — install from https://nodejs.org or via nvm: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash && nvm install --lts");
+    }
+    if (!deps.npm && !deps.pnpm) {
+      missing.push("A package manager (npm or pnpm) — npm comes with Node.js, or install pnpm: npm install -g pnpm");
+    }
+
+    if (missing.length === 0) {
+      ge.depsBanner.setAttribute("hidden", "");
+      return;
+    }
+
+    ge.depsStatus.innerHTML = missing
+      .map((m) => `<span class="deps-line">${m}</span>`)
+      .join("");
+    ge.depsBanner.removeAttribute("hidden");
+  } catch {
+    // Ignore — deps check is best-effort
+  }
+}
+
 async function installBrowser(): Promise<void> {
   const project = state.activeProjectId ? state.projects.get(state.activeProjectId) : null;
   const statusEl = document.querySelector("[data-onboarding-status]") as HTMLElement;
@@ -1202,6 +1230,15 @@ async function boot(): Promise<void> {
 
   // Check browser installation
   checkBrowserInstalled();
+
+  // Check runtime dependencies (node, npm, pnpm)
+  await checkRuntimeDeps();
+
+  // Dismiss deps banner
+  document.querySelector("[data-action='dismiss-deps']")
+    ?.addEventListener("click", () => {
+      ge.depsBanner.setAttribute("hidden", "");
+    });
 
   // Check Figma auth status
   await updateAuthStatus();

@@ -38,6 +38,12 @@ export interface ClearAppDataResult {
   clearedPaths: string[];
 }
 
+export interface RuntimeDepsResult {
+  node: string | null;
+  npm: string | null;
+  pnpm: string | null;
+}
+
 export interface FigmakeDesktopApi {
   loadAppState(): Promise<DesktopAppState>;
   selectProjectDirectory(): Promise<ProjectInspection | null>;
@@ -58,6 +64,7 @@ export interface FigmakeDesktopApi {
   addIgnorePattern(rootDir: string, pattern: string): Promise<{ success: boolean }>;
   removeIgnorePattern(rootDir: string, pattern: string): Promise<{ success: boolean }>;
   getCustomIgnorePatterns(rootDir: string): Promise<string[]>;
+  checkRuntimeDeps(): Promise<RuntimeDepsResult>;
   checkAuthStatus(): Promise<{ authenticated: boolean; profileDir: string }>;
   onProgress(listener: (event: DesktopProgressEvent) => void): () => void;
 }
