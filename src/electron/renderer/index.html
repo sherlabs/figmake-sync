@@ -44,6 +44,9 @@
                 Authenticate
               </button>
             </div>
+            <button class="secondary danger-outline" data-action="clear-app-data">
+              Clear App Data
+            </button>
             <button class="primary" data-action="add-project">
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M8 3v10M3 8h10" stroke-linecap="round"/></svg>
               New Project
@@ -378,6 +381,23 @@
                 <input type="url" placeholder="https://www.figma.com/make/..." data-figma-url />
                 <button class="primary" type="submit">Link Project</button>
               </form>
+            </section>
+
+            <section class="panel danger-panel">
+              <div class="panel-head">
+                <div>
+                  <p class="panel-label danger-label">Danger Zone</p>
+                  <h2>Delete Project</h2>
+                </div>
+              </div>
+              <p class="danger-copy">
+                Remove this project from figmake-sync and delete its local <code>.figmake-sync</code> state directory. Your actual project files stay in place.
+              </p>
+              <div class="setup-actions-row">
+                <button class="secondary danger-outline" data-action="delete-project">
+                  Delete Project
+                </button>
+              </div>
             </section>
           </div>
 

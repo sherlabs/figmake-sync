@@ -29,10 +29,21 @@ export interface DesktopProgressEvent {
   scope?: "browser-install" | "command";
 }
 
+export interface DeleteProjectResult {
+  removedStateDir: boolean;
+  removedFromAppState: boolean;
+}
+
+export interface ClearAppDataResult {
+  clearedPaths: string[];
+}
+
 export interface FigmakeDesktopApi {
   loadAppState(): Promise<DesktopAppState>;
   selectProjectDirectory(): Promise<ProjectInspection | null>;
   inspectProject(rootDir: string): Promise<ProjectInspection>;
+  deleteProject(rootDir: string): Promise<DeleteProjectResult>;
+  clearAppData(): Promise<ClearAppDataResult>;
   installBrowser(): Promise<BrowserInstallResult>;
   initProject(rootDir: string, figmaMakeUrl: string): Promise<InitResult>;
   authProject(options: DesktopProjectCommandOptions): Promise<void>;

@@ -86,6 +86,19 @@ button.secondary {
   border: 1px solid var(--line);
 }
 
+button.danger-outline,
+.danger-outline {
+  color: #b42318;
+  background: #fff6f5;
+  border: 1px solid #f3b2ab;
+}
+
+button.danger-outline:hover:not(:disabled),
+.danger-outline:hover:not(:disabled) {
+  background: #fee4e2;
+  border-color: #ea8b84;
+}
+
 button.ghost {
   color: var(--muted);
   background: transparent;
@@ -1444,6 +1457,21 @@ button.primary.small {
   display: flex;
   gap: 0.75rem;
   flex-wrap: wrap;
+}
+
+.danger-panel {
+  border-color: #f3b2ab;
+  background: linear-gradient(180deg, #fffafa 0%, #fff6f5 100%);
+}
+
+.danger-label {
+  color: #b42318;
+}
+
+.danger-copy {
+  margin: 0 0 1rem;
+  color: #7a271a;
+  font-size: 0.875rem;
 }
 
 /* Changes Tab - GitHub-style diff viewer */

@@ -14,6 +14,9 @@ const api: FigmakeDesktopApi = {
     ipcRenderer.invoke("figmake:select-project-directory"),
   inspectProject: (rootDir) =>
     ipcRenderer.invoke("figmake:inspect-project", rootDir),
+  deleteProject: (rootDir) =>
+    ipcRenderer.invoke("figmake:delete-project", rootDir),
+  clearAppData: () => ipcRenderer.invoke("figmake:clear-app-data"),
   installBrowser: () => ipcRenderer.invoke("figmake:install-browser"),
   initProject: (rootDir, figmaMakeUrl) =>
     ipcRenderer.invoke("figmake:init-project", { rootDir, figmaMakeUrl }),

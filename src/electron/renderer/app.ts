@@ -97,7 +97,7 @@ function createProjectCard(projectId: string): HTMLElement {
   });
 
   card.querySelector("[data-action='delete-project']")!
-    .addEventListener("click", (e) => { e.stopPropagation(); deleteProject(projectId); });
+    .addEventListener("click", (e) => { e.stopPropagation(); void deleteProject(projectId); });
 
   return card;
 }
@@ -262,6 +262,12 @@ function bindProjectEvents(project: ProjectState): void {
     btn.addEventListener("click", () => {
       els.output.textContent = "";
       els.outputBlock.setAttribute("hidden", "");
+    });
+  });
+
+  view.querySelectorAll("[data-action='delete-project']").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      void deleteProject(project.id);
     });
   });
 }
@@ -763,14 +769,30 @@ function addProject(): void {
   openProject(id);
 }
 
-function deleteProject(id: string): void {
+async function deleteProject(id: string): Promise<void> {
   const project = state.projects.get(id);
   if (!project) return;
-  if (confirm(`Remove "${getProjectName(project)}" from your projects?`)) {
+
+  try {
+    if (project.rootDir) {
+      await getDesktopApi().deleteProject(project.rootDir);
+    }
+
     project.cardElement?.remove();
     state.projects.delete(id);
-    if (state.activeProjectId === id) showHome();
+
+    if (state.activeProjectId === id) {
+      showHome();
+    }
+
     updateHomeUI();
+    await updateAuthStatus();
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+
+    if (!/cancelled/i.test(msg)) {
+      alert(`Failed to delete project:\n\n${msg}`);
+    }
   }
 }
 
@@ -818,6 +840,17 @@ function switchTab(tabName: string): void {
 
 function updateHomeUI(): void {
   ge.noProjects.toggleAttribute("hidden", state.projects.size > 0);
+}
+
+function resetProjectsUi(): void {
+  state.projects.clear();
+  state.activeProjectId = null;
+  state.currentView = "home";
+  ge.projectGrid.innerHTML = "";
+  ge.detailContent.innerHTML = "";
+  ge.homeScreen.removeAttribute("hidden");
+  ge.projectDetail.setAttribute("hidden", "");
+  updateHomeUI();
 }
 
 function setBusy(busy: boolean): void {
@@ -989,6 +1022,28 @@ async function installBrowser(): Promise<void> {
   }
 }
 
+async function clearAppData(): Promise<void> {
+  try {
+    setBusy(true);
+    await getDesktopApi().clearAppData();
+    localStorage.removeItem("figmake-settings");
+    resetProjectsUi();
+    await updateAuthStatus();
+    showHome();
+    alert(
+      "figmake-sync app data was cleared.\n\nThe shared Figma session and remembered app state were removed. Local project folders were left untouched.",
+    );
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+
+    if (!/cancelled/i.test(msg)) {
+      alert(`Failed to clear app data:\n\n${msg}`);
+    }
+  } finally {
+    setBusy(false);
+  }
+}
+
 // ── Figma Auth (Home Level) ───────────────────────────────────────────────────
 
 async function updateAuthStatus(): Promise<void> {
@@ -1067,6 +1122,10 @@ async function boot(): Promise<void> {
   // Home actions
   document.querySelectorAll("[data-action='add-project'], [data-action='add-first-project']")
     .forEach((btn) => btn.addEventListener("click", addProject));
+  document.querySelector("[data-action='clear-app-data']")
+    ?.addEventListener("click", () => {
+      void clearAppData();
+    });
 
   // Figma Auth (home level)
   document.querySelector("[data-action='figma-auth']")
