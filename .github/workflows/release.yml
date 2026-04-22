@@ -4,14 +4,12 @@ on:
   push:
     branches:
       - main
-    tags:
-      - "v*"
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-main
   cancel-in-progress: false
 
 env:
@@ -19,28 +17,43 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
-  validate-release:
-    name: Validate Release Tag
+  bump-version:
+    name: Bump patch version and tag
     runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
     outputs:
-      version: ${{ steps.version.outputs.version }}
+      version: ${{ steps.bump.outputs.version }}
+      tag: ${{ steps.bump.outputs.tag }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
 
-      - name: Get version
-        id: version
-        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+      - name: Bump patch version and tag
+        id: bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          npm version patch --no-git-tag-version
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v${VERSION}"
+          git add package.json package-lock.json
+          git commit -m "chore: bump version to ${VERSION} [skip ci]"
+          git tag "${TAG}"
+          git push origin main --follow-tags
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
   build-installers:
     name: Build ${{ matrix.label }} installer
-    needs: validate-release
+    needs: bump-version
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -58,6 +71,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.bump-version.outputs.tag }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -103,7 +118,7 @@ jobs:
   publish-release:
     name: Publish GitHub Release
     needs:
-      - validate-release
+      - bump-version
       - build-installers
     runs-on: ubuntu-latest
     steps:
@@ -117,8 +132,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          tag_name: ${{ github.ref_name }}
-          name: figmake-sync v${{ needs.validate-release.outputs.version }}
+          tag_name: ${{ needs.bump-version.outputs.tag }}
+          name: figmake-sync v${{ needs.bump-version.outputs.version }}
           generate_release_notes: true
           files: |
             release-artifacts/*.dmg
