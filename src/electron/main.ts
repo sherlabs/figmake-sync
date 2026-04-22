@@ -682,6 +682,17 @@ function registerIpcHandlers(): void {
   );
 
   ipcMain.handle(
+    "figmake:rebaseline-project",
+    async (_event, options: DesktopProjectCommandOptions) =>
+      withOperationLock(async () => {
+        await persistLastProjectRoot(options.rootDir);
+        const result = await service.rebaseline(toRuntimeOptions(options));
+        void trackEvent("rebaseline", { files_snapshotted: result.filesSnapshotted });
+        return result;
+      }),
+  );
+
+  ipcMain.handle(
     "figmake:status-project",
     async (_event, options: DesktopProjectCommandOptions) =>
       withOperationLock(async () => {

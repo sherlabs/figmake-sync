@@ -64,6 +64,7 @@ export interface FigmakeDesktopApi {
   addIgnorePattern(rootDir: string, pattern: string): Promise<{ success: boolean }>;
   removeIgnorePattern(rootDir: string, pattern: string): Promise<{ success: boolean }>;
   getCustomIgnorePatterns(rootDir: string): Promise<string[]>;
+  rebaselineProject(options: DesktopProjectCommandOptions): Promise<{ filesSnapshotted: number }>;
   checkRuntimeDeps(): Promise<RuntimeDepsResult>;
   checkAuthStatus(): Promise<{ authenticated: boolean; profileDir: string }>;
   onProgress(listener: (event: DesktopProgressEvent) => void): () => void;

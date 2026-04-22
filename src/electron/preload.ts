@@ -39,6 +39,7 @@ const api: FigmakeDesktopApi = {
     ipcRenderer.invoke("figmake:remove-ignore-pattern", rootDir, pattern),
   getCustomIgnorePatterns: (rootDir) =>
     ipcRenderer.invoke("figmake:get-custom-ignore-patterns", rootDir),
+  rebaselineProject: (options) => ipcRenderer.invoke("figmake:rebaseline-project", options),
   checkRuntimeDeps: () => ipcRenderer.invoke("figmake:check-runtime-deps"),
   checkAuthStatus: () => ipcRenderer.invoke("figmake:check-auth-status"),
   onProgress: (listener) => {

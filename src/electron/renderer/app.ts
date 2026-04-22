@@ -273,6 +273,19 @@ function bindProjectEvents(project: ProjectState): void {
       void deleteProject(project.id);
     });
   });
+
+  view.querySelectorAll("[data-action='rebaseline']").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (!confirm("Reset the change tracking baseline to your current local files?\n\nFuture status checks will compare against what's on disk right now.")) return;
+      void runCommand(project, "Reset Baseline", async () => {
+        const opts = { rootDir: project.rootDir, ...project.options };
+        const result = await getDesktopApi().rebaselineProject(opts);
+        project.lastDiff = null;
+        renderChanges(project);
+        return result;
+      });
+    });
+  });
 }
 
 function syncOptions(project: ProjectState): void {

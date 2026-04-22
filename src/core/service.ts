@@ -272,6 +272,21 @@ export class FigmakeSyncService {
     }
   }
 
+  async rebaseline(options: CommandRuntimeOptions = {}): Promise<{ filesSnapshotted: number }> {
+    const context = await this.loadProjectContext("rebaseline", options);
+    try {
+      notify(options, "scanning local files for rebaseline…");
+      const localManifest = await createManifest(context.rootDir, {
+        ignore: context.config.sync.ignore,
+      });
+      notify(options, "writing new baseline snapshot…");
+      await context.store.writeLastPullState(context.rootDir, localManifest);
+      return { filesSnapshotted: localManifest.files.length };
+    } finally {
+      await flushLogger(context.logger);
+    }
+  }
+
   async pull(options: CommandRuntimeOptions = {}): Promise<PullResult> {
     return this.performPull(options, {
       safeMode: false,
