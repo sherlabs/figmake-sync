@@ -196,6 +196,7 @@ function getPanelEls(view: HTMLElement) {
     changesLayout: view.querySelector<HTMLElement>("[data-changes-layout]")!,
     changesCount: view.querySelector<HTMLElement>("[data-changes-count]")!,
     fileList: view.querySelector<HTMLElement>("[data-file-list]")!,
+    ignoredFilesStandalone: view.querySelector<HTMLElement>("[data-ignored-files-standalone]")!,
     diffFilename: view.querySelector<HTMLElement>("[data-diff-filename]")!,
     diffStats: view.querySelector<HTMLElement>("[data-diff-stats]")!,
     diffContent: view.querySelector<HTMLElement>("[data-diff-content]")!,
@@ -390,10 +391,11 @@ function renderChanges(project: ProjectState): void {
   if (!diff || (diff.added.length === 0 && diff.modified.length === 0 && diff.deleted.length === 0 && diff.renamed.length === 0)) {
     els.changesEmpty.removeAttribute("hidden");
     els.changesLayout.setAttribute("hidden", "");
-    // Still render ignored section even when no changes
-    void renderIgnoredFiles(project, els.fileList);
+    void renderIgnoredFiles(project, els.ignoredFilesStandalone, true);
     return;
   }
+  els.ignoredFilesStandalone.setAttribute("hidden", "");
+  els.ignoredFilesStandalone.innerHTML = "";
 
   els.changesEmpty.setAttribute("hidden", "");
   els.changesLayout.removeAttribute("hidden");
@@ -447,12 +449,16 @@ function renderChanges(project: ProjectState): void {
   void renderIgnoredFiles(project, els.fileList);
 }
 
-async function renderIgnoredFiles(project: ProjectState, container: HTMLElement): Promise<void> {
-  if (!project.rootDir) return;
+async function renderIgnoredFiles(project: ProjectState, container: HTMLElement, standalone = false): Promise<void> {
+  if (!project.rootDir || !project.linkedProject?.linked) {
+    if (standalone) { container.setAttribute("hidden", ""); container.innerHTML = ""; }
+    return;
+  }
+  if (standalone) container.removeAttribute("hidden");
+
   const api = getDesktopApi();
   try {
     const patterns = await api.getCustomIgnorePatterns(project.rootDir);
-    if (patterns.length === 0) return;
 
     // Remove any existing ignored section
     container.querySelector(".ignored-files-section")?.remove();
@@ -462,7 +468,7 @@ async function renderIgnoredFiles(project: ProjectState, container: HTMLElement)
 
     const header = document.createElement("div");
     header.className = "ignored-files-header";
-    header.textContent = `Ignored (${patterns.length})`;
+    header.textContent = `Ignored files${patterns.length > 0 ? ` (${patterns.length})` : ""}`;
     section.appendChild(header);
 
     patterns.forEach((pattern) => {
@@ -470,9 +476,9 @@ async function renderIgnoredFiles(project: ProjectState, container: HTMLElement)
       item.className = "file-item ignored";
 
       const unignoreBtn = document.createElement("button");
-      unignoreBtn.className = "file-unignore-btn";
-      unignoreBtn.title = `Stop ignoring ${pattern}`;
-      unignoreBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8h8" stroke-linecap="round"/><path d="M8 4v8" stroke-linecap="round"/></svg>`;
+      unignoreBtn.className = "file-unignore-btn danger";
+      unignoreBtn.title = `Remove ${pattern} from ignore list`;
+      unignoreBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M2 2l12 12M14 2L2 14" stroke-linecap="round"/></svg>`;
       unignoreBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         void unignoreFile(project, pattern);
@@ -485,6 +491,33 @@ async function renderIgnoredFiles(project: ProjectState, container: HTMLElement)
       item.appendChild(unignoreBtn);
       section.appendChild(item);
     });
+
+    // Add pattern input row
+    const addRow = document.createElement("div");
+    addRow.className = "ignore-add-row";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "ignore-add-input";
+    input.placeholder = "Add pattern, e.g. dist/ or *.log";
+    const addBtn = document.createElement("button");
+    addBtn.className = "ignore-add-btn";
+    addBtn.textContent = "Add";
+    const doAdd = async () => {
+      const val = input.value.trim();
+      if (!val || !project.rootDir) return;
+      try {
+        await api.addIgnorePattern(project.rootDir, val);
+        input.value = "";
+        await renderIgnoredFiles(project, container, standalone);
+      } catch (err) {
+        alert(`Failed to add pattern: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    };
+    addBtn.addEventListener("click", () => { void doAdd(); });
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") void doAdd(); });
+    addRow.appendChild(input);
+    addRow.appendChild(addBtn);
+    section.appendChild(addRow);
 
     container.appendChild(section);
   } catch {
