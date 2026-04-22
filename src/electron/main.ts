@@ -20,6 +20,7 @@ import {
 } from "../browser/install.js";
 import { BrowserSessionManager } from "../browser/session.js";
 import { FigmakeSyncService } from "../core/service.js";
+import { trackEvent } from "./analytics.js";
 import type {
   DesktopAppState,
   DesktopProjectCommandOptions,
@@ -567,6 +568,7 @@ function registerIpcHandlers(): void {
     "figmake:init-project",
     async (_event, payload: { rootDir: string; figmaMakeUrl: string }) =>
       withOperationLock(async () => {
+        void trackEvent("init_project");
         sendProgress("initializing local project");
         const result = await service.init(
           payload.figmaMakeUrl,
@@ -587,6 +589,7 @@ function registerIpcHandlers(): void {
     "figmake:auth-project",
     async (_event, options: DesktopProjectCommandOptions) =>
       withOperationLock(async () => {
+        void trackEvent("auth_project");
         await persistLastProjectRoot(options.rootDir);
         return withBrowserInstallRecovery(() =>
           service.auth(toRuntimeOptions(options)),
@@ -645,9 +648,17 @@ function registerIpcHandlers(): void {
     async (_event, options: DesktopProjectCommandOptions) =>
       withOperationLock(async () => {
         await persistLastProjectRoot(options.rootDir);
-        return withBrowserInstallRecovery(() =>
+        const result = await withBrowserInstallRecovery(() =>
           service.pull(toRuntimeOptions(options)),
         );
+        void trackEvent("pull", {
+          files_added: result.remoteSummary.added,
+          files_modified: result.remoteSummary.modified,
+          files_deleted: result.remoteSummary.deleted,
+          files_total: result.remoteSummary.total,
+          extracted_files: result.extractedFiles,
+        });
+        return result;
       }),
   );
 
@@ -656,9 +667,17 @@ function registerIpcHandlers(): void {
     async (_event, options: DesktopProjectCommandOptions) =>
       withOperationLock(async () => {
         await persistLastProjectRoot(options.rootDir);
-        return withBrowserInstallRecovery(() =>
+        const result = await withBrowserInstallRecovery(() =>
           service.syncFromFigma(toRuntimeOptions(options)),
         );
+        void trackEvent("sync", {
+          files_added: result.remoteSummary.added,
+          files_modified: result.remoteSummary.modified,
+          files_deleted: result.remoteSummary.deleted,
+          files_total: result.remoteSummary.total,
+          extracted_files: result.extractedFiles,
+        });
+        return result;
       }),
   );
 
@@ -667,7 +686,15 @@ function registerIpcHandlers(): void {
     async (_event, options: DesktopProjectCommandOptions) =>
       withOperationLock(async () => {
         await persistLastProjectRoot(options.rootDir);
-        return service.status(toRuntimeOptions(options));
+        const result = await service.status(toRuntimeOptions(options));
+        void trackEvent("status", {
+          files_added: result.summary.added,
+          files_modified: result.summary.modified,
+          files_deleted: result.summary.deleted,
+          files_total: result.summary.total,
+          has_baseline: result.hasBaseline ? 1 : 0,
+        });
+        return result;
       }),
   );
 
@@ -676,9 +703,17 @@ function registerIpcHandlers(): void {
     async (_event, options: DesktopProjectCommandOptions) =>
       withOperationLock(async () => {
         await persistLastProjectRoot(options.rootDir);
-        return withBrowserInstallRecovery(() =>
+        const result = await withBrowserInstallRecovery(() =>
           service.push(toRuntimeOptions(options)),
         );
+        void trackEvent("push", {
+          files_added: result.summary.added,
+          files_modified: result.summary.modified,
+          files_deleted: result.summary.deleted,
+          files_total: result.summary.total,
+          unresolved: result.unresolved.length,
+        });
+        return result;
       }),
   );
 
@@ -687,9 +722,16 @@ function registerIpcHandlers(): void {
     async (_event, options: DesktopProjectCommandOptions) =>
       withOperationLock(async () => {
         await persistLastProjectRoot(options.rootDir);
-        return withBrowserInstallRecovery(() =>
+        const result = await withBrowserInstallRecovery(() =>
           service.verify(toRuntimeOptions(options)),
         );
+        void trackEvent("verify", {
+          drift_files_total: result.drift.summary.total,
+          drift_files_added: result.drift.summary.added,
+          drift_files_modified: result.drift.summary.modified,
+          drift_files_deleted: result.drift.summary.deleted,
+        });
+        return result;
       }),
   );
 
@@ -778,6 +820,7 @@ async function bootstrap(): Promise<void> {
   await app.whenReady();
 
   await writeStartupLog("Electron app bootstrap started.");
+  void trackEvent("app_launch", { platform: process.platform, version: app.getVersion() });
 
   // Initialize service with shared browser profile so auth is global
   const sharedProfileDir = path.join(app.getPath("userData"), "browser-profile");
