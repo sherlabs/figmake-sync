@@ -171,7 +171,11 @@ export const DEFAULT_FIGMA_MAKE_SELECTORS: SelectorMap = {
   quickOpenInput: [
     'input[placeholder*="Open"]',
     'input[placeholder*="Go to"]',
+    'input[placeholder*="Search"]',
+    'input[placeholder*="file"]',
     '[role="dialog"] input[type="search"]',
+    '[role="combobox"][aria-label*="file" i]',
+    '[role="dialog"] input[type="text"]',
   ],
 };
 
@@ -605,6 +609,7 @@ class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSession {
         const folder = await this.findTreeItem(segment, treeRoot, "folder");
         await folder.scrollIntoViewIfNeeded();
         await folder.click();
+        await this.handle.page.waitForTimeout(400);
       }
     }
 
@@ -624,19 +629,25 @@ class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSession {
   }
 
   private async openFileWithQuickOpen(relativePath: string): Promise<void> {
-    await this.handle.page.keyboard.press("Meta+P");
+    const shortcuts = ["Meta+P", "Meta+K", "Control+P", "Meta+Shift+O"];
 
-    const quickOpenInput = await this.tryFindVisible("quickOpenInput", 3_000);
+    for (const shortcut of shortcuts) {
+      await this.handle.page.keyboard.press(shortcut);
+      const quickOpenInput = await this.tryFindVisible("quickOpenInput", 2_000);
 
-    if (!quickOpenInput) {
-      throw new Error(
-        `Unable to open ${relativePath} from the file explorer, and the current Figma Make UI did not expose a quick-open input.`,
-      );
+      if (quickOpenInput) {
+        await quickOpenInput.fill(relativePath);
+        await quickOpenInput.press("Enter");
+        await this.findVisible("codeEditorRoot", 10_000);
+        return;
+      }
+
+      await this.handle.page.keyboard.press("Escape");
     }
 
-    await quickOpenInput.fill(relativePath);
-    await quickOpenInput.press("Enter");
-    await this.findVisible("codeEditorRoot", 10_000);
+    throw new Error(
+      `Unable to open ${relativePath} from the file explorer, and the current Figma Make UI did not expose a quick-open input.`,
+    );
   }
 
   private async createFile(relativePath: string): Promise<void> {
