@@ -723,14 +723,9 @@ export class FigmakeSyncService {
       });
       await context.store.cleanupBackups(context.config.sync.backupRetention);
 
-      // Run npm install on first pull if package.json exists and node_modules doesn't
+      // Run npm install after every pull/sync if package.json exists
       const packageJsonPath = path.join(context.rootDir, "package.json");
-      const nodeModulesPath = path.join(context.rootDir, "node_modules");
-      if (
-        !baselineManifest &&
-        (await fs.pathExists(packageJsonPath)) &&
-        !(await fs.pathExists(nodeModulesPath))
-      ) {
+      if (await fs.pathExists(packageJsonPath)) {
         notify(options, "running npm install");
         const { execFile } = await import("node:child_process");
         const { promisify } = await import("node:util");
@@ -738,7 +733,7 @@ export class FigmakeSyncService {
         try {
           await execFileAsync("npm", ["install"], { cwd: context.rootDir });
         } catch (npmError) {
-          context.logger.warn({ err: npmError }, "npm install failed after first pull");
+          context.logger.warn({ err: npmError }, "npm install failed after pull");
         }
       }
 
