@@ -196,6 +196,7 @@ function getPanelEls(view: HTMLElement) {
     changesLayout: view.querySelector<HTMLElement>("[data-changes-layout]")!,
     changesCount: view.querySelector<HTMLElement>("[data-changes-count]")!,
     fileList: view.querySelector<HTMLElement>("[data-file-list]")!,
+    ignoredList: view.querySelector<HTMLElement>("[data-ignored-list]")!,
     ignoredFilesStandalone: view.querySelector<HTMLElement>("[data-ignored-files-standalone]")!,
     diffFilename: view.querySelector<HTMLElement>("[data-diff-filename]")!,
     diffStats: view.querySelector<HTMLElement>("[data-diff-stats]")!,
@@ -446,22 +447,22 @@ function renderChanges(project: ProjectState): void {
     els.fileList.appendChild(item);
   });
 
-  void renderIgnoredFiles(project, els.fileList);
+  void renderIgnoredFiles(project, els.ignoredList);
 }
 
 async function renderIgnoredFiles(project: ProjectState, container: HTMLElement, standalone = false): Promise<void> {
   if (!project.rootDir || !project.linkedProject?.linked) {
-    if (standalone) { container.setAttribute("hidden", ""); container.innerHTML = ""; }
+    container.setAttribute("hidden", "");
+    container.innerHTML = "";
     return;
   }
-  if (standalone) container.removeAttribute("hidden");
+  container.removeAttribute("hidden");
 
   const api = getDesktopApi();
   try {
     const patterns = await api.getCustomIgnorePatterns(project.rootDir);
 
-    // Remove any existing ignored section
-    container.querySelector(".ignored-files-section")?.remove();
+    container.innerHTML = "";
 
     const section = document.createElement("div");
     section.className = "ignored-files-section";
@@ -474,6 +475,8 @@ async function renderIgnoredFiles(project: ProjectState, container: HTMLElement,
     patterns.forEach((pattern) => {
       const item = document.createElement("div");
       item.className = "file-item ignored";
+
+      const isExactFile = !pattern.includes("*") && !pattern.includes("?") && !pattern.includes("{");
 
       const unignoreBtn = document.createElement("button");
       unignoreBtn.className = "file-unignore-btn danger";
@@ -489,6 +492,14 @@ async function renderIgnoredFiles(project: ProjectState, container: HTMLElement,
         <span class="file-name ignored-name" title="${pattern}">${pattern}</span>
       `;
       item.appendChild(unignoreBtn);
+
+      if (isExactFile) {
+        item.style.cursor = "pointer";
+        item.addEventListener("click", () => {
+          void selectFile(project, pattern, "modified");
+        });
+      }
+
       section.appendChild(item);
     });
 

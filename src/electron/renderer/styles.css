@@ -1613,9 +1613,24 @@ button.primary.small {
 }
 
 .file-list {
-  flex: 1;
   overflow-y: auto;
-  max-height: 360px;
+  max-height: 280px;
+}
+
+.ignored-list {
+  overflow-y: auto;
+  max-height: 240px;
+  border-top: 1px solid var(--line);
+}
+
+.ignored-list[hidden] {
+  display: none;
+}
+
+.ignored-list .ignored-files-section {
+  margin-top: 0;
+  border-top: none;
+  padding-top: 0;
 }
 
 .file-item {
@@ -1703,9 +1718,8 @@ button.primary.small {
 }
 
 .ignored-files-section {
-  margin-top: 0.75rem;
-  border-top: 1px solid var(--border);
-  padding-top: 0.5rem;
+  margin-top: 0;
+  padding-top: 0;
 }
 
 .ignored-files-header {
