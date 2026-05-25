@@ -526,15 +526,23 @@ function registerIpcHandlers(): void {
     const execFileAsync = promisify(execFile);
 
     async function getVersion(cmd: string): Promise<string | null> {
-      try {
-        const { stdout } = await execFileAsync(cmd, ["--version"], {
-          timeout: 5_000,
-          env: { ...process.env, PATH: process.env.PATH },
-        });
-        return stdout.trim();
-      } catch {
-        return null;
+      const candidates =
+        process.platform === "win32"
+          ? [`${cmd}.cmd`, `${cmd}.exe`, `${cmd}.bat`, cmd]
+          : [cmd];
+
+      for (const candidate of candidates) {
+        try {
+          const { stdout } = await execFileAsync(candidate, ["--version"], {
+            timeout: 5_000,
+            env: { ...process.env, PATH: process.env.PATH },
+          });
+          return stdout.trim();
+        } catch {
+          continue;
+        }
       }
+      return null;
     }
 
     const [nodeVersion, npmVersion, pnpmVersion] = await Promise.all([

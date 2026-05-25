@@ -730,8 +730,9 @@ export class FigmakeSyncService {
         const { execFile } = await import("node:child_process");
         const { promisify } = await import("node:util");
         const execFileAsync = promisify(execFile);
+        const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
         try {
-          await execFileAsync("npm", ["install"], { cwd: context.rootDir });
+          await execFileAsync(npmCmd, ["install"], { cwd: context.rootDir });
         } catch (npmError) {
           context.logger.warn({ err: npmError }, "npm install failed after pull");
         }
