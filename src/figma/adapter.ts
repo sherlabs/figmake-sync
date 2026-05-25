@@ -86,11 +86,15 @@ type SelectorMap = Record<SelectorKey, string[]>;
 // and will likely need adjustment over time.
 export const DEFAULT_FIGMA_MAKE_SELECTORS: SelectorMap = {
   workspaceRoot: [
+    '[data-radio-options-root="true"]',
     '[data-testid="code-display-toggle"]',
     '[data-testid="header-nav-toolbar"]',
     '[data-testid="figmake-full-view"]',
   ],
   codeModeButton: [
+    '[data-radio-options-root="true"] input[value="code"]',
+    'input[type="radio"][value="code"][data-tooltip="Code"]',
+    'input[type="radio"][value="code"]',
     '[data-testid="code-display-toggle"] input[value="code"]',
     '[data-testid="code-display-toggle"] label:has-text("Code")',
     '[data-testid="code-display-toggle"]',
