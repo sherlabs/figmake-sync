@@ -95,6 +95,10 @@ export const DEFAULT_FIGMA_MAKE_SELECTORS: SelectorMap = {
     '[data-testid="code-display-toggle"] label:has-text("Code")',
     '[data-testid="code-display-toggle"]',
     '[aria-label="Code"]',
+    'button[aria-label="Code"]',
+    '[role="radio"][value="code"]',
+    '[role="tab"]:has-text("Code")',
+    'label:has-text("Code")',
   ],
   codeEditorRoot: [
     '[data-testid="code-editor"]',
