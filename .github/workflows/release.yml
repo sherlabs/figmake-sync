@@ -46,6 +46,8 @@ jobs:
           TAG="v${VERSION}"
           git add package.json package-lock.json
           git commit -m "chore: bump version to ${VERSION} [skip ci]"
+          git tag -d "${TAG}" 2>/dev/null || true
+          git push origin ":refs/tags/${TAG}" 2>/dev/null || true
           git tag "${TAG}"
           git push origin main --follow-tags
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
