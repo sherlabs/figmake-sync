@@ -49,7 +49,7 @@ jobs:
           git tag -d "${TAG}" 2>/dev/null || true
           git push origin ":refs/tags/${TAG}" 2>/dev/null || true
           git tag "${TAG}"
-          git push origin refs/heads/main --follow-tags
+          git push origin refs/heads/main "refs/tags/${TAG}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
