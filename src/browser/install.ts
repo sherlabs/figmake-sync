@@ -190,8 +190,7 @@ export function isPlaywrightBrowserMissingError(error: unknown): boolean {
     message.includes("Executable doesn't exist") ||
     message.includes(
       "Please run the following command to download new browsers",
-    ) ||
-    message.includes("browserType.launchPersistentContext")
+    )
   );
 }
 

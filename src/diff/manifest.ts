@@ -4,6 +4,7 @@ import path from "node:path";
 import fs from "fs-extra";
 import { Minimatch } from "minimatch";
 
+import { DEFAULT_IGNORE_PATTERNS } from "../types/config.js";
 import { normalizeRelativePath } from "../utils/path.js";
 
 export type LineEndingStyle = "lf" | "crlf" | "mixed" | "none" | "binary";
@@ -60,14 +61,26 @@ export interface ThreeWayMergeDecision {
   reason: string;
 }
 
+const CASE_INSENSITIVE_FS =
+  process.platform === "darwin" || process.platform === "win32";
+const MAX_IN_MEMORY_BYTES = 16 * 1024 * 1024;
+const BINARY_SAMPLE_BYTES = 64 * 1024;
+const SKIPPABLE_FS_ERRORS = new Set(["ENOENT", "EBUSY", "EPERM", "EACCES"]);
+
 function sha256(content: Buffer | string): string {
   return createHash("sha256").update(content).digest("hex");
 }
 
-function detectBinary(buffer: Buffer): boolean {
-  const sample = buffer.subarray(0, Math.min(buffer.length, 8_192));
+function compareCodePoint(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
 
-  return sample.includes(0);
+function pathKey(value: string): string {
+  return CASE_INSENSITIVE_FS ? value.toLowerCase() : value;
+}
+
+function detectBinary(buffer: Buffer): boolean {
+  return buffer.includes(0);
 }
 
 function detectLineEnding(content: string): LineEndingStyle {
@@ -93,16 +106,53 @@ function detectLineEnding(content: string): LineEndingStyle {
   return "none";
 }
 
-function normalizeLineEndings(content: string): string {
-  return content.replaceAll("\r\n", "\n");
+// Operates on a latin1 view of the bytes so it is lossless for any
+// ASCII-compatible encoding. Strips a UTF-8 BOM, normalizes CRLF and lone CR.
+function normalizedTextBytes(buffer: Buffer): Buffer {
+  let text = buffer.toString("latin1");
+
+  if (text.startsWith("\u00ef\u00bb\u00bf")) {
+    text = text.slice(3);
+  }
+
+  return Buffer.from(text.replace(/\r\n?/g, "\n"), "latin1");
+}
+
+function expandAnyDepth(pattern: string): string[] {
+  const trimmed = pattern.replace(/^\.?\//, "");
+
+  if (trimmed.startsWith("**/")) {
+    return [trimmed];
+  }
+
+  return [trimmed, `**/${trimmed}`];
 }
 
 function createMatchers(ignorePatterns: readonly string[]): Minimatch[] {
-  return ignorePatterns.map(
+  const defaults = new Set<string>(DEFAULT_IGNORE_PATTERNS);
+  const patterns = new Set<string>();
+
+  // Defaults always apply, at any depth, regardless of user config.
+  for (const pattern of DEFAULT_IGNORE_PATTERNS) {
+    for (const expanded of expandAnyDepth(pattern)) {
+      patterns.add(expanded);
+    }
+  }
+
+  for (const pattern of ignorePatterns) {
+    if (defaults.has(pattern)) {
+      continue;
+    }
+
+    patterns.add(pattern);
+  }
+
+  return [...patterns].map(
     (pattern) =>
       new Minimatch(pattern, {
         dot: true,
-        nocase: process.platform === "darwin",
+        nocase: CASE_INSENSITIVE_FS,
+        matchBase: !pattern.includes("/"),
       }),
   );
 }
@@ -129,41 +179,88 @@ function shouldIgnore(
   });
 }
 
+async function hashFileStream(absolutePath: string): Promise<{
+  hash: string;
+  size: number;
+  sample: Buffer;
+}> {
+  const hash = createHash("sha256");
+  const sampleChunks: Buffer[] = [];
+  let sampled = 0;
+  let size = 0;
+
+  for await (const chunk of fs.createReadStream(absolutePath)) {
+    const buf = chunk as Buffer;
+
+    hash.update(buf);
+    size += buf.length;
+
+    if (sampled < BINARY_SAMPLE_BYTES) {
+      sampleChunks.push(buf);
+      sampled += buf.length;
+    }
+  }
+
+  return { hash: hash.digest("hex"), size, sample: Buffer.concat(sampleChunks) };
+}
+
 async function createManifestEntry(
   absolutePath: string,
   relativePath: string,
-): Promise<ManifestEntry> {
-  const [stats, buffer] = await Promise.all([
-    fs.stat(absolutePath),
-    fs.readFile(absolutePath),
-  ]);
-  const isBinary = detectBinary(buffer);
+): Promise<ManifestEntry | undefined> {
+  try {
+    const stats = await fs.stat(absolutePath);
 
-  if (isBinary) {
+    if (stats.size > MAX_IN_MEMORY_BYTES) {
+      const streamed = await hashFileStream(absolutePath);
+      const isBinary = detectBinary(
+        streamed.sample.subarray(0, BINARY_SAMPLE_BYTES),
+      );
+
+      return {
+        path: relativePath,
+        contentHash: streamed.hash,
+        normalizedHash: streamed.hash,
+        size: streamed.size,
+        modifiedTimeMs: stats.mtimeMs,
+        isBinary,
+        lineEnding: isBinary ? "binary" : "none",
+      };
+    }
+
+    const buffer = await fs.readFile(absolutePath);
     const contentHash = sha256(buffer);
+
+    if (detectBinary(buffer)) {
+      return {
+        path: relativePath,
+        contentHash,
+        normalizedHash: contentHash,
+        size: buffer.length,
+        modifiedTimeMs: stats.mtimeMs,
+        isBinary: true,
+        lineEnding: "binary",
+      };
+    }
 
     return {
       path: relativePath,
       contentHash,
-      normalizedHash: contentHash,
-      size: stats.size,
+      normalizedHash: sha256(normalizedTextBytes(buffer)),
+      size: buffer.length,
       modifiedTimeMs: stats.mtimeMs,
-      isBinary: true,
-      lineEnding: "binary",
+      isBinary: false,
+      lineEnding: detectLineEnding(buffer.toString("latin1")),
     };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+
+    if (code && SKIPPABLE_FS_ERRORS.has(code)) {
+      return undefined;
+    }
+
+    throw error;
   }
-
-  const text = buffer.toString("utf8");
-
-  return {
-    path: relativePath,
-    contentHash: sha256(text),
-    normalizedHash: sha256(normalizeLineEndings(text)),
-    size: stats.size,
-    modifiedTimeMs: stats.mtimeMs,
-    isBinary: false,
-    lineEnding: detectLineEnding(text),
-  };
 }
 
 async function walkDirectory(
@@ -172,11 +269,22 @@ async function walkDirectory(
   matchers: readonly Minimatch[],
   files: ManifestEntry[],
 ): Promise<void> {
-  const directoryEntries = await fs.readdir(currentDir, {
-    withFileTypes: true,
-  });
+  let directoryEntries;
+
+  try {
+    directoryEntries = await fs.readdir(currentDir, { withFileTypes: true });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+
+    if (code && SKIPPABLE_FS_ERRORS.has(code) && currentDir !== rootDir) {
+      return;
+    }
+
+    throw error;
+  }
+
   const sortedEntries = directoryEntries.sort((left, right) =>
-    left.name.localeCompare(right.name),
+    compareCodePoint(left.name, right.name),
   );
 
   for (const entry of sortedEntries) {
@@ -196,7 +304,11 @@ async function walkDirectory(
       continue;
     }
 
-    files.push(await createManifestEntry(absolutePath, relativePath));
+    const manifestEntry = await createManifestEntry(absolutePath, relativePath);
+
+    if (manifestEntry) {
+      files.push(manifestEntry);
+    }
   }
 }
 
@@ -206,7 +318,9 @@ export async function createManifest(
     ignore?: readonly string[];
   } = {},
 ): Promise<SnapshotManifest> {
-  const ignore = [...(options.ignore ?? [])];
+  const ignore = [
+    ...new Set([...DEFAULT_IGNORE_PATTERNS, ...(options.ignore ?? [])]),
+  ];
   const files: ManifestEntry[] = [];
   const matchers = createMatchers(ignore);
 
@@ -217,7 +331,7 @@ export async function createManifest(
     createdAt: new Date().toISOString(),
     root: path.resolve(rootDir),
     ignore,
-    files: files.sort((left, right) => left.path.localeCompare(right.path)),
+    files: files.sort((left, right) => compareCodePoint(left.path, right.path)),
   };
 }
 
@@ -230,11 +344,20 @@ function sameEntry(left?: ManifestEntry, right?: ManifestEntry): boolean {
     return false;
   }
 
-  return left.contentHash === right.contentHash;
+  if (left.contentHash === right.contentHash) {
+    return true;
+  }
+
+  // Line-ending-only differences in text files are not a real change.
+  return (
+    !left.isBinary &&
+    !right.isBinary &&
+    left.normalizedHash === right.normalizedHash
+  );
 }
 
 function toPathMap(manifest: SnapshotManifest): Map<string, ManifestEntry> {
-  return new Map(manifest.files.map((entry) => [entry.path, entry]));
+  return new Map(manifest.files.map((entry) => [pathKey(entry.path), entry]));
 }
 
 function extractRenamePairs(
@@ -309,7 +432,7 @@ function extractRenamePairs(
   return {
     added: added.filter((entry) => !pairedAdded.has(entry.path)),
     deleted: deleted.filter((entry) => !pairedDeleted.has(entry.path)),
-    renamed: renamed.sort((left, right) => left.from.localeCompare(right.from)),
+    renamed: renamed.sort((left, right) => compareCodePoint(left.from, right.from)),
   };
 }
 
@@ -329,7 +452,7 @@ export function diffManifests(
   const deleted: ManifestEntry[] = [];
 
   for (const entry of current.files) {
-    const previous = baseMap.get(entry.path);
+    const previous = baseMap.get(pathKey(entry.path));
 
     if (!previous) {
       added.push(entry);
@@ -348,7 +471,7 @@ export function diffManifests(
   }
 
   for (const entry of base.files) {
-    if (!currentMap.has(entry.path)) {
+    if (!currentMap.has(pathKey(entry.path))) {
       deleted.push(entry);
     }
   }
@@ -358,12 +481,12 @@ export function diffManifests(
   return {
     added: renameResult.added,
     modified: modified.sort((left, right) =>
-      left.current.path.localeCompare(right.current.path),
+      compareCodePoint(left.current.path, right.current.path),
     ),
     deleted: renameResult.deleted,
     renamed: renameResult.renamed,
     unchanged: unchanged.sort((left, right) =>
-      left.path.localeCompare(right.path),
+      compareCodePoint(left.path, right.path),
     ),
   };
 }
@@ -417,12 +540,14 @@ export function buildThreeWayMergeFoundation(
   ]);
   const decisions: ThreeWayMergeDecision[] = [];
 
-  for (const relativePath of [...allPaths].sort((left, right) =>
-    left.localeCompare(right),
+  for (const key of [...allPaths].sort((left, right) =>
+    compareCodePoint(left, right),
   )) {
-    const baseEntry = baseMap.get(relativePath);
-    const localEntry = localMap.get(relativePath);
-    const remoteEntry = remoteMap.get(relativePath);
+    const baseEntry = baseMap.get(key);
+    const localEntry = localMap.get(key);
+    const remoteEntry = remoteMap.get(key);
+    const relativePath =
+      localEntry?.path ?? remoteEntry?.path ?? baseEntry?.path ?? key;
 
     if (sameEntry(localEntry, remoteEntry)) {
       decisions.push({

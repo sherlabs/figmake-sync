@@ -1,6 +1,8 @@
 import path from "node:path";
 
 import fs from "fs-extra";
+import { spawn } from "node:child_process";
+
 import type { Logger } from "pino";
 
 import { createTextPatchPreview } from "../diff/changes.js";
@@ -18,6 +20,7 @@ import {
   type AdapterContext,
   type AdapterFactory,
   type FigmaMakeAdapter,
+  type FigmaMakeProjectSession,
 } from "../figma/adapter.js";
 import { createProjectLogger, flushLogger } from "../logging/logger.js";
 import type {
@@ -64,11 +67,96 @@ export interface PushResult {
     path: string;
     reason: string;
   }>;
+  /** Paths changed remotely since last pull that push would overwrite (or skipped if not confirmed). */
+  remoteDiverged?: string[];
+  /** "skipped" = remote could not be read, push proceeded without the divergence check. */
+  remoteCheck?: "ok" | "skipped";
 }
 
 export interface VerifyResult {
+  /**
+   * Remote-vs-local comparison, NOT baseline-relative: diff.added = local-only,
+   * diff.deleted = remote-only, diff.modified = differs.
+   */
   drift: StatusResult;
+  direction: "remote-to-local";
   preview: string | undefined;
+}
+
+export type SignalOptions = CommandRuntimeOptions & { signal?: AbortSignal };
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw new Error("Operation cancelled.");
+  }
+}
+
+const NPM_INSTALL_TIMEOUT_MS = 5 * 60 * 1000;
+
+/** Cross-platform `npm install` with timeout, abort support and bounded stderr capture. */
+export function runNpmInstall(
+  cwd: string,
+  signal?: AbortSignal,
+  timeoutMs = NPM_INSTALL_TIMEOUT_MS,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const isWin = process.platform === "win32";
+    // Fixed args only; shell is needed on Windows to resolve npm.cmd safely (no EINVAL).
+    const child = spawn("npm", ["install", "--no-audit", "--no-fund"], {
+      cwd,
+      shell: isWin,
+      stdio: ["ignore", "ignore", "pipe"],
+      windowsHide: true,
+    });
+    let stderrTail = "";
+    let settled = false;
+    const kill = (): void => {
+      if (isWin && child.pid) {
+        spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
+          stdio: "ignore",
+          windowsHide: true,
+        });
+      } else {
+        child.kill("SIGKILL");
+      }
+    };
+    const finish = (error?: Error): void => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+
+      if (error) {
+        reject(error);
+      } else {
+        resolve();
+      }
+    };
+    const timer = setTimeout(() => {
+      kill();
+      finish(new Error(`npm install timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+    const onAbort = (): void => {
+      kill();
+      finish(new Error("npm install cancelled"));
+    };
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderrTail = (stderrTail + chunk.toString()).slice(-4096);
+    });
+    child.on("error", (error) => finish(error));
+    child.on("close", (code) => {
+      finish(
+        code === 0
+          ? undefined
+          : new Error(`npm install exited with code ${code}: ${stderrTail}`),
+      );
+    });
+  });
 }
 
 export interface ProjectInspection {
@@ -287,24 +375,25 @@ export class FigmakeSyncService {
     }
   }
 
-  async pull(options: CommandRuntimeOptions = {}): Promise<PullResult> {
+  async pull(options: SignalOptions = {}): Promise<PullResult> {
     return this.performPull(options, {
       safeMode: false,
     });
   }
 
   async syncFromFigma(
-    options: CommandRuntimeOptions = {},
+    options: SignalOptions = {},
   ): Promise<PullResult> {
     return this.performPull(options, {
       safeMode: true,
     });
   }
 
-  async push(options: CommandRuntimeOptions = {}): Promise<PushResult> {
+  async push(options: SignalOptions = {}): Promise<PushResult> {
     const context = await this.loadProjectContext("push", options);
     const adapter = this.createAdapter(context);
     const baselineManifest = await context.store.readLastPullManifest();
+    const signal = options.signal;
 
     if (!baselineManifest) {
       await flushLogger(context.logger);
@@ -313,10 +402,18 @@ export class FigmakeSyncService {
       );
     }
 
-    let session;
+    let session: FigmaMakeProjectSession | undefined;
     let hasPendingEditorChanges = false;
+    let remoteTempDir: string | undefined;
+    const onAbort = (): void => {
+      void session?.close().catch(() => undefined);
+    };
+
+    signal?.addEventListener("abort", onAbort, { once: true });
 
     try {
+      throwIfAborted(signal);
+
       const localManifest = await createManifest(context.rootDir, {
         ignore: context.config.sync.ignore,
       });
@@ -340,7 +437,8 @@ export class FigmakeSyncService {
       }
 
       notify(options, "opening Figma Make file");
-      session = await adapter.openProject(context.config.figmaMakeUrl);
+      session = await adapter.openProject(context.config.figmaMakeUrl, signal ? { signal } : {});
+      throwIfAborted(signal);
 
       const unresolved: Array<{
         path: string;
@@ -349,20 +447,119 @@ export class FigmakeSyncService {
       const currentEntryByPath = new Map(
         localManifest.files.map((entry) => [entry.path, entry]),
       );
+
+      // Remote-divergence safety: compare remote content to the baseline for
+      // every path this push would touch. Best-effort (needs a zip download).
+      const skipped = new Set<string>();
+      const remoteDiverged: string[] = [];
+      let remoteCheck: "ok" | "skipped" = "skipped";
+
+      try {
+        notify(options, "checking remote for changes");
+        const download = await session.downloadLatestCodeZip(
+          context.store.paths.downloadsDir,
+        );
+
+        remoteTempDir = await context.store.createTempDir("push-remote");
+        await extractZipSafely(download.zipPath, remoteTempDir);
+
+        const remoteManifest = await createManifest(remoteTempDir, {
+          ignore: context.config.sync.ignore,
+        });
+        const remoteHash = new Map(
+          remoteManifest.files.map((entry) => [entry.path, entry.contentHash]),
+        );
+        const baseHash = new Map(
+          baselineManifest.files.map((entry) => [
+            entry.path,
+            entry.contentHash,
+          ]),
+        );
+        const touched = new Set<string>([
+          ...diff.added.map((entry) => entry.path),
+          ...diff.modified.map((entry) => entry.current.path),
+          ...diff.deleted.map((entry) => entry.path),
+          ...diff.renamed.flatMap((entry) => [entry.from, entry.to]),
+        ]);
+
+        remoteCheck = "ok";
+
+        for (const touchedPath of [...touched].sort()) {
+          const remote = remoteHash.get(touchedPath);
+
+          if (
+            remote !== baseHash.get(touchedPath) &&
+            remote !== currentEntryByPath.get(touchedPath)?.contentHash
+          ) {
+            remoteDiverged.push(touchedPath);
+          }
+        }
+      } catch (error) {
+        throwIfAborted(signal);
+        context.logger.warn(
+          { err: error },
+          "remote divergence check could not run; pushing without it",
+        );
+      }
+
+      if (remoteDiverged.length > 0) {
+        const approved = await getConfirm(options)(
+          `${remoteDiverged.length} file(s) changed in Figma Make since the last pull (${remoteDiverged.slice(0, 5).join(", ")}${remoteDiverged.length > 5 ? ", ..." : ""}). Overwrite them with local content?`,
+          false,
+        );
+
+        if (!approved) {
+          const divergedSet = new Set(remoteDiverged);
+
+          for (const entry of diff.renamed) {
+            if (divergedSet.has(entry.from) || divergedSet.has(entry.to)) {
+              divergedSet.add(entry.from);
+              divergedSet.add(entry.to);
+            }
+          }
+
+          for (const divergedPath of divergedSet) {
+            skipped.add(divergedPath);
+            unresolved.push({
+              path: divergedPath,
+              reason:
+                "Remote changed since last pull; skipped to avoid overwriting. Pull first.",
+            });
+          }
+        }
+      }
+
+      throwIfAborted(signal);
+
+      const modifiedList = diff.modified.filter(
+        (entry) => !skipped.has(entry.current.path),
+      );
+      const renamedList = diff.renamed.filter(
+        (entry) => !skipped.has(entry.from) && !skipped.has(entry.to),
+      );
       const addedPaths = [
-        ...diff.added.map((entry) => entry.path),
-        ...diff.renamed.map((entry) => entry.to),
+        ...diff.added
+          .map((entry) => entry.path)
+          .filter((entryPath) => !skipped.has(entryPath)),
+        ...renamedList.map((entry) => entry.to),
       ].sort((left, right) => left.localeCompare(right));
       const deletedPaths = [
-        ...diff.deleted.map((entry) => entry.path),
-        ...diff.renamed.map((entry) => entry.from),
+        ...diff.deleted
+          .map((entry) => entry.path)
+          .filter((entryPath) => !skipped.has(entryPath)),
+        ...renamedList.map((entry) => entry.from),
       ].sort((left, right) => left.localeCompare(right));
+      // Paths successfully pushed (create/update) -> baseline advances for these only.
+      const pushedOk = new Set<string>();
+      const deletedOk: string[] = [];
 
-      if (diff.modified.length > 0) {
+      if (modifiedList.length > 0) {
         notify(options, "pushing changes");
       }
 
-      for (const entry of diff.modified) {
+      for (const entry of modifiedList) {
+        throwIfAborted(signal);
+
         if (entry.current.isBinary) {
           unresolved.push({
             path: entry.current.path,
@@ -376,14 +573,30 @@ export class FigmakeSyncService {
           context.rootDir,
           entry.current.path,
         );
-        const content = await fs.readFile(absolutePath, "utf8");
 
         notify(options, `updating ${entry.current.path}`);
-        await session.replaceFileContents(entry.current.path, content);
-        hasPendingEditorChanges = true;
+
+        try {
+          const content = await fs.readFile(absolutePath, "utf8");
+
+          await session.replaceFileContents(entry.current.path, content);
+          hasPendingEditorChanges = true;
+          pushedOk.add(entry.current.path);
+        } catch (error) {
+          throwIfAborted(signal);
+          unresolved.push({
+            path: entry.current.path,
+            reason:
+              error instanceof Error
+                ? error.message
+                : "Failed to update the file remotely.",
+          });
+        }
       }
 
       if (addedPaths.length > 0) {
+        throwIfAborted(signal);
+
         const absolutePaths = addedPaths.map((relativePath) =>
           resolveRelativePath(context.rootDir, relativePath),
         );
@@ -400,6 +613,7 @@ export class FigmakeSyncService {
 
         for (const addedPath of addedPaths) {
           if (uploadedSet.has(addedPath)) {
+            pushedOk.add(addedPath);
             continue;
           }
 
@@ -415,15 +629,20 @@ export class FigmakeSyncService {
             continue;
           }
 
-          const absolutePath = resolveRelativePath(context.rootDir, addedPath);
-          const content = await fs.readFile(absolutePath, "utf8");
-
           notify(options, `creating ${addedPath}`);
 
           try {
+            const absolutePath = resolveRelativePath(
+              context.rootDir,
+              addedPath,
+            );
+            const content = await fs.readFile(absolutePath, "utf8");
+
             await session.upsertFile(addedPath, content);
             hasPendingEditorChanges = true;
+            pushedOk.add(addedPath);
           } catch (error) {
+            throwIfAborted(signal);
             unresolved.push({
               path: addedPath,
               reason:
@@ -442,11 +661,15 @@ export class FigmakeSyncService {
 
         const shouldPromptAfterUpload =
           options.prompt ?? context.config.adapter.promptAfterUpload;
+        const newlyAdded = addedPaths.filter((addedPath) =>
+          pushedOk.has(addedPath),
+        );
 
-        if (shouldPromptAfterUpload && addedPaths.length > 0) {
+        // Only newly created files go in the prompt; failed ones retry later.
+        if (shouldPromptAfterUpload && newlyAdded.length > 0) {
           const prompt = renderPostUploadPrompt(
             context.config.adapter.postUploadPromptTemplate,
-            addedPaths,
+            newlyAdded,
           );
 
           notify(options, "sending contextual prompt");
@@ -460,34 +683,92 @@ export class FigmakeSyncService {
         hasPendingEditorChanges = false;
       }
 
-      if (deletedPaths.length > 0) {
+      // Deletes last, and a rename's old path only if its new path succeeded.
+      const renameTarget = new Map(
+        renamedList.map((entry) => [entry.from, entry.to] as const),
+      );
+      const deletable: string[] = [];
+
+      for (const relativePath of deletedPaths) {
+        const target = renameTarget.get(relativePath);
+
+        if (target !== undefined && !pushedOk.has(target)) {
+          unresolved.push({
+            path: relativePath,
+            reason: `Not deleted: rename destination ${target} was not pushed.`,
+          });
+          continue;
+        }
+
+        deletable.push(relativePath);
+      }
+
+      if (deletable.length > 0) {
+        throwIfAborted(signal);
+
         const confirmDeletion = getConfirm(options);
         const approved = await confirmDeletion(
-          `Delete ${deletedPaths.length} file(s) from the linked Figma Make project? Unsupported deletes will be left unresolved.`,
+          `Delete ${deletable.length} file(s) from the linked Figma Make project? Unsupported deletes will be left unresolved.`,
           false,
         );
 
         if (!approved) {
           unresolved.push(
-            ...deletedPaths.map((relativePath) => ({
+            ...deletable.map((relativePath) => ({
               path: relativePath,
               reason: "Deletion skipped by user confirmation policy.",
             })),
           );
         } else {
-          for (const relativePath of deletedPaths) {
+          for (const relativePath of deletable) {
+            throwIfAborted(signal);
             notify(options, `deleting ${relativePath}`);
-            const result = await session.deletePath(relativePath);
 
-            if (result.status !== "deleted") {
+            try {
+              const result = await session.deletePath(relativePath);
+
+              if (result.status === "deleted") {
+                deletedOk.push(relativePath);
+              } else {
+                unresolved.push({
+                  path: result.path,
+                  reason:
+                    result.reason ?? `Delete action returned ${result.status}.`,
+                });
+              }
+            } catch (error) {
+              throwIfAborted(signal);
               unresolved.push({
-                path: result.path,
+                path: relativePath,
                 reason:
-                  result.reason ?? `Delete action returned ${result.status}.`,
+                  error instanceof Error
+                    ? error.message
+                    : "Failed to delete the file remotely.",
               });
             }
           }
         }
+      }
+
+      // Per-path baseline: succeeded paths advance, failed paths stay dirty.
+      const { stale } = await context.store.advanceBaseline(
+        context.rootDir,
+        baselineManifest,
+        {
+          upserts: [...pushedOk].flatMap((pushedPath) => {
+            const entry = currentEntryByPath.get(pushedPath);
+
+            return entry ? [entry] : [];
+          }),
+          removals: deletedOk,
+        },
+      );
+
+      if (stale.length > 0) {
+        context.logger.warn(
+          { paths: stale },
+          "files changed during push; left dirty for the next push",
+        );
       }
 
       await context.store.updateMetadata({
@@ -501,17 +782,17 @@ export class FigmakeSyncService {
         })),
       });
 
-      if (unresolved.length === 0) {
-        await context.store.writeLastPullState(context.rootDir, localManifest);
-      }
-
       return {
         dryRun: false,
         summary,
         unresolved,
+        remoteDiverged,
+        remoteCheck,
       };
     } finally {
-      if (session && hasPendingEditorChanges) {
+      signal?.removeEventListener("abort", onAbort);
+
+      if (session && hasPendingEditorChanges && !signal?.aborted) {
         await session.commitPendingChanges().catch((error) => {
           context.logger.warn(
             { error },
@@ -520,29 +801,52 @@ export class FigmakeSyncService {
         });
       }
 
-      await session?.close();
+      await session?.close().catch(() => undefined);
+      await this.cleanupTransient(context, remoteTempDir);
       await flushLogger(context.logger);
     }
   }
 
-  async verify(options: CommandRuntimeOptions = {}): Promise<VerifyResult> {
+  private async cleanupTransient(
+    context: LoadedProjectContext,
+    tempDir: string | undefined,
+  ): Promise<void> {
+    if (tempDir) {
+      await fs.remove(tempDir).catch(() => undefined);
+    }
+
+    await context.store.pruneDownloads(3).catch(() => undefined);
+  }
+
+  async verify(options: SignalOptions = {}): Promise<VerifyResult> {
     const context = await this.loadProjectContext("verify", options);
     const adapter = this.createAdapter(context);
-    let session;
+    let session: FigmaMakeProjectSession | undefined;
+    let tempDir: string | undefined;
+    const signal = options.signal;
+    const onAbort = (): void => {
+      void session?.close().catch(() => undefined);
+    };
+
+    signal?.addEventListener("abort", onAbort, { once: true });
 
     try {
+      throwIfAborted(signal);
+
       const localManifest = await createManifest(context.rootDir, {
         ignore: context.config.sync.ignore,
       });
 
       notify(options, "opening Figma Make file");
-      session = await adapter.openProject(context.config.figmaMakeUrl);
+      session = await adapter.openProject(context.config.figmaMakeUrl, signal ? { signal } : {});
+      throwIfAborted(signal);
 
       notify(options, "downloading latest code");
       const download = await session.downloadLatestCodeZip(
         context.store.paths.downloadsDir,
       );
-      const tempDir = await context.store.createTempDir("verify-remote");
+      throwIfAborted(signal);
+      tempDir = await context.store.createTempDir("verify-remote");
 
       await extractZipSafely(download.zipPath, tempDir);
 
@@ -572,20 +876,23 @@ export class FigmakeSyncService {
 
       return {
         drift: {
-          hasBaseline: true,
+          hasBaseline: (await context.store.readLastPullManifest()) !== null,
           diff,
           summary,
         },
+        direction: "remote-to-local",
         preview,
       };
     } finally {
-      await session?.close();
+      signal?.removeEventListener("abort", onAbort);
+      await session?.close().catch(() => undefined);
+      await this.cleanupTransient(context, tempDir);
       await flushLogger(context.logger);
     }
   }
 
   private async performPull(
-    options: CommandRuntimeOptions,
+    options: SignalOptions,
     behavior: {
       safeMode: boolean;
     },
@@ -595,9 +902,18 @@ export class FigmakeSyncService {
       options,
     );
     const adapter = this.createAdapter(context);
-    let session;
+    let session: FigmaMakeProjectSession | undefined;
+    let remoteTempDir: string | undefined;
+    const signal = options.signal;
+    const onAbort = (): void => {
+      void session?.close().catch(() => undefined);
+    };
+
+    signal?.addEventListener("abort", onAbort, { once: true });
 
     try {
+      throwIfAborted(signal);
+
       const baselineManifest = await context.store.readLastPullManifest();
       const localManifest = await createManifest(context.rootDir, {
         ignore: context.config.sync.ignore,
@@ -625,13 +941,15 @@ export class FigmakeSyncService {
       }
 
       notify(options, "opening Figma Make file");
-      session = await adapter.openProject(context.config.figmaMakeUrl);
+      session = await adapter.openProject(context.config.figmaMakeUrl, signal ? { signal } : {});
+      throwIfAborted(signal);
 
       notify(options, "downloading latest code");
       const download = await session.downloadLatestCodeZip(
         context.store.paths.downloadsDir,
       );
-      const remoteTempDir = await context.store.createTempDir("remote-pull");
+      throwIfAborted(signal);
+      remoteTempDir = await context.store.createTempDir("remote-pull");
       const extractedFiles = await extractZipSafely(
         download.zipPath,
         remoteTempDir,
@@ -665,6 +983,8 @@ export class FigmakeSyncService {
         };
       }
 
+      throwIfAborted(signal);
+
       let backupDir: string | undefined;
       const conflicts: string[] = [];
 
@@ -685,7 +1005,10 @@ export class FigmakeSyncService {
       }
 
       if (hasLocalChanges && strategy === "backup") {
-        backupDir = await context.store.createBackup("pre-pull");
+        backupDir = await context.store.createBackup(
+          "pre-pull",
+          context.config.sync.ignore,
+        );
       }
 
       if (strategy === "merge" && baselineManifest) {
@@ -702,11 +1025,17 @@ export class FigmakeSyncService {
         conflicts.push(...mergeResult.conflicts);
       } else {
         if (hasLocalChanges && !backupDir) {
-          backupDir = await context.store.createBackup("pre-pull");
+          backupDir = await context.store.createBackup(
+          "pre-pull",
+          context.config.sync.ignore,
+        );
         }
 
         notify(options, "applying downloaded snapshot");
-        await context.store.replaceWorkspaceFrom(remoteTempDir);
+        await context.store.replaceWorkspaceFrom(remoteTempDir, {
+          localManifest,
+          remoteManifest,
+        });
       }
 
       await context.store.writeLastPullState(remoteTempDir, remoteManifest);
@@ -723,16 +1052,15 @@ export class FigmakeSyncService {
       });
       await context.store.cleanupBackups(context.config.sync.backupRetention);
 
-      // Run npm install after every pull/sync if package.json exists
-      const packageJsonPath = path.join(context.rootDir, "package.json");
-      if (await fs.pathExists(packageJsonPath)) {
+      // Release the browser before the (slow) npm install.
+      await session.close().catch(() => undefined);
+      session = undefined;
+
+      if (await fs.pathExists(path.join(context.rootDir, "package.json"))) {
         notify(options, "running npm install");
-        const { execFile } = await import("node:child_process");
-        const { promisify } = await import("node:util");
-        const execFileAsync = promisify(execFile);
-        const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
+
         try {
-          await execFileAsync(npmCmd, ["install"], { cwd: context.rootDir });
+          await runNpmInstall(context.rootDir, signal);
         } catch (npmError) {
           context.logger.warn({ err: npmError }, "npm install failed after pull");
         }
@@ -747,7 +1075,9 @@ export class FigmakeSyncService {
         remoteSummary,
       };
     } finally {
-      await session?.close();
+      signal?.removeEventListener("abort", onAbort);
+      await session?.close().catch(() => undefined);
+      await this.cleanupTransient(context, remoteTempDir);
       await flushLogger(context.logger);
     }
   }

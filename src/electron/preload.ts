@@ -42,6 +42,7 @@ const api: FigmakeDesktopApi = {
   rebaselineProject: (options) => ipcRenderer.invoke("figmake:rebaseline-project", options),
   checkRuntimeDeps: () => ipcRenderer.invoke("figmake:check-runtime-deps"),
   checkAuthStatus: () => ipcRenderer.invoke("figmake:check-auth-status"),
+  cancelOperation: () => ipcRenderer.invoke("figmake:cancel-operation"),
   onProgress: (listener) => {
     const wrappedListener = (
       _event: IpcRendererEvent,

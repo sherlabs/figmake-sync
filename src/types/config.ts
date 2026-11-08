@@ -49,7 +49,12 @@ export const projectConfigSchema = z.object({
     .default({}),
   sync: z
     .object({
-      ignore: z.array(z.string()).default([...DEFAULT_IGNORE_PATTERNS]),
+      ignore: z
+        .array(z.string())
+        .default([...DEFAULT_IGNORE_PATTERNS])
+        .transform((value) => [
+          ...new Set([...DEFAULT_IGNORE_PATTERNS, ...value]),
+        ]),
       safePullStrategy: z.enum(["backup", "merge", "abort"]).default("backup"),
       backupRetention: z.number().int().min(1).max(100).default(20),
     })
@@ -119,5 +124,5 @@ export function renderPostUploadPrompt(
     .join("\n");
   const source = template ?? DEFAULT_POST_UPLOAD_PROMPT_TEMPLATE;
 
-  return source.replaceAll("{{files}}", fileBlock);
+  return source.replaceAll("{{files}}", () => fileBlock);
 }

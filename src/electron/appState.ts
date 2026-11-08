@@ -17,26 +17,40 @@ export class DesktopAppStateStore {
       return desktopAppStateSchema.parse({});
     }
 
-    const rawState: unknown = await fs.readJson(this.statePath);
-    return desktopAppStateSchema.parse(rawState);
+    try {
+      const rawState: unknown = await fs.readJson(this.statePath);
+      return desktopAppStateSchema.parse(rawState);
+    } catch {
+      // Corrupt or truncated state: keep a backup and start from defaults.
+      await fs
+        .move(this.statePath, `${this.statePath}.corrupt-${Date.now()}`, {
+          overwrite: true,
+        })
+        .catch(() => undefined);
+      return desktopAppStateSchema.parse({});
+    }
   }
 
   async save(state: DesktopAppState): Promise<DesktopAppState> {
     const nextState = desktopAppStateSchema.parse(state);
 
     await fs.ensureDir(path.dirname(this.statePath));
-    await fs.writeJson(this.statePath, nextState, { spaces: 2 });
+    const tmpPath = `${this.statePath}.${process.pid}.tmp`;
+    await fs.writeJson(tmpPath, nextState, { spaces: 2 });
+    await fs.move(tmpPath, this.statePath, { overwrite: true });
 
     return nextState;
   }
 
-  async update(patch: Partial<DesktopAppState>): Promise<DesktopAppState> {
-    const currentState = await this.load();
+  private queue: Promise<unknown> = Promise.resolve();
 
-    return this.save({
-      ...currentState,
-      ...patch,
+  update(patch: Partial<DesktopAppState>): Promise<DesktopAppState> {
+    const run = this.queue.then(async () => {
+      const currentState = await this.load();
+      return this.save({ ...currentState, ...patch });
     });
+    this.queue = run.catch(() => undefined);
+    return run;
   }
 
   async clear(): Promise<DesktopAppState> {

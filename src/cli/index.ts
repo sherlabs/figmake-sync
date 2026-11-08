@@ -2,6 +2,15 @@
 
 import { Command } from "commander";
 
+import {
+  installPlaywrightBrowser,
+  isPlaywrightBrowserMissingError,
+} from "../browser/install.js";
+import {
+  AuthRequiredError,
+  ProfileInUseError,
+  closeAllBrowserHandles,
+} from "../browser/session.js";
 import { FigmakeSyncService } from "../core/service.js";
 import {
   type ManifestDiff,
@@ -10,6 +19,53 @@ import {
 import type { CommandRuntimeOptions, PullStrategy } from "../types/config.js";
 
 const service = new FigmakeSyncService();
+
+const ExitCode = {
+  Error: 1,
+  Unresolved: 2,
+  AuthRequired: 3,
+  ProfileInUse: 4,
+  BrowserMissing: 5,
+  Interrupted: 130,
+} as const;
+
+function exitCodeForError(error: unknown): number {
+  if (error instanceof AuthRequiredError) return ExitCode.AuthRequired;
+  if (error instanceof ProfileInUseError) return ExitCode.ProfileInUse;
+  if (isPlaywrightBrowserMissingError(error)) return ExitCode.BrowserMissing;
+  return ExitCode.Error;
+}
+
+function describeError(error: unknown): string {
+  const verbose = process.argv.includes("--verbose");
+  if (error instanceof Error) {
+    let text = error.message;
+    if (isPlaywrightBrowserMissingError(error)) {
+      text +=
+        "\nPlaywright Chromium is missing. Run: figmake-sync install-browser";
+    }
+    if (verbose && error.stack) text += `\n${error.stack}`;
+    if (verbose && error.cause) text += `\ncaused by: ${(error.cause instanceof Error ? error.cause.message : JSON.stringify(error.cause))}`;
+    return text;
+  }
+  return typeof error === "string"
+    ? error
+    : `Unexpected error: ${String(error)}`;
+}
+
+let interrupted = false;
+function installSignalHandlers(): void {
+  const handler = (signal: NodeJS.Signals): void => {
+    if (interrupted) process.exit(ExitCode.Interrupted);
+    interrupted = true;
+    console.error(`\n${signal} received; closing browser sessions...`);
+    void closeAllBrowserHandles().finally(() =>
+      process.exit(ExitCode.Interrupted),
+    );
+  };
+  process.on("SIGINT", handler);
+  process.on("SIGTERM", handler);
+}
 
 function collectRuntimeOptions(command: Command): CommandRuntimeOptions {
   const options = command.optsWithGlobals<{
@@ -119,6 +175,16 @@ async function main(): Promise<void> {
       const command = getCommand(args);
       await service.auth(collectRuntimeOptions(command));
       console.log("browser session saved locally");
+    });
+
+  program
+    .command("install-browser")
+    .description("Download the Playwright Chromium runtime.")
+    .action(async () => {
+      const result = await installPlaywrightBrowser({
+        progress: (event) => console.log(event.message),
+      });
+      console.log(`chromium: ${result.status}`);
     });
 
   program
@@ -232,6 +298,7 @@ async function main(): Promise<void> {
         for (const entry of result.unresolved) {
           console.log(`  ! ${entry.path}: ${entry.reason}`);
         }
+        process.exitCode = ExitCode.Unresolved;
       }
     });
 
@@ -263,8 +330,8 @@ async function main(): Promise<void> {
   await program.parseAsync(process.argv);
 }
 
+installSignalHandlers();
 main().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : "Unexpected error";
-  console.error(message);
-  process.exitCode = 1;
+  console.error(describeError(error));
+  process.exitCode = exitCodeForError(error);
 });

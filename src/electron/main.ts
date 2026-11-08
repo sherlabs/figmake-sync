@@ -1,5 +1,7 @@
+import { execFile } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
+import { promisify } from "node:util";
 
 import {
   app,
@@ -7,6 +9,8 @@ import {
   Menu,
   dialog,
   ipcMain,
+  nativeTheme,
+  session,
   shell,
   type MessageBoxOptions,
   type OpenDialogOptions,
@@ -18,6 +22,7 @@ import {
   installPlaywrightBrowser,
   isPlaywrightBrowserMissingError,
 } from "../browser/install.js";
+import * as sessionModule from "../browser/session.js";
 import { BrowserSessionManager } from "../browser/session.js";
 import { FigmakeSyncService } from "../core/service.js";
 import { trackEvent } from "./analytics.js";
@@ -35,6 +40,30 @@ let service!: FigmakeSyncService;
 let mainWindow: BrowserWindow | null = null;
 let appStateStore: DesktopAppStateStore | null = null;
 let activeOperation = false;
+let activeOperationName: string | null = null;
+let activeController: AbortController | null = null;
+let activeDone: Promise<unknown> | null = null;
+let quitting = false;
+let lastAuthState: boolean | null = null;
+const knownProjectRoots = new Set<string>();
+const execFileAsync = promisify(execFile);
+
+const MAX_READ_FILE_BYTES = 5 * 1024 * 1024;
+const APP_CSP =
+  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; object-src 'none'; base-uri 'none'; form-action 'none'";
+
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+}
+app.on("second-instance", () => {
+  const window = getLiveWindow();
+  if (window) {
+    if (window.isMinimized()) window.restore();
+    window.show();
+    window.focus();
+  }
+});
 
 app.setName("figmake-sync");
 app.setAppUserModelId(APP_ID);
@@ -99,6 +128,39 @@ function getAppIconPath(): string {
   return getRendererAssetPath("assets", "icon-512.png");
 }
 
+function getLiveWindow(): BrowserWindow | undefined {
+  const focused = BrowserWindow.getFocusedWindow();
+  if (focused && !focused.isDestroyed()) return focused;
+  if (mainWindow && !mainWindow.isDestroyed()) return mainWindow;
+  return undefined;
+}
+
+async function abortActiveAndWait(timeoutMs = 8_000): Promise<void> {
+  activeController?.abort();
+  const done = activeDone;
+  if (!done) return;
+  await Promise.race([
+    done.catch(() => undefined),
+    new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
+  ]);
+}
+
+async function confirmBusyExit(what: string): Promise<boolean> {
+  const options: MessageBoxOptions = {
+    type: "warning",
+    message: `A sync action (${activeOperationName ?? "operation"}) is still running.`,
+    detail: `${what} will cancel it and close the browser session. A partially applied push may need to be re-run.`,
+    buttons: ["Keep Running", "Cancel Action and Exit"],
+    defaultId: 0,
+    cancelId: 0,
+  };
+  const window = getLiveWindow();
+  const result = window
+    ? await dialog.showMessageBox(window, options)
+    : await dialog.showMessageBox(options);
+  return result.response === 1;
+}
+
 async function createMainWindow(): Promise<BrowserWindow> {
   const window = new BrowserWindow({
     width: 1180,
@@ -107,7 +169,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
     minHeight: 720,
     show: false,
     center: true,
-    backgroundColor: "#ebe5d6",
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#1e1e20" : "#ffffff",
     icon: getAppIconPath(),
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     webPreferences: {
@@ -115,6 +177,25 @@ async function createMainWindow(): Promise<BrowserWindow> {
       nodeIntegration: false,
       preload: getPreloadPath(),
     },
+  });
+
+  window.on("close", (event) => {
+    if (quitting || !activeOperation) return;
+    event.preventDefault();
+    void confirmBusyExit("Closing the window").then(async (ok) => {
+      if (!ok) return;
+      await abortActiveAndWait();
+      if (activeOperation) quitting = process.platform !== "darwin";
+      if (!window.isDestroyed()) window.destroy();
+    });
+  });
+
+  window.on("closed", () => {
+    if (mainWindow === window) mainWindow = null;
+  });
+
+  window.webContents.on("will-navigate", (event, url) => {
+    if (!url.startsWith("file://")) event.preventDefault();
   });
 
   window.once("ready-to-show", () => {
@@ -155,7 +236,7 @@ function sendProgress(
   message: string,
   details: Partial<Omit<DesktopProgressEvent, "message" | "timestamp">> = {},
 ): void {
-  if (!mainWindow) {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
     return;
   }
 
@@ -177,7 +258,7 @@ async function confirmFromUi(
     : ["Cancel", "Continue"];
   const defaultId = defaultValue ? 0 : 1;
   const cancelId = defaultValue ? 1 : 0;
-  const window = BrowserWindow.getFocusedWindow() ?? mainWindow ?? undefined;
+  const window = getLiveWindow();
   const options: MessageBoxOptions = {
     type: "question",
     message,
@@ -194,7 +275,7 @@ async function confirmFromUi(
 }
 
 async function waitForManualAction(message: string): Promise<void> {
-  const window = BrowserWindow.getFocusedWindow() ?? mainWindow ?? undefined;
+  const window = getLiveWindow();
   const options: MessageBoxOptions = {
     type: "info",
     message: "Complete authentication in the opened browser window.",
@@ -211,18 +292,35 @@ async function waitForManualAction(message: string): Promise<void> {
   }
 }
 
-async function withOperationLock<T>(operation: () => Promise<T>): Promise<T> {
+async function withOperationLock<T>(
+  name: string,
+  operation: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
   if (activeOperation) {
-    throw new Error("Another figmake-sync action is already running.");
+    throw new Error(
+      `figmake-sync is busy running "${activeOperationName ?? "another action"}". Wait for it to finish or cancel it, then try again.`,
+    );
   }
 
+  const controller = new AbortController();
   activeOperation = true;
+  activeOperationName = name;
+  activeController = controller;
+  const run = operation(controller.signal);
+  activeDone = run;
 
   try {
-    return await operation();
+    return await run;
   } finally {
     activeOperation = false;
+    activeOperationName = null;
+    activeController = null;
+    activeDone = null;
   }
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new Error("Operation cancelled.");
 }
 
 let browserInstalledThisSession = false;
@@ -262,7 +360,9 @@ async function ensureBrowserRuntimeInstalled(): Promise<void> {
 
 async function withBrowserInstallRecovery<T>(
   operation: () => Promise<T>,
+  signal?: AbortSignal,
 ): Promise<T> {
+  throwIfAborted(signal);
   // Proactive check — install once before first attempt
   await ensureBrowserRuntimeInstalled();
 
@@ -278,12 +378,16 @@ async function withBrowserInstallRecovery<T>(
     sendProgress("Playwright browser runtime is missing — reinstalling");
     await ensureBrowserRuntimeInstalled();
     sendProgress("Retrying after browser install");
+    throwIfAborted(signal);
 
     return operation();
   }
 }
 
-function toRuntimeOptions(options: DesktopProjectCommandOptions) {
+function toRuntimeOptions(
+  options: DesktopProjectCommandOptions,
+  signal?: AbortSignal,
+) {
   return {
     projectRoot: options.rootDir,
     dryRun: options.dryRun,
@@ -296,12 +400,14 @@ function toRuntimeOptions(options: DesktopProjectCommandOptions) {
     },
     confirm: confirmFromUi,
     waitForManualAction,
+    ...(signal ? { signal } : {}),
   };
 }
 
 async function persistLastProjectRoot(
   rootDir: string,
 ): Promise<DesktopAppState> {
+  knownProjectRoots.add(path.resolve(rootDir));
   return getAppStateStore().update({
     lastProjectRoot: rootDir,
   });
@@ -332,34 +438,62 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle("figmake:check-auth-status", async () => {
     const profileDir = getSharedBrowserProfileDir();
-    try {
-      // Chromium stores cookies/session in these files
-      const indicators = ["Cookies", "Default/Cookies", "Local State"];
-      for (const indicator of indicators) {
-        if (await fs.pathExists(path.join(profileDir, indicator))) {
-          const stat = await fs.stat(path.join(profileDir, indicator));
-          // File exists and has content — session likely saved
-          if (stat.size > 0) {
-            return { authenticated: true, profileDir };
-          }
-        }
-      }
-      // Check if profile dir has any meaningful content at all
-      if (await fs.pathExists(profileDir)) {
-        const entries = await fs.readdir(profileDir);
-        if (entries.length > 2) {
-          return { authenticated: true, profileDir };
-        }
-      }
-      return { authenticated: false, profileDir };
-    } catch {
-      return { authenticated: false, profileDir };
+    // Probing launches the profile; never do it while an operation holds it.
+    if (activeOperation) {
+      return {
+        authenticated: lastAuthState ?? false,
+        profileDir,
+        unknown: true,
+        reason: "An action is running; session state not re-checked.",
+      };
     }
+    const probe = (
+      sessionModule as {
+        probeLoginState?: (dir: string) => Promise<{
+          authenticated: boolean | null;
+          reason?: string;
+        }>;
+      }
+    ).probeLoginState;
+    if (typeof probe !== "function") {
+      return {
+        authenticated: false,
+        profileDir,
+        unknown: true,
+        reason: "Login probe unavailable.",
+      };
+    }
+    try {
+      const result = await probe(profileDir);
+      if (result.authenticated !== null) lastAuthState = result.authenticated;
+      return {
+        authenticated: result.authenticated === true,
+        profileDir,
+        ...(result.authenticated === null ? { unknown: true } : {}),
+        ...(result.reason ? { reason: result.reason } : {}),
+      };
+    } catch (error) {
+      return {
+        authenticated: false,
+        profileDir,
+        unknown: true,
+        reason: error instanceof Error ? error.message : "Login probe failed.",
+      };
+    }
+  });
+
+  ipcMain.handle("figmake:cancel-operation", () => {
+    if (!activeController || activeController.signal.aborted) {
+      return { cancelled: false };
+    }
+    activeController.abort();
+    sendProgress("Cancelling current action");
+    return { cancelled: true };
   });
 
   ipcMain.handle("figmake:select-project-directory", async () => {
     const focusedWindow =
-      BrowserWindow.getFocusedWindow() ?? mainWindow ?? undefined;
+      getLiveWindow();
     const options: OpenDialogOptions = {
       title: "Choose a local figmake-sync project folder",
       buttonLabel: "Use Folder",
@@ -391,9 +525,9 @@ function registerIpcHandlers(): void {
   ipcMain.handle(
     "figmake:delete-project",
     async (_event, rootDir: string) =>
-      withOperationLock(async () => {
+      withOperationLock("delete-project", async () => {
         const focusedWindow =
-          BrowserWindow.getFocusedWindow() ?? mainWindow ?? undefined;
+          getLiveWindow();
         const approved = await confirmFromUi(
           "Delete this project from figmake-sync? This removes the local .figmake-sync state for the selected folder but keeps your actual project files.",
         );
@@ -433,7 +567,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle(
     "figmake:clear-app-data",
     async () =>
-      withOperationLock(async () => {
+      withOperationLock("clear-app-data", async () => {
         const approved = await confirmFromUi(
           "Clear figmake-sync app data? This signs you out of the shared Figma browser session and forgets saved app preferences. Local project folders and their .figmake-sync state will not be removed.",
         );
@@ -469,7 +603,8 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "figmake:add-ignore-pattern",
-    async (_event, rootDir: string, pattern: string) => {
+    async (_event, rootDir: string, pattern: string) =>
+      withOperationLock("add-ignore-pattern", async () => {
       const { ProjectStateStore } = await import("../core/state.js");
       const { updateProjectConfig } = await import("../types/config.js");
       const store = new ProjectStateStore(rootDir);
@@ -483,12 +618,13 @@ function registerIpcHandlers(): void {
         await store.saveProjectConfig(updated);
       }
       return { success: true };
-    },
+      }),
   );
 
   ipcMain.handle(
     "figmake:remove-ignore-pattern",
-    async (_event, rootDir: string, pattern: string) => {
+    async (_event, rootDir: string, pattern: string) =>
+      withOperationLock("remove-ignore-pattern", async () => {
       const { ProjectStateStore } = await import("../core/state.js");
       const { updateProjectConfig, DEFAULT_IGNORE_PATTERNS } = await import(
         "../types/config.js"
@@ -505,7 +641,7 @@ function registerIpcHandlers(): void {
       } as Partial<typeof config>);
       await store.saveProjectConfig(updated);
       return { success: true };
-    },
+      }),
   );
 
   ipcMain.handle(
@@ -559,7 +695,7 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle("figmake:install-browser", async () =>
-    withOperationLock(async () =>
+    withOperationLock("install-browser", async () =>
       installPlaywrightBrowser({
         browser: "chromium",
         progress: (event) => {
@@ -575,7 +711,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle(
     "figmake:init-project",
     async (_event, payload: { rootDir: string; figmaMakeUrl: string }) =>
-      withOperationLock(async () => {
+      withOperationLock("init-project", async () => {
         void trackEvent("init_project");
         sendProgress("initializing local project");
         const result = await service.init(
@@ -596,11 +732,12 @@ function registerIpcHandlers(): void {
   ipcMain.handle(
     "figmake:auth-project",
     async (_event, options: DesktopProjectCommandOptions) =>
-      withOperationLock(async () => {
+      withOperationLock("auth-project", async (signal) => {
         void trackEvent("auth_project");
         await persistLastProjectRoot(options.rootDir);
-        return withBrowserInstallRecovery(() =>
-          service.auth(toRuntimeOptions(options)),
+        return withBrowserInstallRecovery(
+          () => service.auth(toRuntimeOptions(options, signal)),
+          signal,
         );
       }),
   );
@@ -608,7 +745,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle(
     "figmake:auth-standalone",
     async () =>
-      withOperationLock(async () => {
+      withOperationLock("auth-standalone", async () => {
         const profileDir = getSharedBrowserProfileDir();
         const artifactsDir = path.join(app.getPath("userData"), "artifacts");
         await fs.ensureDir(profileDir);
@@ -632,7 +769,7 @@ function registerIpcHandlers(): void {
           session.authenticate("https://www.figma.com", {
             waitForCompletion: async (message: string) => {
               const focusedWindow =
-                BrowserWindow.getFocusedWindow() ?? mainWindow ?? undefined;
+                getLiveWindow();
               const dialogOpts: MessageBoxOptions = {
                 type: "info",
                 buttons: ["Done"],
@@ -654,10 +791,11 @@ function registerIpcHandlers(): void {
   ipcMain.handle(
     "figmake:pull-project",
     async (_event, options: DesktopProjectCommandOptions) =>
-      withOperationLock(async () => {
+      withOperationLock("pull-project", async (signal) => {
         await persistLastProjectRoot(options.rootDir);
-        const result = await withBrowserInstallRecovery(() =>
-          service.pull(toRuntimeOptions(options)),
+        const result = await withBrowserInstallRecovery(
+          () => service.pull(toRuntimeOptions(options, signal)),
+          signal,
         );
         void trackEvent("pull", {
           files_added: result.remoteSummary.added,
@@ -673,10 +811,11 @@ function registerIpcHandlers(): void {
   ipcMain.handle(
     "figmake:sync-from-figma",
     async (_event, options: DesktopProjectCommandOptions) =>
-      withOperationLock(async () => {
+      withOperationLock("sync-from-figma", async (signal) => {
         await persistLastProjectRoot(options.rootDir);
-        const result = await withBrowserInstallRecovery(() =>
-          service.syncFromFigma(toRuntimeOptions(options)),
+        const result = await withBrowserInstallRecovery(
+          () => service.syncFromFigma(toRuntimeOptions(options, signal)),
+          signal,
         );
         void trackEvent("sync", {
           files_added: result.remoteSummary.added,
@@ -692,7 +831,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle(
     "figmake:rebaseline-project",
     async (_event, options: DesktopProjectCommandOptions) =>
-      withOperationLock(async () => {
+      withOperationLock("rebaseline-project", async () => {
         await persistLastProjectRoot(options.rootDir);
         const result = await service.rebaseline(toRuntimeOptions(options));
         void trackEvent("rebaseline", { files_snapshotted: result.filesSnapshotted });
@@ -702,28 +841,29 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "figmake:status-project",
-    async (_event, options: DesktopProjectCommandOptions) =>
-      withOperationLock(async () => {
-        await persistLastProjectRoot(options.rootDir);
-        const result = await service.status(toRuntimeOptions(options));
-        void trackEvent("status", {
-          files_added: result.summary.added,
-          files_modified: result.summary.modified,
-          files_deleted: result.summary.deleted,
-          files_total: result.summary.total,
-          has_baseline: result.hasBaseline ? 1 : 0,
-        });
-        return result;
-      }),
+    async (_event, options: DesktopProjectCommandOptions) => {
+      // Read-only: intentionally not taking the operation lock.
+      await persistLastProjectRoot(options.rootDir);
+      const result = await service.status(toRuntimeOptions(options));
+      void trackEvent("status", {
+        files_added: result.summary.added,
+        files_modified: result.summary.modified,
+        files_deleted: result.summary.deleted,
+        files_total: result.summary.total,
+        has_baseline: result.hasBaseline ? 1 : 0,
+      });
+      return result;
+    },
   );
 
   ipcMain.handle(
     "figmake:push-project",
     async (_event, options: DesktopProjectCommandOptions) =>
-      withOperationLock(async () => {
+      withOperationLock("push-project", async (signal) => {
         await persistLastProjectRoot(options.rootDir);
-        const result = await withBrowserInstallRecovery(() =>
-          service.push(toRuntimeOptions(options)),
+        const result = await withBrowserInstallRecovery(
+          () => service.push(toRuntimeOptions(options, signal)),
+          signal,
         );
         void trackEvent("push", {
           files_added: result.summary.added,
@@ -739,10 +879,11 @@ function registerIpcHandlers(): void {
   ipcMain.handle(
     "figmake:verify-project",
     async (_event, options: DesktopProjectCommandOptions) =>
-      withOperationLock(async () => {
+      withOperationLock("verify-project", async (signal) => {
         await persistLastProjectRoot(options.rootDir);
-        const result = await withBrowserInstallRecovery(() =>
-          service.verify(toRuntimeOptions(options)),
+        const result = await withBrowserInstallRecovery(
+          () => service.verify(toRuntimeOptions(options, signal)),
+          signal,
         );
         void trackEvent("verify", {
           drift_files_total: result.drift.summary.total,
@@ -757,57 +898,138 @@ function registerIpcHandlers(): void {
   ipcMain.handle(
     "figmake:open-in-editor",
     async (_event, payload: { editor: string; path: string }) => {
-      const { editor, path: projectPath } = payload;
-      const { exec } = await import("node:child_process");
-      const { promisify } = await import("node:util");
-      const execAsync = promisify(exec);
-
-      // macOS app names for `open -a`
-      const macApps: Record<string, string[]> = {
-        code: ["Visual Studio Code", "Visual Studio Code - Insiders", "code"],
-        cursor: ["Cursor", "cursor"],
-        windsurf: ["Windsurf", "windsurf"],
-        claude: ["Claude", "claude"],
-        zed: ["Zed", "zed"],
-      };
-
-      const candidates = macApps[editor] ?? [editor];
-
-      for (const candidate of candidates) {
-        try {
-          if (candidate.includes(" ") || candidate[0] === candidate[0]!.toUpperCase()) {
-            // App name — use `open -a`
-            await execAsync(`open -a "${candidate}" "${projectPath}"`, { timeout: 5000 });
-          } else {
-            // CLI command
-            await execAsync(`${candidate} "${projectPath}"`, { timeout: 5000 });
-          }
-          return { success: true };
-        } catch {
-          // Try next candidate
-        }
+      const editor = typeof payload?.editor === "string" ? payload.editor : "";
+      const candidates = EDITORS[editor];
+      if (!candidates) {
+        return { success: false, error: "Unsupported editor." };
+      }
+      const projectPath = await resolveAllowedPath(payload?.path, true);
+      if (!projectPath) {
+        return { success: false, error: "Path is not a known project folder." };
       }
 
-      return { success: false, error: `Could not find ${editor}. Tried: ${candidates.join(", ")}` };
+      if (process.platform === "darwin") {
+        for (const appName of candidates.mac) {
+          try {
+            await execFileAsync("open", ["-a", appName, projectPath], { timeout: 5000 });
+            return { success: true };
+          } catch {
+            // try next
+          }
+        }
+      }
+      if (process.platform !== "win32") {
+        for (const cli of candidates.cli) {
+          try {
+            await execFileAsync(cli, [projectPath], { timeout: 5000 });
+            return { success: true };
+          } catch {
+            // try next
+          }
+        }
+      }
+      // Windows .cmd shims cannot be spawned safely without a shell; open the folder instead.
+      if (process.platform === "win32") {
+        const err = await shell.openPath(projectPath);
+        return err
+          ? { success: false, error: "Could not open the folder." }
+          : { success: true };
+      }
+      return { success: false, error: `Could not find ${editor}.` };
     },
   );
 
   ipcMain.handle("figmake:read-file", async (_event, filePath: string) => {
-    const { readFile } = await import("node:fs/promises");
-    try {
-      const content = await readFile(filePath, "utf-8");
-      return content;
-    } catch (error) {
-      console.error(`Failed to read file ${filePath}:`, error);
-      throw error;
+    const resolved = await resolveAllowedPath(filePath, false);
+    if (!resolved) {
+      throw new Error("File is outside the known project folders.");
     }
+    const { readFile, stat } = await import("node:fs/promises");
+    let info;
+    try {
+      info = await stat(resolved);
+    } catch {
+      throw new Error("File not found.");
+    }
+    if (!info.isFile()) throw new Error("Not a file.");
+    if (info.size > MAX_READ_FILE_BYTES) throw new Error("File is too large to preview.");
+    return readFile(resolved, "utf-8");
   });
+}
+
+const EDITORS: Record<string, { mac: string[]; cli: string[] }> = {
+  code: { mac: ["Visual Studio Code", "Visual Studio Code - Insiders"], cli: ["code"] },
+  cursor: { mac: ["Cursor"], cli: ["cursor"] },
+  windsurf: { mac: ["Windsurf"], cli: ["windsurf"] },
+  claude: { mac: ["Claude"], cli: ["claude"] },
+  zed: { mac: ["Zed"], cli: ["zed"] },
+};
+
+function isInside(parent: string, child: string): boolean {
+  const rel = path.relative(parent, child);
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+}
+
+async function realpathOrResolve(target: string): Promise<string> {
+  try {
+    return await fs.realpath(target);
+  } catch {
+    // Missing leaf: realpath the nearest existing parent and re-append.
+    const parent = path.dirname(target);
+    if (parent === target) return target;
+    return path.join(await realpathOrResolve(parent), path.basename(target));
+  }
+}
+
+/** Returns a resolved path only if inside a known, initialised project root. */
+async function resolveAllowedPath(
+  input: unknown,
+  mustBeDirectory: boolean,
+): Promise<string | null> {
+  if (typeof input !== "string" || input.length === 0 || input.includes("\0")) return null;
+  if (!path.isAbsolute(input)) return null;
+
+  const last = (await getAppStateStore().load().catch(() => null))?.lastProjectRoot;
+  const roots = new Set(knownProjectRoots);
+  if (last) roots.add(path.resolve(last));
+
+  const target = await realpathOrResolve(path.resolve(input));
+  const userData = await realpathOrResolve(app.getPath("userData"));
+  if (isInside(userData, target)) return null;
+
+  for (const root of roots) {
+    const realRoot = await realpathOrResolve(root);
+    if (!(await fs.pathExists(path.join(realRoot, ".figmake-sync")))) continue;
+    if (!isInside(realRoot, target)) continue;
+    if (isInside(path.join(realRoot, ".figmake-sync", "browser-profile"), target)) continue;
+    if (mustBeDirectory) {
+      if (target !== realRoot) continue;
+      try {
+        if (!(await fs.stat(target)).isDirectory()) continue;
+      } catch {
+        continue;
+      }
+    }
+    return target;
+  }
+  return null;
 }
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
   }
+});
+
+app.on("before-quit", (event) => {
+  if (quitting || !activeOperation) return;
+  event.preventDefault();
+  void confirmBusyExit("Quitting").then(async (ok) => {
+    if (!ok) return;
+    quitting = true;
+    await abortActiveAndWait();
+    app.exit(0);
+  });
 });
 
 app.on("activate", () => {
@@ -836,7 +1058,18 @@ process.on("unhandledRejection", (reason) => {
 });
 
 async function bootstrap(): Promise<void> {
+  if (!gotSingleInstanceLock) return;
   await app.whenReady();
+
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        "Content-Security-Policy": [APP_CSP],
+      },
+    });
+  });
+  session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
 
   await writeStartupLog("Electron app bootstrap started.");
   void trackEvent("app_launch", { platform: process.platform, version: app.getVersion() });

@@ -1,9 +1,15 @@
+import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
 
 import fs from "fs-extra";
+import { Minimatch } from "minimatch";
 import { z } from "zod";
 
-import { createHashIndex, type SnapshotManifest } from "../diff/manifest.js";
+import {
+  createHashIndex,
+  type ManifestEntry,
+  type SnapshotManifest,
+} from "../diff/manifest.js";
 import {
   createProjectConfig,
   parseProjectConfig,
@@ -32,6 +38,91 @@ const syncMetadataSchema = z.object({
 });
 
 export type SyncMetadata = z.output<typeof syncMetadataSchema>;
+
+const manifestSchema = z.object({
+  schemaVersion: z.literal(1),
+  createdAt: z.string(),
+  root: z.string(),
+  ignore: z.array(z.string()),
+  files: z.array(
+    z.object({
+      path: z.string(),
+      contentHash: z.string(),
+      normalizedHash: z.string(),
+      size: z.number(),
+      modifiedTimeMs: z.number(),
+      isBinary: z.boolean(),
+      lineEnding: z.enum(["lf", "crlf", "mixed", "none", "binary"]),
+    }),
+  ),
+});
+
+// Never copied into backups/snapshots, even if no ignore globs are supplied.
+const ALWAYS_SKIP_COPY = ["node_modules", ".git", "dist"];
+
+/** Write JSON via tmp file + rename so a crash never leaves truncated JSON. */
+export async function writeJsonAtomic(
+  filePath: string,
+  value: unknown,
+): Promise<void> {
+  await writeFileAtomic(filePath, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+async function writeFileAtomic(
+  filePath: string,
+  data: string | Buffer,
+): Promise<void> {
+  await fs.ensureDir(path.dirname(filePath));
+  const tmpPath = `${filePath}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+
+  try {
+    await fs.writeFile(tmpPath, data);
+    await fs.rename(tmpPath, filePath);
+  } catch (error) {
+    await fs.remove(tmpPath).catch(() => undefined);
+    throw error;
+  }
+}
+
+function hashLikeManifest(buffer: Buffer): string {
+  // Must match manifest.ts contentHash (sha256 of raw bytes).
+  return createHash("sha256").update(buffer).digest("hex");
+}
+
+function createCopyFilter(
+  sourceDir: string,
+  ignore: readonly string[] | undefined,
+): (src: string) => boolean {
+  const matchers = [...ALWAYS_SKIP_COPY, ...(ignore ?? [])].map(
+    (pattern) =>
+      new Minimatch(pattern, {
+        dot: true,
+        nocase: process.platform === "darwin",
+      }),
+  );
+
+  return (src) => {
+    const relative = path
+      .relative(sourceDir, src)
+      .split(path.sep)
+      .join(path.posix.sep);
+
+    if (!relative) {
+      return true;
+    }
+
+    if (relative === STATE_DIRECTORY_NAME) {
+      return false;
+    }
+
+    return !matchers.some(
+      (matcher) =>
+        matcher.match(relative) ||
+        matcher.match(`${relative}/`) ||
+        matcher.match(`${relative}/**`),
+    );
+  };
+}
 
 export interface ProjectStatePaths {
   rootDir: string;
@@ -142,7 +233,7 @@ export class ProjectStateStore {
   }
 
   async saveProjectConfig(config: ProjectConfig): Promise<void> {
-    await fs.writeJson(this.paths.configPath, config, { spaces: 2 });
+    await writeJsonAtomic(this.paths.configPath, config);
   }
 
   async loadProjectConfig(): Promise<ProjectConfig> {
@@ -152,7 +243,15 @@ export class ProjectStateStore {
       );
     }
 
-    const rawConfig: unknown = await fs.readJson(this.paths.configPath);
+    let rawConfig: unknown;
+
+    try {
+      rawConfig = await fs.readJson(this.paths.configPath);
+    } catch (error) {
+      throw new Error(
+        `Project config at ${this.paths.configPath} is unreadable or corrupt (${error instanceof Error ? error.message : String(error)}). Fix or delete it and re-run init.`,
+      );
+    }
 
     return parseProjectConfig(rawConfig);
   }
@@ -162,25 +261,103 @@ export class ProjectStateStore {
       return null;
     }
 
-    return (await fs.readJson(
-      this.paths.lastPullManifestPath,
-    )) as SnapshotManifest;
+    try {
+      const raw: unknown = await fs.readJson(this.paths.lastPullManifestPath);
+
+      return manifestSchema.parse(raw) as SnapshotManifest;
+    } catch {
+      // Corrupt baseline is treated as "no baseline"; a pull or rebaseline recovers.
+      return null;
+    }
   }
 
+  /**
+   * Replace the whole baseline (manifest + snapshot). Snapshot is built in a
+   * sibling dir and swapped in; manifest/hashes are written atomically after.
+   */
   async writeLastPullState(
     sourceDir: string,
     manifest: SnapshotManifest,
   ): Promise<void> {
-    await fs.writeJson(this.paths.lastPullManifestPath, manifest, {
-      spaces: 2,
-    });
-    await fs.writeJson(
+    const finalDir = this.paths.lastPullSnapshotDir;
+    const newDir = `${finalDir}.new`;
+    const oldDir = `${finalDir}.old`;
+
+    await fs.remove(newDir);
+    await this.copyWorkspaceLikeTree(sourceDir, newDir, manifest.ignore);
+    await fs.remove(oldDir);
+
+    if (await fs.pathExists(finalDir)) {
+      await fs.rename(finalDir, oldDir);
+    }
+
+    await fs.rename(newDir, finalDir);
+    await fs.remove(oldDir);
+    await this.writeBaselineManifest(manifest);
+  }
+
+  private async writeBaselineManifest(
+    manifest: SnapshotManifest,
+  ): Promise<void> {
+    await writeJsonAtomic(this.paths.lastPullManifestPath, manifest);
+    await writeJsonAtomic(
       this.paths.lastPullHashesPath,
       createHashIndex(manifest),
-      { spaces: 2 },
     );
-    await fs.emptyDir(this.paths.lastPullSnapshotDir);
-    await this.copyWorkspaceLikeTree(sourceDir, this.paths.lastPullSnapshotDir);
+  }
+
+  /**
+   * Per-path baseline advance after a (possibly partial) push. Only the given
+   * upserts/removals move; every other path keeps its old baseline entry so
+   * failed paths stay dirty. An upsert is skipped (returned in `stale`) when the
+   * file on disk no longer matches the pushed hash (edited/deleted mid-push),
+   * so manifest and snapshot never disagree.
+   */
+  async advanceBaseline(
+    sourceDir: string,
+    baseline: SnapshotManifest,
+    changes: { upserts: ManifestEntry[]; removals: string[] },
+  ): Promise<{ stale: string[] }> {
+    const entries = new Map(baseline.files.map((entry) => [entry.path, entry]));
+    const stale: string[] = [];
+
+    for (const entry of changes.upserts) {
+      const sourcePath = path.join(sourceDir, entry.path);
+      let buffer: Buffer;
+
+      try {
+        buffer = await fs.readFile(sourcePath);
+      } catch {
+        stale.push(entry.path);
+        continue;
+      }
+
+      if (hashLikeManifest(buffer) !== entry.contentHash) {
+        stale.push(entry.path);
+        continue;
+      }
+
+      await writeFileAtomic(
+        path.join(this.paths.lastPullSnapshotDir, entry.path),
+        buffer,
+      );
+      entries.set(entry.path, entry);
+    }
+
+    for (const removal of changes.removals) {
+      await fs.remove(path.join(this.paths.lastPullSnapshotDir, removal));
+      entries.delete(removal);
+    }
+
+    await this.writeBaselineManifest({
+      ...baseline,
+      createdAt: new Date().toISOString(),
+      files: [...entries.values()].sort((left, right) =>
+        left.path.localeCompare(right.path),
+      ),
+    });
+
+    return { stale };
   }
 
   async readMetadata(): Promise<SyncMetadata> {
@@ -188,16 +365,19 @@ export class ProjectStateStore {
       return syncMetadataSchema.parse({ version: 1 });
     }
 
-    const rawMetadata: unknown = await fs.readJson(this.paths.metadataPath);
+    try {
+      const rawMetadata: unknown = await fs.readJson(this.paths.metadataPath);
 
-    return syncMetadataSchema.parse(rawMetadata);
+      return syncMetadataSchema.parse(rawMetadata);
+    } catch {
+      return syncMetadataSchema.parse({ version: 1 });
+    }
   }
 
   async writeMetadata(metadata: SyncMetadata): Promise<void> {
-    await fs.writeJson(
+    await writeJsonAtomic(
       this.paths.metadataPath,
       syncMetadataSchema.parse(metadata),
-      { spaces: 2 },
     );
   }
 
@@ -213,7 +393,10 @@ export class ProjectStateStore {
     return next;
   }
 
-  async createBackup(label: string): Promise<string> {
+  async createBackup(
+    label: string,
+    ignore?: readonly string[],
+  ): Promise<string> {
     const backupDir = path.join(
       this.paths.backupsDir,
       `${timestampForPath()}-${label}`,
@@ -223,6 +406,7 @@ export class ProjectStateStore {
     await this.copyWorkspaceLikeTree(
       this.paths.rootDir,
       path.join(backupDir, "workspace"),
+      ignore,
     );
 
     return backupDir;
@@ -233,36 +417,80 @@ export class ProjectStateStore {
     return fs.mkdtemp(path.join(this.paths.tmpDir, `${prefix}-`));
   }
 
-  private static readonly PRESERVE_ON_REPLACE = new Set([
-    STATE_DIRECTORY_NAME,
-    "node_modules",
-    "dist",
-    ".gitignore",
-    ".git",
-  ]);
+  /**
+   * Non-destructive, per-file replace. Writes every file from `sourceDir`
+   * (tmp + rename each) and, when `localManifest`/`remoteManifest` are given,
+   * deletes only tracked local files that no longer exist remotely. Untracked
+   * or ignored files (.env, .git, node_modules, ...) are never touched.
+   */
+  async replaceWorkspaceFrom(
+    sourceDir: string,
+    options: {
+      localManifest?: SnapshotManifest;
+      remoteManifest?: SnapshotManifest;
+    } = {},
+  ): Promise<void> {
+    const remotePaths = options.remoteManifest
+      ? options.remoteManifest.files.map((entry) => entry.path)
+      : await this.listFilesRecursive(sourceDir);
 
-  async replaceWorkspaceFrom(sourceDir: string): Promise<void> {
-    const workspaceEntries = await fs.readdir(this.paths.rootDir);
+    for (const relativePath of remotePaths) {
+      const data = await fs.readFile(path.join(sourceDir, relativePath));
 
-    for (const entry of workspaceEntries) {
-      if (ProjectStateStore.PRESERVE_ON_REPLACE.has(entry)) {
-        continue;
-      }
-
-      await fs.remove(path.join(this.paths.rootDir, entry));
+      await writeFileAtomic(path.join(this.paths.rootDir, relativePath), data);
     }
 
-    const sourceEntries = await fs.readdir(sourceDir);
+    if (options.localManifest && options.remoteManifest) {
+      const remoteSet = new Set(remotePaths);
 
-    for (const entry of sourceEntries) {
-      await fs.copy(
-        path.join(sourceDir, entry),
-        path.join(this.paths.rootDir, entry),
-        {
-          overwrite: true,
-          errorOnExist: false,
-        },
-      );
+      for (const entry of options.localManifest.files) {
+        if (!remoteSet.has(entry.path)) {
+          await fs.remove(path.join(this.paths.rootDir, entry.path));
+        }
+      }
+    }
+  }
+
+  private async listFilesRecursive(
+    rootDir: string,
+    currentDir = rootDir,
+  ): Promise<string[]> {
+    const result: string[] = [];
+
+    for (const entry of await fs.readdir(currentDir, { withFileTypes: true })) {
+      const absolute = path.join(currentDir, entry.name);
+
+      if (entry.isDirectory()) {
+        result.push(...(await this.listFilesRecursive(rootDir, absolute)));
+      } else if (entry.isFile()) {
+        result.push(
+          path.relative(rootDir, absolute).split(path.sep).join(path.posix.sep),
+        );
+      }
+    }
+
+    return result;
+  }
+
+  /** Keep only the newest `keep` downloaded zips (plus `protect`). */
+  async pruneDownloads(keep: number, protect: string[] = []): Promise<void> {
+    const names = await fs.readdir(this.paths.downloadsDir).catch(() => []);
+    const withTimes = await Promise.all(
+      names.map(async (name) => {
+        const full = path.join(this.paths.downloadsDir, name);
+        const stat = await fs.stat(full).catch(() => null);
+
+        return { full, mtime: stat?.mtimeMs ?? 0 };
+      }),
+    );
+    const protectedSet = new Set(protect.map((entry) => path.resolve(entry)));
+
+    withTimes.sort((left, right) => right.mtime - left.mtime);
+
+    for (const item of withTimes.slice(keep)) {
+      if (!protectedSet.has(path.resolve(item.full))) {
+        await fs.remove(item.full).catch(() => undefined);
+      }
     }
   }
 
@@ -287,24 +515,25 @@ export class ProjectStateStore {
   private async copyWorkspaceLikeTree(
     sourceDir: string,
     destinationDir: string,
+    ignore?: readonly string[],
   ): Promise<void> {
     await fs.ensureDir(destinationDir);
 
-    const entries = await fs.readdir(sourceDir);
+    const filter = createCopyFilter(sourceDir, ignore);
 
-    for (const entry of entries) {
-      if (entry === STATE_DIRECTORY_NAME) {
+    // Per top-level entry: destination may live inside sourceDir (.figmake-sync).
+    for (const entry of await fs.readdir(sourceDir)) {
+      const entryPath = path.join(sourceDir, entry);
+
+      if (!filter(entryPath)) {
         continue;
       }
 
-      await fs.copy(
-        path.join(sourceDir, entry),
-        path.join(destinationDir, entry),
-        {
-          overwrite: true,
-          errorOnExist: false,
-        },
-      );
+      await fs.copy(entryPath, path.join(destinationDir, entry), {
+        overwrite: true,
+        errorOnExist: false,
+        filter,
+      });
     }
   }
 }

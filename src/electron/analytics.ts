@@ -47,6 +47,28 @@ function sendRaw(body: string): void {
   }
 }
 
+const ALLOWED_STRING_PARAMS = new Set(["platform", "version"]);
+
+/** Only numbers and short non-path allow-listed strings are ever sent. */
+function sanitizeParams(
+  params: Record<string, string | number>,
+): Record<string, string | number> {
+  const out: Record<string, string | number> = {};
+  for (const [key, value] of Object.entries(params)) {
+    if (typeof value === "number") {
+      if (Number.isFinite(value)) out[key] = value;
+    } else if (
+      typeof value === "string" &&
+      ALLOWED_STRING_PARAMS.has(key) &&
+      value.length <= 40 &&
+      !/[\\/]|@|https?:/i.test(value)
+    ) {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
 export async function trackEvent(
   name: string,
   params: Record<string, string | number> = {},
@@ -55,7 +77,7 @@ export async function trackEvent(
     const cid = await getClientId();
     const payload = JSON.stringify({
       client_id: cid,
-      events: [{ name, params: { engagement_time_msec: "1", ...params } }],
+      events: [{ name, params: { engagement_time_msec: "1", ...sanitizeParams(params) } }],
     });
     sendRaw(payload);
   } catch {
