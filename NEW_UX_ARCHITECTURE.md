@@ -1,268 +1,65 @@
-# figmake-sync - New UX Architecture
+# Desktop UX architecture
 
-## Overview
-Complete redesign with **home screen + detail view** pattern and **tab-based navigation** within projects.
+Source of truth for the Electron renderer in `src/electron/renderer/` (`index.html`, `styles.css`, `app.ts`). It supersedes `UX_REDESIGN.md`.
 
----
+## Structure
 
-## User Flow
+- **Title bar**: brand, Figma sign-in chip (connected, not signed in, unknown), global busy chip. On macOS the bar is a drag region with room for the traffic lights (`html.is-mac`).
+- **Banners**: browser install onboarding, missing runtime tools, and a transient "waiting for sign-in" banner with Stop.
+- **Home**: grid of project cards (name, folder, state, last pull and push). First run shows an empty state with a three-step checklist (install browser, sign in, create project).
+- **Project detail**: header (back, name, folder, linked badge, Open in menu) and four tabs.
+  - **Sync**: status hero, four actions (Pull, Push, Check status, Verify), live progress, last result.
+  - **Changes**: file list with status tags, ignore list, line diff, copy, reset baseline.
+  - **Activity**: timestamped log, raw JSON output behind a disclosure, failure screenshot.
+  - **Settings**: workspace, link form, account, sync options, delete project.
 
-### 1. **Home Screen** (Project Selection)
-```
-┌─────────────────────────────────────────┐
-│  figmake-sync                    Ready  │
-├─────────────────────────────────────────┤
-│  Projects              [+ New Project]  │
-├─────────────────────────────────────────┤
-│  ┌──────────┐  ┌──────────┐            │
-│  │ Design   │  │ Marketing│            │
-│  │ System   │  │ Site     │            │
-│  │ Linked   │  │ Unlinked │            │
-│  │ ~/proj.. │  │ ~/mark.. │            │
-│  │ 2h ago   │  │ Never    │            │
-│  └──────────┘  └──────────┘            │
-└─────────────────────────────────────────┘
-```
+Project views are built once per project in `buildProjectView`. State changes patch only what moved (`renderHero`, `renderLive`, `renderResult`, `renderChanges`) so keyboard focus is not lost during progress events.
 
-**Features:**
-- Grid of project cards (responsive: 280px min-width)
-- Each card shows: name, status badge, path, last sync
-- Hover effects with elevation
-- Delete button (× appears on hover)
-- Click card to open project detail
+## Sync-state model
 
----
+`deriveHero` picks the hero from the run state and project metadata, in priority order:
 
-### 2. **Project Detail View** (Tab-Based)
-```
-┌─────────────────────────────────────────┐
-│  [← Projects]  Design System    Linked  │
-├─────────────────────────────────────────┤
-│  [Overview] [Changes] [Logs] [Output]   │
-│           [Settings]                     │
-├─────────────────────────────────────────┤
-│  Tab Content Here                        │
-│  • Overview: Setup + Quick Actions       │
-│  • Changes: Diff summary                 │
-│  • Logs: Activity + Screenshots          │
-│  • Output: Command results               │
-│  • Settings: Options + All commands      │
-└─────────────────────────────────────────┘
-```
+| State | Tone | Primary action |
+| --- | --- | --- |
+| Running | busy | Stop (calls `cancelOperation`) |
+| Error | bad | Try again, or Sign in when the error looks like auth |
+| Stopped by user | warn | Check status |
+| Finished with conflicts, skipped or drift | warn | Review changes |
+| Offline (`navigator.onLine`) | bad | Check status |
+| Not signed in | warn | Sign in to Figma |
+| Never synced | idle | Pull from Figma |
+| Local changes | idle | Review changes |
+| Otherwise | ok | Sync from Figma |
 
----
+Results are summarized by `summarize` into tiles (pulled, pushed, skipped, conflicts, added, modified, deleted) and a per-file list. Push reports skipped files with reasons and offers Retry push. Raw JSON stays in Activity.
 
-## Tab Structure
+## Safety
 
-### **Overview Tab**
-- **Project Setup Panel**
-  - Choose folder button
-  - Figma URL input (if unlinked)
-  - Metadata grid (last pull/push/verify)
-- **Quick Actions Grid**
-  - Large icon buttons for: Pull, Push, Sync, Status
-  - Visual icons with labels
-  - Hover effects with elevation
+- Push confirms before uploading unless Dry run is on. Reset baseline confirms. Delete project and Clear app data use the native confirmation owned by the main process.
+- Destructive dialogs focus Cancel first.
+- Stopping a run warns that files may be partly updated.
+- Busy locks controls with `disabled` and a title explaining why. Stop is never locked.
 
-### **Changes Tab**
-- **Diff Summary Panel**
-  - Color-coded cards:
-    - Green: Added files
-    - Blue: Modified files
-    - Red: Deleted files
-    - Gray: Renamed files
+## Tokens
 
-### **Logs Tab**
-- **Progress Panel**
-  - Current operation status
-  - Progress bar (determinate/indeterminate)
-  - Live activity feed
-- **Screenshot Panel** (conditional)
-  - Shows Playwright failure screenshots
-  - Image viewer with caption
-  - Timestamp of error
-  - Only visible when error occurs
+All colors are CSS custom properties on `:root`, redefined under `prefers-color-scheme: dark`.
 
-### **Output Tab**
-- **Result Panel**
-  - JSON/text output from commands
-  - Scrollable pre-formatted text
-  - Syntax highlighting ready
+| Token | Light | Dark | Use |
+| --- | --- | --- | --- |
+| `--bg` / `--surface` | `#f3f4f7` / `#ffffff` | `#0f1013` / `#17191d` | page, cards |
+| `--text` / `--text-2` / `--text-3` | `#14171c` / `#444b57` / `#5f6775` | `#eceef2` / `#b6bcc7` / `#939baa` | primary, secondary, tertiary text |
+| `--accent` | `#3550d6` | `#93a7ff` | actions, focus, progress |
+| `--ok` / `--warn` / `--bad` | `#0b6b45` / `#85470a` / `#b0281c` | `#62d6a2` / `#f3b75f` / `#ff9187` | status text and glyphs |
 
-### **Settings Tab**
-- **Options Panel** (collapsible)
-  - Dry run toggle
-  - Verbose logs toggle
-  - Prompt after uploads toggle
-  - Pull strategy selector
-- **All Commands Panel**
-  - Authenticate
-  - Verify
-  - Install Browser
+Status text tokens are at least 4.5:1 on their soft backgrounds. Status is never color alone: each state has an icon and a headline.
 
----
+Type uses the system stack (`-apple-system`, Segoe UI, system-ui) and a system monospace for paths and diffs. No network fonts.
 
-## Key UX Improvements
+## Accessibility requirements
 
-### **1. Clear Navigation Hierarchy**
-```
-Home → Select Project → View Tabs → Execute Actions
-```
-
-### **2. Context-Aware Tab Switching**
-- Pull/Push/Sync → Auto-switch to **Logs** tab
-- Errors → Auto-switch to **Output** tab (or **Logs** if screenshot)
-- Status → Stay on current tab
-
-### **3. Screenshot Detection**
-When Playwright fails:
-```typescript
-// Error message contains: "screenshot saved to /path/to/error.png"
-→ Parse screenshot path
-→ Show screenshot panel in Logs tab
-→ Display image with timestamp
-→ Auto-switch to Logs tab
-```
-
-### **4. Visual Feedback**
-- **Project Cards**: Hover elevation, border color change
-- **Quick Actions**: Icon + label, hover lift effect
-- **Tabs**: Active state with shadow
-- **Buttons**: Scale animation on click
-
----
-
-## Technical Architecture
-
-### **State Management**
-```typescript
-interface AppState {
-  projects: Map<string, ProjectState>
-  activeProjectId: string | null
-  activeTab: string  // "overview" | "changes" | "logs" | "output" | "settings"
-  busy: boolean
-  currentView: "home" | "detail"
-}
-```
-
-### **Project State**
-```typescript
-interface ProjectState {
-  id: string
-  rootDir: string
-  figmaMakeUrl: string
-  linkedProject: ProjectInspection | null
-  options: CommandOptions
-  cardElement: HTMLElement  // Home screen card
-  viewElement: HTMLElement  // Detail view content
-}
-```
-
-### **View Switching**
-```typescript
-// Home → Detail
-openProject(id) {
-  homeScreen.hidden = true
-  projectDetail.hidden = false
-  renderProjectDetail(id)
-}
-
-// Detail → Home
-showHome() {
-  homeScreen.hidden = false
-  projectDetail.hidden = true
-}
-```
-
-### **Tab Switching**
-```typescript
-switchTab(name) {
-  // Update tab button states
-  tabs.forEach(t => t.classList.toggle("active", t.name === name))
-  
-  // Show/hide panels
-  panels.forEach(p => p.hidden = p.name !== name)
-}
-```
-
----
-
-## Screenshot Handling
-
-### **Detection**
-```typescript
-function checkForScreenshot(project, error) {
-  const errorMsg = error.message
-  const match = errorMsg.match(/screenshot.*?([^\s]+\.png)/i)
-  
-  if (match) {
-    const path = match[1]
-    showScreenshot(path)
-    switchTab("logs")
-  }
-}
-```
-
-### **Display**
-```html
-<section class="screenshot-panel" hidden>
-  <div class="panel-head">
-    <p class="panel-label">Error Screenshot</p>
-    <h2>Playwright Failure</h2>
-  </div>
-  <div class="screenshot-viewer">
-    <img src="file:///path/to/screenshot.png" />
-    <p class="screenshot-caption">Error at: 4/9/2026, 11:00 PM</p>
-  </div>
-</section>
-```
-
----
-
-## Responsive Design
-
-### **Desktop** (> 640px)
-- Project grid: 3-4 columns
-- Quick actions: 4 columns
-- Full tab labels
-
-### **Mobile** (≤ 640px)
-- Project grid: 1-2 columns
-- Quick actions: 2 columns
-- Tabs scroll horizontally
-
----
-
-## File Structure
-
-```
-src/electron/renderer/
-├── index.html          # Home + Detail views, Templates
-├── styles.css          # All styles including new components
-└── app.ts             # State management, navigation, commands
-```
-
----
-
-## Benefits
-
-✅ **No infinite scroll** - Tab-based organization
-✅ **Clear project selection** - Visual grid on home screen
-✅ **Focused workflows** - One tab per concern
-✅ **Error visibility** - Screenshots shown in context
-✅ **Quick actions** - Large, obvious buttons for common tasks
-✅ **Progressive disclosure** - Advanced options in Settings tab
-✅ **Persistent state** - Projects saved, last project restored
-✅ **Modern aesthetics** - Clean, minimal, professional
-
----
-
-## Future Enhancements
-
-- **Search/Filter** projects on home screen
-- **Project templates** for quick setup
-- **Keyboard shortcuts** (Cmd+1-5 for tabs)
-- **Drag-and-drop** folder selection
-- **Real-time sync status** indicator
-- **Screenshot gallery** for multiple errors
-- **Export logs** functionality
+- Visible `:focus-visible` ring on every interactive element; skip link to main content.
+- Tabs follow the ARIA tabs pattern (arrow keys, Home, End). Menus support arrows and Escape.
+- Progress bar has `role="progressbar"`; milestones (started, finished, failed, stopped) go to a polite live region. Toasts are in a polite live region.
+- `prefers-reduced-motion` removes the spinner and replaces the moving indeterminate bar with a static striped fill.
+- No `transition: all`. No `innerHTML`: all dynamic text goes through `textContent` via the `h()` helper.
+- Layout holds down to about 520px wide.

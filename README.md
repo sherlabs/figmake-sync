@@ -159,6 +159,8 @@ From the desktop app you can:
 
 The app also remembers the last selected project folder.
 
+The interface follows your system light or dark theme and is fully keyboard accessible. The Sync tab leads with a status panel (up to date, syncing, needs review, offline or signed out) and shows live progress with a Stop button. Finished runs report counts for pulled, pushed, skipped and conflicted files. Design notes live in [NEW_UX_ARCHITECTURE.md](NEW_UX_ARCHITECTURE.md).
+
 ## CLI
 
 The CLI still exists for scripting, debugging, and power users.
