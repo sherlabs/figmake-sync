@@ -7,6 +7,7 @@ import type { DesktopAppState } from "./contracts.js";
 
 const desktopAppStateSchema = z.object({
   lastProjectRoot: z.string().nullable().default(null),
+  lastAuthOkAt: z.string().nullable().optional(),
 });
 
 export class DesktopAppStateStore {

@@ -1,0 +1,11 @@
+0:00  Figma Make edits spend Figma’s AI tokens. The code is right there, but you can only edit it by hand.
+0:05  Pull your Figma Make code to a local folder.
+0:08  Review every changed file, line by line.
+0:11  Use your own Claude Code subscription.
+0:15  Install it and run it on your machine.
+0:19  Just describe the change.
+0:24  Claude Code edits the code in your folder.
+0:28  See exactly what it changed.
+0:31  Push it back to Figma Make.
+0:34  Done. No Figma AI tokens spent.
+0:36  figmake-sync. Edit your Figma Make code with your own Claude Code. Unofficial. Not affiliated with Figma.

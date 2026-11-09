@@ -7,6 +7,7 @@ import {
   app,
   BrowserWindow,
   Menu,
+  clipboard,
   dialog,
   ipcMain,
   nativeTheme,
@@ -27,6 +28,9 @@ import { BrowserSessionManager } from "../browser/session.js";
 import { FigmakeSyncService } from "../core/service.js";
 import {
   HarnessService,
+  agentInputSchema,
+  clipboardTextSchema,
+  isAllowedLoginUrl,
   isSafeLocalUrl,
   rootDirInputSchema,
   runAgentInputSchema,
@@ -34,15 +38,29 @@ import {
   updateSettingsInputSchema,
   type HarnessEvent,
 } from "../harness/index.js";
+import { systemEnv } from "../harness/process.js";
+import {
+  RuntimeInstallError,
+  detectRuntime,
+  installManagedRuntime,
+  removeManagedRuntime,
+  setManagedRuntimeRoot,
+} from "../runtime/managed.js";
 import { trackEvent } from "./analytics.js";
 import type {
   DesktopAppState,
   DesktopProjectCommandOptions,
   DesktopProgressEvent,
+  RuntimeInstallResult,
 } from "./contracts.js";
 import { DesktopAppStateStore } from "./appState.js";
+import { applyAuthProbe, isAuthRequiredError } from "./authState.js";
 
 const APP_ID = "com.figmake.sync";
+
+function runtimeRoot(): string {
+  return path.join(app.getPath("userData"), "runtime");
+}
 
 let service!: FigmakeSyncService;
 let harness!: HarnessService;
@@ -302,6 +320,29 @@ async function waitForManualAction(message: string): Promise<void> {
   }
 }
 
+/**
+ * A real remote operation is the authoritative sign-in signal: success proves
+ * the session, AuthRequiredError disproves it (and drops the recorded success).
+ */
+async function trackAuthOutcome<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    const result = await run();
+    lastAuthState = true;
+    await getAppStateStore()
+      .update({ lastAuthOkAt: new Date().toISOString() })
+      .catch(() => undefined);
+    return result;
+  } catch (error) {
+    if (isAuthRequiredError(error)) {
+      lastAuthState = false;
+      await getAppStateStore()
+        .update({ lastAuthOkAt: null })
+        .catch(() => undefined);
+    }
+    throw error;
+  }
+}
+
 async function withOperationLock<T>(
   name: string,
   operation: (signal: AbortSignal) => Promise<T>,
@@ -451,7 +492,56 @@ async function harnessRoot(input: unknown): Promise<string> {
   return allowed;
 }
 
+/** Installs the app's private Node.js when no system or managed Node/npm works; used by the one-call ensure flows. */
+async function ensureNodeForHarness(signal?: AbortSignal): Promise<{ ok: boolean; message?: string }> {
+  try {
+    const status = await detectRuntime({ runtimeRoot: runtimeRoot(), systemEnv: systemEnv() });
+    if (status.node.source !== "missing" && status.npm.source !== "missing") return { ok: true };
+    await installManagedRuntime({
+      runtimeRoot: runtimeRoot(),
+      ...(signal ? { signal } : {}),
+      onProgress: (p) => {
+        if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+          mainWindow.webContents.send("figmake:runtime:progress", p);
+        }
+      },
+    });
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 function registerHarnessHandlers(): void {
+  // One call each for a no-decisions UI. All hold the global operation lock (cancelOperation stops them).
+  ipcMain.handle("figmake:harness:ensure-agent", (_e, input: unknown) => {
+    const { agent } = agentInputSchema.parse(input);
+    return withOperationLock("ensure-agent", (signal) => harness.ensureAgentReady(agent, signal));
+  });
+  ipcMain.handle("figmake:harness:ensure-project", async (_e, input: unknown) => {
+    const root = await harnessRoot(input);
+    return withOperationLock("ensure-project", (signal) => harness.ensureProjectRunning(root, signal));
+  });
+  ipcMain.handle("figmake:harness:agent-install", (_e, input: unknown) => {
+    const { agent } = agentInputSchema.parse(input);
+    return withOperationLock("install-agent", (signal) => harness.installAgentCli(agent, signal));
+  });
+  ipcMain.handle("figmake:harness:agent-login", (_e, input: unknown) => {
+    const { agent } = agentInputSchema.parse(input);
+    return withOperationLock("agent-login", (signal) => harness.loginAgent(agent, signal));
+  });
+  // The renderer never supplies a URL: main opens the one the CLI printed, re-checked against the host allowlist.
+  ipcMain.handle("figmake:harness:agent-open-login", async (_e, input: unknown) => {
+    const { agent } = agentInputSchema.parse(input);
+    const url = harness.pendingLoginUrl(agent);
+    if (!url || !isAllowedLoginUrl(url)) return { opened: false };
+    await shell.openExternal(url);
+    return { opened: true };
+  });
+  ipcMain.handle("figmake:clipboard-write", (_e, text: unknown) => {
+    clipboard.writeText(clipboardTextSchema.parse(text));
+    return true;
+  });
   ipcMain.handle("figmake:harness:detect-agents", () => harness.detectAgents());
   ipcMain.handle("figmake:harness:get-settings", async (_e, input: unknown) =>
     harness.getSettings(await harnessRoot(input)),
@@ -525,7 +615,7 @@ function registerIpcHandlers(): void {
     // Probing launches the profile; never do it while an operation holds it.
     if (activeOperation) {
       return {
-        authenticated: lastAuthState ?? false,
+        authenticated: lastAuthState,
         profileDir,
         unknown: true,
         reason: "An action is running; session state not re-checked.",
@@ -541,7 +631,7 @@ function registerIpcHandlers(): void {
     ).probeLoginState;
     if (typeof probe !== "function") {
       return {
-        authenticated: false,
+        authenticated: null,
         profileDir,
         unknown: true,
         reason: "Login probe unavailable.",
@@ -549,16 +639,12 @@ function registerIpcHandlers(): void {
     }
     try {
       const result = await probe(profileDir);
-      if (result.authenticated !== null) lastAuthState = result.authenticated;
-      return {
-        authenticated: result.authenticated === true,
-        profileDir,
-        ...(result.authenticated === null ? { unknown: true } : {}),
-        ...(result.reason ? { reason: result.reason } : {}),
-      };
+      const resolved = await applyAuthProbe(getAppStateStore(), result);
+      if (resolved.authenticated !== null) lastAuthState = resolved.authenticated;
+      return { ...resolved, profileDir };
     } catch (error) {
       return {
-        authenticated: false,
+        authenticated: null,
         profileDir,
         unknown: true,
         reason: error instanceof Error ? error.message : "Login probe failed.",
@@ -742,42 +828,50 @@ function registerIpcHandlers(): void {
     },
   );
 
-  ipcMain.handle("figmake:check-runtime-deps", async () => {
-    const { execFile } = await import("node:child_process");
-    const { promisify } = await import("node:util");
-    const execFileAsync = promisify(execFile);
+  ipcMain.handle("figmake:check-runtime-deps", async () =>
+    detectRuntime({ runtimeRoot: runtimeRoot(), systemEnv: systemEnv() }),
+  );
 
-    async function getVersion(cmd: string): Promise<string | null> {
-      const candidates =
-        process.platform === "win32"
-          ? [`${cmd}.cmd`, `${cmd}.exe`, `${cmd}.bat`, cmd]
-          : [cmd];
-
-      for (const candidate of candidates) {
-        try {
-          const { stdout } = await execFileAsync(candidate, ["--version"], {
-            timeout: 5_000,
-            env: { ...process.env, PATH: process.env.PATH },
-          });
-          return stdout.trim();
-        } catch {
-          continue;
-        }
-      }
-      return null;
+  ipcMain.handle("figmake:runtime:install", async (): Promise<RuntimeInstallResult> => {
+    try {
+      const result = await withOperationLock("install-runtime", (signal) =>
+        installManagedRuntime({
+          runtimeRoot: runtimeRoot(),
+          signal,
+          onProgress: (p) => {
+            if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+              mainWindow.webContents.send("figmake:runtime:progress", p);
+            }
+          },
+        }),
+      );
+      return {
+        ok: true,
+        version: result.version,
+        nodeVersion: result.nodeVersion,
+        npmVersion: result.npmVersion,
+        pnpmVersion: result.pnpmVersion,
+        alreadyInstalled: result.alreadyInstalled,
+      };
+    } catch (error) {
+      if (error instanceof RuntimeInstallError) return { ok: false, code: error.code, message: error.message };
+      const message = error instanceof Error ? error.message : String(error);
+      return { ok: false, code: /is busy running/.test(message) ? "busy" : "unknown", message };
     }
+  });
 
-    const [nodeVersion, npmVersion, pnpmVersion] = await Promise.all([
-      getVersion("node"),
-      getVersion("npm"),
-      getVersion("pnpm"),
-    ]);
-
-    return {
-      node: nodeVersion,
-      npm: npmVersion,
-      pnpm: pnpmVersion,
-    };
+  ipcMain.handle("figmake:runtime:remove", async () => {
+    if (activeOperation) return { removed: false, error: "Another action is running. Wait for it to finish first." };
+    try {
+      await harness.stopDevExcept(null, true);
+    } catch {
+      /* best effort */
+    }
+    try {
+      return { removed: await removeManagedRuntime(runtimeRoot()) };
+    } catch (error) {
+      return { removed: false, error: error instanceof Error ? error.message : String(error) };
+    }
   });
 
   ipcMain.handle("figmake:install-browser", async () =>
@@ -822,7 +916,7 @@ function registerIpcHandlers(): void {
         void trackEvent("auth_project");
         await persistLastProjectRoot(options.rootDir);
         return withBrowserInstallRecovery(
-          () => service.auth(toRuntimeOptions(options, signal)),
+          () => trackAuthOutcome(() => service.auth(toRuntimeOptions(options, signal))),
           signal,
         );
       }),
@@ -851,7 +945,7 @@ function registerIpcHandlers(): void {
           logger,
         });
 
-        await withBrowserInstallRecovery(() =>
+        await withBrowserInstallRecovery(() => trackAuthOutcome(() =>
           session.authenticate("https://www.figma.com", {
             waitForCompletion: async (message: string) => {
               const focusedWindow =
@@ -869,7 +963,7 @@ function registerIpcHandlers(): void {
                 await dialog.showMessageBox(dialogOpts);
               }
             },
-          }),
+          })),
         );
       }),
   );
@@ -880,7 +974,7 @@ function registerIpcHandlers(): void {
       withOperationLock("pull-project", async (signal) => {
         await persistLastProjectRoot(options.rootDir);
         const result = await withBrowserInstallRecovery(
-          () => service.pull(toRuntimeOptions(options, signal)),
+          () => trackAuthOutcome(() => service.pull(toRuntimeOptions(options, signal))),
           signal,
         );
         void trackEvent("pull", {
@@ -900,7 +994,7 @@ function registerIpcHandlers(): void {
       withOperationLock("sync-from-figma", async (signal) => {
         await persistLastProjectRoot(options.rootDir);
         const result = await withBrowserInstallRecovery(
-          () => service.syncFromFigma(toRuntimeOptions(options, signal)),
+          () => trackAuthOutcome(() => service.syncFromFigma(toRuntimeOptions(options, signal))),
           signal,
         );
         void trackEvent("sync", {
@@ -948,7 +1042,7 @@ function registerIpcHandlers(): void {
       withOperationLock("push-project", async (signal) => {
         await persistLastProjectRoot(options.rootDir);
         const result = await withBrowserInstallRecovery(
-          () => service.push(toRuntimeOptions(options, signal)),
+          () => trackAuthOutcome(() => service.push(toRuntimeOptions(options, signal))),
           signal,
         );
         void trackEvent("push", {
@@ -968,7 +1062,7 @@ function registerIpcHandlers(): void {
       withOperationLock("verify-project", async (signal) => {
         await persistLastProjectRoot(options.rootDir);
         const result = await withBrowserInstallRecovery(
-          () => service.verify(toRuntimeOptions(options, signal)),
+          () => trackAuthOutcome(() => service.verify(toRuntimeOptions(options, signal))),
           signal,
         );
         void trackEvent("verify", {
@@ -1178,8 +1272,9 @@ async function bootstrap(): Promise<void> {
   // Initialize service with shared browser profile so auth is global
   const sharedProfileDir = path.join(app.getPath("userData"), "browser-profile");
   await fs.ensureDir(sharedProfileDir);
+  setManagedRuntimeRoot(runtimeRoot());
   service = new FigmakeSyncService({ sharedBrowserProfileDir: sharedProfileDir });
-  harness = new HarnessService({ sync: service, emit: sendHarnessEvent });
+  harness = new HarnessService({ sync: service, emit: sendHarnessEvent, ensureNode: ensureNodeForHarness });
 
   if (process.platform === "darwin") {
     app.dock?.setIcon(getAppIconPath());

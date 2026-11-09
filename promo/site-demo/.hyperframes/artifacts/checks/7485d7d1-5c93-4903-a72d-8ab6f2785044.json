@@ -1,0 +1,800 @@
+{
+  "ok": true,
+  "strict": false,
+  "browserSkipped": false,
+  "lint": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 1,
+    "infoCount": 0,
+    "findings": [
+      {
+        "code": "gsap_repeated_fromto_without_baseline",
+        "severity": "warning",
+        "message": "8 tl.fromTo() calls target \"#rip\" with no stable baseline. The last-authored fromTo \"from\" values become the element's resting state for any seek before the first tween actually runs, because GSAP applies fromTo from-values at authoring time (immediateRender), not at tween position.",
+        "selector": "#rip",
+        "dataAttributes": {},
+        "sourceFile": "/Users/nilesh93/Projects/personal/figmake/promo/site-demo/index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Add `immediateRender: false` to every fromTo except the earliest-positioned one (at 6.15s), so pre-first-tween seeks keep its \"from\" values. A hiding `tl.set(..., 0)` baseline trips gsap_timeline_set_initial_hide, and a `gsap.set` authored before the fromTo calls is overwritten by them."
+      }
+    ],
+    "filesScanned": 1
+  },
+  "runtime": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": []
+  },
+  "layout": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 2,
+    "infoCount": 14,
+    "findings": [
+      {
+        "code": "escaped_container",
+        "severity": "warning",
+        "time": 11.389,
+        "selector": "#sD",
+        "message": "Positioned element renders far outside its offset parent — its coordinates were likely computed in a different frame (canvas/viewport pixels).",
+        "rect": {
+          "left": -99.52,
+          "top": 32.7,
+          "right": 1871.68,
+          "bottom": 2342.7,
+          "width": 1971.2,
+          "height": 2310
+        },
+        "containerSelector": "#frame",
+        "text": "",
+        "fixHint": "Compute left/top in the offset parent's frame (subtract its rect), or mark intentional placement with data-layout-allow-overflow.",
+        "containerRect": {
+          "left": 256,
+          "top": 36,
+          "right": 1664,
+          "bottom": 938,
+          "width": 1408,
+          "height": 902
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": -99.52,
+          "y": 32.7,
+          "width": 1971.2,
+          "height": 2310
+        },
+        "firstSeen": 11.389,
+        "lastSeen": 15.944,
+        "occurrences": 2,
+        "heldMs": 0,
+        "times": [
+          11.389,
+          15.944
+        ]
+      },
+      {
+        "code": "escaped_container",
+        "severity": "warning",
+        "time": 29.611,
+        "selector": "#sH",
+        "message": "Positioned element renders far outside its offset parent — its coordinates were likely computed in a different frame (canvas/viewport pixels).",
+        "rect": {
+          "left": -117.78,
+          "top": -1324.92,
+          "right": 1881.58,
+          "bottom": 1018.08,
+          "width": 1999.36,
+          "height": 2343
+        },
+        "containerSelector": "#frame",
+        "text": "",
+        "fixHint": "Compute left/top in the offset parent's frame (subtract its rect), or mark intentional placement with data-layout-allow-overflow.",
+        "containerRect": {
+          "left": 256,
+          "top": 36,
+          "right": 1664,
+          "bottom": 938,
+          "width": 1408,
+          "height": 902
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": -117.78,
+          "y": -1324.92,
+          "width": 1999.36,
+          "height": 2343
+        },
+        "firstSeen": 29.611,
+        "lastSeen": 34.167,
+        "occurrences": 2,
+        "heldMs": 0,
+        "times": [
+          29.611,
+          34.167
+        ]
+      },
+      {
+        "code": "container_overflow",
+        "severity": "info",
+        "time": 6.833,
+        "selector": "#sB",
+        "message": "Element extends outside a clipping layout container.",
+        "rect": {
+          "left": -236.8,
+          "top": 28.85,
+          "right": 2156.8,
+          "bottom": 1562.25,
+          "width": 2393.6,
+          "height": 1533.4
+        },
+        "containerSelector": "#frame",
+        "fixHint": "Resize/reposition the child or container, or mark intentional overflow with data-layout-allow-overflow.",
+        "containerRect": {
+          "left": 256,
+          "top": 36,
+          "right": 1664,
+          "bottom": 938,
+          "width": 1408,
+          "height": 902
+        },
+        "overflow": {
+          "left": 492.8,
+          "right": 492.8,
+          "top": 7.15,
+          "bottom": 624.25
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": -236.8,
+          "y": 28.85,
+          "width": 2393.6,
+          "height": 1533.4
+        },
+        "firstSeen": 6.833,
+        "lastSeen": 6.833,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          6.833
+        ]
+      },
+      {
+        "code": "container_overflow",
+        "severity": "info",
+        "time": 11.389,
+        "selector": "#sC",
+        "message": "Element extends outside a clipping layout container.",
+        "rect": {
+          "left": -379.8,
+          "top": 32.42,
+          "right": 1661.8,
+          "bottom": 1340.33,
+          "width": 2041.6,
+          "height": 1307.9
+        },
+        "containerSelector": "#frame",
+        "fixHint": "Resize/reposition the child or container, or mark intentional overflow with data-layout-allow-overflow.",
+        "containerRect": {
+          "left": 256,
+          "top": 36,
+          "right": 1664,
+          "bottom": 938,
+          "width": 1408,
+          "height": 902
+        },
+        "overflow": {
+          "left": 635.8,
+          "top": 3.58,
+          "bottom": 402.33
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": -379.8,
+          "y": 32.42,
+          "width": 2041.6,
+          "height": 1307.9
+        },
+        "firstSeen": 11.389,
+        "lastSeen": 11.389,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          11.389
+        ]
+      },
+      {
+        "code": "container_overflow",
+        "severity": "info",
+        "time": 11.389,
+        "selector": "#sD",
+        "message": "Element extends outside a clipping layout container.",
+        "rect": {
+          "left": -99.52,
+          "top": 32.7,
+          "right": 1871.68,
+          "bottom": 2342.7,
+          "width": 1971.2,
+          "height": 2310
+        },
+        "containerSelector": "#frame",
+        "fixHint": "Resize/reposition the child or container, or mark intentional overflow with data-layout-allow-overflow.",
+        "containerRect": {
+          "left": 256,
+          "top": 36,
+          "right": 1664,
+          "bottom": 938,
+          "width": 1408,
+          "height": 902
+        },
+        "overflow": {
+          "left": 355.52,
+          "right": 207.68,
+          "top": 3.3,
+          "bottom": 1404.7
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": -99.52,
+          "y": 32.7,
+          "width": 1971.2,
+          "height": 2310
+        },
+        "firstSeen": 11.389,
+        "lastSeen": 15.944,
+        "occurrences": 2,
+        "heldMs": 0,
+        "times": [
+          11.389,
+          15.944
+        ]
+      },
+      {
+        "code": "container_overflow",
+        "severity": "info",
+        "time": 15.944,
+        "selector": "#sE",
+        "message": "Element extends outside a clipping layout container.",
+        "rect": {
+          "left": -140.55,
+          "top": -262.65,
+          "right": 1901.05,
+          "bottom": 2129.85,
+          "width": 2041.6,
+          "height": 2392.5
+        },
+        "containerSelector": "#frame",
+        "fixHint": "Resize/reposition the child or container, or mark intentional overflow with data-layout-allow-overflow.",
+        "containerRect": {
+          "left": 256,
+          "top": 36,
+          "right": 1664,
+          "bottom": 938,
+          "width": 1408,
+          "height": 902
+        },
+        "overflow": {
+          "left": 396.55,
+          "right": 237.05,
+          "top": 298.65,
+          "bottom": 1191.85
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": -140.55,
+          "y": -262.65,
+          "width": 2041.6,
+          "height": 2392.5
+        },
+        "firstSeen": 15.944,
+        "lastSeen": 15.944,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          15.944
+        ]
+      },
+      {
+        "code": "escaped_container",
+        "severity": "info",
+        "time": 15.944,
+        "selector": "#sE",
+        "message": "Positioned element renders far outside its offset parent — its coordinates were likely computed in a different frame (canvas/viewport pixels).",
+        "rect": {
+          "left": -140.55,
+          "top": -262.65,
+          "right": 1901.05,
+          "bottom": 2129.85,
+          "width": 2041.6,
+          "height": 2392.5
+        },
+        "containerSelector": "#frame",
+        "text": "",
+        "fixHint": "Compute left/top in the offset parent's frame (subtract its rect), or mark intentional placement with data-layout-allow-overflow.",
+        "containerRect": {
+          "left": 256,
+          "top": 36,
+          "right": 1664,
+          "bottom": 938,
+          "width": 1408,
+          "height": 902
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": -140.55,
+          "y": -262.65,
+          "width": 2041.6,
+          "height": 2392.5
+        },
+        "firstSeen": 15.944,
+        "lastSeen": 15.944,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          15.944
+        ]
+      },
+      {
+        "code": "container_overflow",
+        "severity": "info",
+        "time": 20.5,
+        "selector": "#sF",
+        "message": "Element extends outside a clipping layout container.",
+        "rect": {
+          "left": -49.8,
+          "top": -901.47,
+          "right": 1851,
+          "bottom": 1326.03,
+          "width": 1900.8,
+          "height": 2227.5
+        },
+        "containerSelector": "#frame",
+        "fixHint": "Resize/reposition the child or container, or mark intentional overflow with data-layout-allow-overflow.",
+        "containerRect": {
+          "left": 256,
+          "top": 36,
+          "right": 1664,
+          "bottom": 938,
+          "width": 1408,
+          "height": 902
+        },
+        "overflow": {
+          "left": 305.8,
+          "right": 187,
+          "top": 937.47,
+          "bottom": 388.03
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": -49.8,
+          "y": -901.47,
+          "width": 1900.8,
+          "height": 2227.5
+        },
+        "firstSeen": 20.5,
+        "lastSeen": 20.5,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          20.5
+        ]
+      },
+      {
+        "code": "escaped_container",
+        "severity": "info",
+        "time": 20.5,
+        "selector": "#sF",
+        "message": "Positioned element renders far outside its offset parent — its coordinates were likely computed in a different frame (canvas/viewport pixels).",
+        "rect": {
+          "left": -49.8,
+          "top": -901.47,
+          "right": 1851,
+          "bottom": 1326.03,
+          "width": 1900.8,
+          "height": 2227.5
+        },
+        "containerSelector": "#frame",
+        "text": "Make",
+        "fixHint": "Compute left/top in the offset parent's frame (subtract its rect), or mark intentional placement with data-layout-allow-overflow.",
+        "containerRect": {
+          "left": 256,
+          "top": 36,
+          "right": 1664,
+          "bottom": 938,
+          "width": 1408,
+          "height": 902
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": -49.8,
+          "y": -901.47,
+          "width": 1900.8,
+          "height": 2227.5
+        },
+        "firstSeen": 20.5,
+        "lastSeen": 20.5,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          20.5
+        ]
+      },
+      {
+        "code": "container_overflow",
+        "severity": "info",
+        "time": 25.056,
+        "selector": "#sG",
+        "message": "Element extends outside a clipping layout container.",
+        "rect": {
+          "left": -102.6,
+          "top": -714.2,
+          "right": 1868.6,
+          "bottom": 1595.8,
+          "width": 1971.2,
+          "height": 2310
+        },
+        "containerSelector": "#frame",
+        "fixHint": "Resize/reposition the child or container, or mark intentional overflow with data-layout-allow-overflow.",
+        "containerRect": {
+          "left": 256,
+          "top": 36,
+          "right": 1664,
+          "bottom": 938,
+          "width": 1408,
+          "height": 902
+        },
+        "overflow": {
+          "left": 358.6,
+          "right": 204.6,
+          "top": 750.2,
+          "bottom": 657.8
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": -102.6,
+          "y": -714.2,
+          "width": 1971.2,
+          "height": 2310
+        },
+        "firstSeen": 25.056,
+        "lastSeen": 25.056,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          25.056
+        ]
+      },
+      {
+        "code": "escaped_container",
+        "severity": "info",
+        "time": 25.056,
+        "selector": "#sG",
+        "message": "Positioned element renders far outside its offset parent — its coordinates were likely computed in a different frame (canvas/viewport pixels).",
+        "rect": {
+          "left": -102.6,
+          "top": -714.2,
+          "right": 1868.6,
+          "bottom": 1595.8,
+          "width": 1971.2,
+          "height": 2310
+        },
+        "containerSelector": "#frame",
+        "text": "",
+        "fixHint": "Compute left/top in the offset parent's frame (subtract its rect), or mark intentional placement with data-layout-allow-overflow.",
+        "containerRect": {
+          "left": 256,
+          "top": 36,
+          "right": 1664,
+          "bottom": 938,
+          "width": 1408,
+          "height": 902
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": -102.6,
+          "y": -714.2,
+          "width": 1971.2,
+          "height": 2310
+        },
+        "firstSeen": 25.056,
+        "lastSeen": 25.056,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          25.056
+        ]
+      },
+      {
+        "code": "container_overflow",
+        "severity": "info",
+        "time": 29.611,
+        "selector": "#sH",
+        "message": "Element extends outside a clipping layout container.",
+        "rect": {
+          "left": -117.78,
+          "top": -1324.92,
+          "right": 1881.58,
+          "bottom": 1018.08,
+          "width": 1999.36,
+          "height": 2343
+        },
+        "containerSelector": "#frame",
+        "fixHint": "Resize/reposition the child or container, or mark intentional overflow with data-layout-allow-overflow.",
+        "containerRect": {
+          "left": 256,
+          "top": 36,
+          "right": 1664,
+          "bottom": 938,
+          "width": 1408,
+          "height": 902
+        },
+        "overflow": {
+          "left": 373.78,
+          "right": 217.58,
+          "top": 1360.92,
+          "bottom": 80.08
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": -117.78,
+          "y": -1324.92,
+          "width": 1999.36,
+          "height": 2343
+        },
+        "firstSeen": 29.611,
+        "lastSeen": 34.167,
+        "occurrences": 2,
+        "heldMs": 0,
+        "times": [
+          29.611,
+          34.167
+        ]
+      },
+      {
+        "code": "container_overflow",
+        "severity": "info",
+        "time": 29.611,
+        "selector": "#stepw > div:nth-of-type(7)",
+        "message": "Nowrap text is wider than its container.",
+        "rect": {
+          "left": 1359.34,
+          "top": 991,
+          "right": 1664,
+          "bottom": 1019,
+          "width": 304.66,
+          "height": 28
+        },
+        "containerSelector": "#stepw",
+        "fixHint": "Resize/reposition the child or container, or mark intentional overflow with data-layout-allow-overflow.",
+        "containerRect": {
+          "left": 1364,
+          "top": 972,
+          "right": 1664,
+          "bottom": 1036,
+          "width": 300,
+          "height": 64
+        },
+        "overflow": {
+          "left": 4.66
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1359.34,
+          "y": 991,
+          "width": 304.66,
+          "height": 28
+        },
+        "firstSeen": 29.611,
+        "lastSeen": 29.611,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          29.611
+        ]
+      },
+      {
+        "code": "container_overflow",
+        "severity": "info",
+        "time": 34.167,
+        "selector": "#sI",
+        "message": "Element extends outside a clipping layout container.",
+        "rect": {
+          "left": -236.8,
+          "top": 28.85,
+          "right": 2156.8,
+          "bottom": 1562.25,
+          "width": 2393.6,
+          "height": 1533.4
+        },
+        "containerSelector": "#frame",
+        "fixHint": "Resize/reposition the child or container, or mark intentional overflow with data-layout-allow-overflow.",
+        "containerRect": {
+          "left": 256,
+          "top": 36,
+          "right": 1664,
+          "bottom": 938,
+          "width": 1408,
+          "height": 902
+        },
+        "overflow": {
+          "left": 492.8,
+          "right": 492.8,
+          "top": 7.15,
+          "bottom": 624.25
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": -236.8,
+          "y": 28.85,
+          "width": 2393.6,
+          "height": 1533.4
+        },
+        "firstSeen": 34.167,
+        "lastSeen": 34.167,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          34.167
+        ]
+      },
+      {
+        "code": "content_overlap",
+        "severity": "info",
+        "time": 34.167,
+        "selector": "#c9",
+        "message": "Two text blocks overlap and may render unreadable.",
+        "rect": {
+          "left": 256,
+          "top": 975,
+          "right": 853.47,
+          "bottom": 1032,
+          "width": 597.47,
+          "height": 57
+        },
+        "containerSelector": "#c10",
+        "text": "Push it back to Figma Make.",
+        "fixHint": "Give each block its own zone, or put data-layout-allow-overlap on the text or on a container inside the scene. A marker on the scene root does not apply. Decoration nobody needs to read can take data-layout-ignore.",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 256,
+          "y": 975,
+          "width": 597.47,
+          "height": 57
+        },
+        "firstSeen": 34.167,
+        "lastSeen": 34.167,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          34.167
+        ]
+      },
+      {
+        "code": "content_overlap",
+        "severity": "info",
+        "time": 34.167,
+        "selector": "#c9 > b:nth-of-type(1)",
+        "message": "Two text blocks overlap and may render unreadable.",
+        "rect": {
+          "left": 580.53,
+          "top": 975,
+          "right": 842.14,
+          "bottom": 1032,
+          "width": 261.61,
+          "height": 57
+        },
+        "containerSelector": "#c10 > b:nth-of-type(1)",
+        "text": "Figma Make",
+        "fixHint": "Give each block its own zone, or put data-layout-allow-overlap on the text or on a container inside the scene. A marker on the scene root does not apply. Decoration nobody needs to read can take data-layout-ignore.",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 580.53,
+          "y": 975,
+          "width": 261.61,
+          "height": 57
+        },
+        "firstSeen": 34.167,
+        "lastSeen": 34.167,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          34.167
+        ]
+      }
+    ],
+    "duration": 41,
+    "samples": [
+      2.278,
+      6.833,
+      11.389,
+      15.944,
+      20.5,
+      25.056,
+      29.611,
+      34.167,
+      38.722
+    ],
+    "transitionSamples": [],
+    "transitionSamplesDropped": 0,
+    "tolerance": 2,
+    "totalIssueCount": 16,
+    "truncated": false
+  },
+  "motion": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": [],
+    "enabled": false,
+    "samples": 0
+  },
+  "contrast": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": [],
+    "enabled": true,
+    "samples": [
+      2.278,
+      11.389,
+      20.5,
+      29.611,
+      38.722
+    ],
+    "checked": 32,
+    "passed": 32
+  },
+  "craft": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": [],
+    "enabled": true,
+    "step": 0.125,
+    "samples": 328
+  },
+  "audio": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": []
+  },
+  "hdr": {
+    "autoPromotion": null,
+    "inspection": "available"
+  },
+  "snapshots": {
+    "enabled": false,
+    "files": [],
+    "times": [],
+    "findingFiles": []
+  }
+}

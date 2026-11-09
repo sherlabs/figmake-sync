@@ -22,6 +22,7 @@ import {
   type FigmaMakeAdapter,
   type FigmaMakeProjectSession,
 } from "../figma/adapter.js";
+import { buildEnv } from "../harness/process.js";
 import { createProjectLogger, flushLogger } from "../logging/logger.js";
 import type {
   CommandRuntimeOptions,
@@ -105,6 +106,8 @@ export function runNpmInstall(
     // Fixed args only; shell is needed on Windows to resolve npm.cmd safely (no EINVAL).
     const child = spawn("npm", ["install", "--no-audit", "--no-fund"], {
       cwd,
+      // System PATH first, then the app-managed Node (if installed); process.env itself is untouched.
+      env: buildEnv(),
       shell: isWin,
       stdio: ["ignore", onLog ? "pipe" : "ignore", "pipe"],
       windowsHide: true,

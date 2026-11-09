@@ -60,6 +60,10 @@ export function createClaudeAdapter(): AgentAdapter {
     id: "claude",
     displayName: "Claude Code",
     binary: "claude",
+    npmPackage: "@anthropic-ai/claude-code",
+    manualLogin: "claude auth login",
+    // Verified: `claude auth login --help` (flags --claudeai default, --console, --email, --sso).
+    loginArgs: () => ["auth", "login"],
     installHint: "Install Claude Code (`npm install -g @anthropic-ai/claude-code`), then run `claude auth login` to sign in.",
     loginHint: "Not signed in. Run `claude auth login` in a terminal.",
     versionArgs: () => ["--version"],

@@ -77,7 +77,39 @@ export type HarnessEvent =
   | { kind: "dev-log"; rootDir: string; line: string }
   | { kind: "run-phase"; rootDir: string; runId: string; phase: HarnessPhase; message: string }
   | { kind: "run-agent"; rootDir: string; runId: string; event: AgentEvent }
-  | { kind: "run-done"; rootDir: string; runId: string; outcome: RunOutcome };
+  | { kind: "run-done"; rootDir: string; runId: string; outcome: RunOutcome }
+  | { kind: "agent-install-log"; agent: AgentId; line: string }
+  | { kind: "agent-login-log"; agent: AgentId; line: string }
+  /** A sign-in page was printed by the CLI. `url` is origin+path only; open it via harnessOpenAgentLogin. */
+  | { kind: "agent-login-url"; agent: AgentId; url: string }
+  | { kind: "agent-ensure"; agent: AgentId; stage: AgentEnsureStage; message: string }
+  | { kind: "project-ensure"; rootDir: string; stage: ProjectEnsureStage; message: string; url?: string };
+
+export type AgentEnsureStage =
+  | "checking"
+  | "installing-node"
+  | "installing"
+  | "needs-browser-signin"
+  | "ready"
+  | "failed";
+
+export type ProjectEnsureStage = "checking" | "installing-node" | "installing-deps" | "starting" | "running" | "failed";
+
+export type AgentInstallResult =
+  | { ok: true; version: string | null; binPath: string | null }
+  | { ok: false; code: "no_npm" | "unsupported" | "failed" | "cancelled" | "timeout"; message: string };
+
+export type AgentLoginResult =
+  | { ok: true }
+  | { ok: false; code: "not_installed" | "unsupported" | "failed" | "cancelled" | "timeout"; message: string };
+
+export type EnsureAgentResult =
+  | { ok: true; agent: AgentInfo }
+  | { ok: false; code: "cancelled" | "node_failed" | "install_failed" | "signin_failed" | "unusable"; message: string; agent: AgentInfo | null };
+
+export type EnsureProjectResult =
+  | { ok: true; url: string }
+  | { ok: false; code: "cancelled" | "node_failed" | "deps_failed" | "no_dev_script" | "dev_failed"; message: string };
 
 export class HarnessError extends Error {
   constructor(
@@ -86,7 +118,8 @@ export class HarnessError extends Error {
       | "run_in_progress"
       | "backup_failed"
       | "invalid_input"
-      | "no_dev_script",
+      | "no_dev_script"
+      | "unsupported",
     message: string,
   ) {
     super(message);

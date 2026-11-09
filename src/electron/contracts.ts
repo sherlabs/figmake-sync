@@ -10,6 +10,10 @@ import type {
   AgentInfo,
   ChangeSet,
   DevStatus,
+  EnsureAgentResult,
+  EnsureProjectResult,
+  AgentInstallResult,
+  AgentLoginResult,
   HarnessEvent,
   HarnessSettings,
   SetupResult,
@@ -36,6 +40,13 @@ import type { PullStrategy } from "../types/config.js";
  *                                       the final RunOutcome arrives as a "run-done" event; cancelOperation also cancels it)
  *   figmake:harness:cancel-run        harnessCancelRun(rootDir)          -> {cancelled}
  *   figmake:harness:changes           harnessChanges(rootDir)            -> ChangeSet (local vs last-pull baseline; same ignore rules as status)
+ *
+ * Private Node runtime (src/runtime/managed.ts; isolated install under <userData>/runtime, NOT an OS sandbox):
+ *   figmake:check-runtime-deps        checkRuntimeDeps()   -> RuntimeDepsResult (source system|managed|missing + version per tool)
+ *   figmake:runtime:install           installRuntime()     -> RuntimeInstallResult (never throws; cancel via cancelOperation)
+ *   figmake:runtime:remove            removeRuntime()      -> {removed}  (deletes <userData>/runtime)
+ * event channel "figmake:runtime:progress" (onRuntimeProgress): RuntimeProgressEvent
+ *
  * Manual push to Figma Make stays the existing pushProject().
  *
  * event channel "figmake:harness:event" (onHarnessEvent), payload HarnessEvent (discriminated by `kind`):
@@ -45,10 +56,17 @@ import type { PullStrategy } from "../types/config.js";
  *   run-phase   {rootDir, runId, phase: backup|agent|diff|push, message}
  *   run-agent   {rootDir, runId, event: AgentEvent}  AgentEvent: session|text|tool|file_edit|result|error
  *   run-done    {rootDir, runId, outcome: RunOutcome} outcome.push: skipped|pushed|aborted|failed
+ *   agent-install-log / agent-login-log {agent, line}   (URL query strings already stripped)
+ *   agent-login-url {agent, url}   origin+path only; open with harnessOpenAgentLogin(agent)
+ *   agent-ensure   {agent, stage: checking|installing-node|installing|needs-browser-signin|ready|failed, message}
+ *   project-ensure {rootDir, stage: checking|installing-node|installing-deps|starting|running|failed, message, url?}
+ * Private agent CLIs install into <userData>/runtime/tools-agents (npm --prefix, never -g).
  */
 
 export interface DesktopAppState {
   lastProjectRoot: string | null;
+  /** ISO time of the last real pull/push/verify/sign-in that succeeded; cleared on AuthRequiredError. */
+  lastAuthOkAt?: string | null | undefined;
 }
 
 export interface DesktopProjectCommandOptions {
@@ -76,11 +94,29 @@ export interface ClearAppDataResult {
   clearedPaths: string[];
 }
 
-export interface RuntimeDepsResult {
-  node: string | null;
-  npm: string | null;
-  pnpm: string | null;
+/** Per tool: where it resolves from (a working system install wins over the app-managed copy). */
+export interface RuntimeToolInfo {
+  source: "system" | "managed" | "missing";
+  version: string | null;
 }
+
+export interface RuntimeDepsResult {
+  node: RuntimeToolInfo;
+  npm: RuntimeToolInfo;
+  pnpm: RuntimeToolInfo;
+  managed: { installed: boolean; version: string | null; dir: string | null };
+}
+
+/** Streamed on "figmake:runtime:progress" while figmake:runtime:install runs. */
+export interface RuntimeProgressEvent {
+  phase: "resolving" | "downloading" | "verifying" | "extracting" | "installing-pnpm" | "done";
+  message: string;
+  percent?: number;
+}
+
+export type RuntimeInstallResult =
+  | { ok: true; version: string; nodeVersion: string | null; npmVersion: string | null; pnpmVersion: string | null; alreadyInstalled: boolean }
+  | { ok: false; code: "offline" | "http" | "checksum" | "unsupported" | "extract" | "install" | "cancelled" | "busy" | "unknown"; message: string };
 
 export interface FigmakeDesktopApi {
   loadAppState(): Promise<DesktopAppState>;
@@ -104,10 +140,14 @@ export interface FigmakeDesktopApi {
   getCustomIgnorePatterns(rootDir: string): Promise<string[]>;
   rebaselineProject(options: DesktopProjectCommandOptions): Promise<{ filesSnapshotted: number }>;
   checkRuntimeDeps(): Promise<RuntimeDepsResult>;
+  installRuntime(): Promise<RuntimeInstallResult>;
+  removeRuntime(): Promise<{ removed: boolean; error?: string }>;
+  onRuntimeProgress(listener: (event: RuntimeProgressEvent) => void): () => void;
   checkAuthStatus(): Promise<{
-    authenticated: boolean;
+    authenticated: boolean | null;
     profileDir: string;
     unknown?: boolean;
+    unconfirmed?: boolean;
     reason?: string;
   }>;
   cancelOperation(): Promise<{ cancelled: boolean }>;
@@ -130,6 +170,16 @@ export interface FigmakeDesktopApi {
   }): Promise<{ runId: string }>;
   harnessCancelRun(rootDir: string): Promise<{ cancelled: boolean }>;
   harnessChanges(rootDir: string): Promise<ChangeSet>;
+  /** install if missing -> sign in if needed -> ready. Streams "agent-ensure" (+ install/login log) events. Cancel via cancelOperation. */
+  harnessEnsureAgent(agent: AgentId): Promise<EnsureAgentResult>;
+  /** Node (private if needed) -> npm install -> dev server -> url. Streams "project-ensure" events. Cancel via cancelOperation. */
+  harnessEnsureProject(rootDir: string): Promise<EnsureProjectResult>;
+  harnessInstallAgent(agent: AgentId): Promise<AgentInstallResult>;
+  harnessLoginAgent(agent: AgentId): Promise<AgentLoginResult>;
+  /** Opens the sign-in page the CLI printed, only if its host is allowlisted. The renderer never passes a URL. */
+  harnessOpenAgentLogin(agent: AgentId): Promise<{ opened: boolean }>;
+  /** Writes plain text (<= 4096 chars) to the system clipboard via main. */
+  clipboardWrite(text: string): Promise<boolean>;
   onHarnessEvent(listener: (event: HarnessEvent) => void): () => void;
   onProgress(listener: (event: DesktopProgressEvent) => void): () => void;
 }

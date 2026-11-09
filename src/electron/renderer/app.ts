@@ -2,10 +2,12 @@ import type {
   DesktopProjectCommandOptions,
   DesktopProgressEvent,
   FigmakeDesktopApi,
+  RuntimeDepsResult,
 } from "../contracts.js";
 import type { ProjectInspection, StatusResult } from "../../core/service.js";
 import type { PullStrategy } from "../../types/config.js";
 import type { ManifestDiff } from "../../diff/manifest.js";
+import { copyToClipboard, selectCopyInDocument } from "./clipboard.js";
 import type { AgentInfo, ChangeSet, DevStatus, HarnessEvent, HarnessSettings, RunOutcome } from "../../harness/types.js";
 
 declare global {
@@ -113,6 +115,8 @@ interface AppState {
   busy: boolean;
   busyLabel: string;
   auth: boolean | null;
+  /** Background check was inconclusive but a real action recently worked: soft notice, not the blocking banner. */
+  authSoft: boolean;
   authReason: string;
   browserReady: boolean;
   task: LiveTask | null;
@@ -142,10 +146,10 @@ const ge = {
   onboardingBanner: $("[data-onboarding-banner]"),
   onboardingStatus: $("[data-onboarding-status]"),
   depsBanner: $("[data-deps-banner]"),
-  depsStatus: $("[data-deps-status]"),
   offlineBanner: $("[data-offline-banner]"),
   authBanner: $("[data-auth-banner]"),
   authBannerText: $("[data-auth-banner-text]"),
+  authSoft: $("[data-auth-soft]"),
   content: $("[data-content]"),
   pane: $("[data-pane]"),
   inspector: $("[data-inspector]"),
@@ -170,6 +174,7 @@ const state: AppState = {
   busy: false,
   busyLabel: "",
   auth: null,
+  authSoft: false,
   authReason: "",
   browserReady: false,
   task: null,
@@ -694,11 +699,18 @@ function renderInspector(project: ProjectState | null): void {
   lockAll(ge.inspector);
 }
 
+/** Shared copy: main-process clipboard, then navigator.clipboard, then selection. Toasts the outcome. */
+function copyWithToast(text: string, okMessage: string): void {
+  const api = window.figmakeSyncDesktop;
+  void copyToClipboard(text, {
+    ipcWrite: api?.clipboardWrite ? (t) => api.clipboardWrite(t) : undefined,
+    webWrite: navigator.clipboard ? (t) => navigator.clipboard.writeText(t) : undefined,
+    selectCopy: selectCopyInDocument,
+  }).then((ok) => (ok ? toast(okMessage, "ok", undefined, 2500) : toast("Couldn't copy to the clipboard", "bad")));
+}
+
 function copyText(text: string): void {
-  void navigator.clipboard.writeText(text).then(
-    () => toast("File contents copied", "ok", undefined, 2500),
-    () => toast("Couldn't copy to the clipboard", "bad"),
-  );
+  copyWithToast(text, "File contents copied");
 }
 
 /* ── Project view (built once per project) ──────────────────────────────────── */
@@ -1609,10 +1621,7 @@ async function saveHarnessSettings(project: ProjectState, patch: { preferredAgen
 /* connectors */
 
 function copyCommand(cmd: string): void {
-  void navigator.clipboard.writeText(cmd).then(
-    () => toast("Command copied. Paste it into a terminal.", "ok", undefined, 2500),
-    () => toast("Couldn't copy to the clipboard", "bad"),
-  );
+  copyWithToast(cmd, "Command copied. Paste it into a terminal.");
 }
 
 function commandLine(cmd: string): HTMLElement {
@@ -1690,6 +1699,7 @@ function setupStatusText(a: AgentUi): string {
 async function runSetup(project: ProjectState): Promise<boolean> {
   const a = project.agent;
   if (a.setup.status === "running") return false;
+  if (runtimeNeeded()) { toast("Node.js isn't installed yet. Use Install Node.js in the Set up row.", "warn"); renderEnv(project); return false; }
   a.setup = { status: "running", lines: [], message: "" };
   setBusy(true, "installing dependencies");
   renderEnv(project);
@@ -1778,11 +1788,17 @@ function renderEnv(project: ProjectState): void {
   const dev = a.dev;
   const setupIcon = s.status === "running" ? h("span", { class: "spin", "aria-hidden": "true" })
     : h("span", { class: `sdot ${s.status === "done" ? "ok" : s.status === "error" ? "bad" : ""}`, "aria-hidden": "true" });
+  const needRt = runtimeNeeded() && s.status !== "running";
+  const rtBusy = rt.phase === "installing";
   const setupRow = h("div", { class: "row stack" },
     h("div", { class: "rowline" },
-      setupIcon,
-      h("div", { class: "l" }, h("b", {}, "Set up"), h("span", { role: s.status === "running" ? "status" : undefined }, setupStatusText(a))),
-      h("div", { class: "r" }, s.status === "running"
+      rtBusy ? h("span", { class: "spin", "aria-hidden": "true" }) : setupIcon,
+      h("div", { class: "l" }, h("b", {}, "Set up"), h("span", { role: s.status === "running" ? "status" : undefined }, rtBusy ? `Installing a private Node.js. ${rt.label}${rt.pct != null ? ` (${rt.pct}%)` : ""}` : needRt ? "Node.js isn't installed. Install a private copy for this app only: about 100 MB to download (270 MB on disk), no admin rights, doesn't change your system." : setupStatusText(a))),
+      h("div", { class: "r" }, rtBusy
+        ? h("button", { type: "button", class: "btn sm", "data-action": "cancel-runtime-inline", onclick: () => { void getDesktopApi().cancelOperation(); } }, icon("stop", true), "Stop")
+        : needRt
+        ? h("button", { type: "button", class: "btn sm primary", "data-action": "install-runtime-inline", "data-lock": true, onclick: () => { void installRuntime(); } }, "Install Node.js")
+        : s.status === "running"
         ? h("button", { type: "button", class: "btn sm", "data-action": "cancel-setup", onclick: () => { void getDesktopApi().cancelOperation(); } }, icon("stop", true), "Stop")
         : h("button", { type: "button", class: "btn sm", "data-action": "run-setup", "data-lock": true, onclick: () => { void runSetup(project); } }, s.status === "done" ? "Check again" : s.status === "error" ? "Try again" : "Install dependencies"))),
     ...((s.status === "running" || s.status === "error") && s.lines.length > 0 ? [logBlock(s.lines, "npm install output", "setup")] : []));
@@ -2026,6 +2042,9 @@ async function refreshAgentChanges(project: ProjectState): Promise<void> {
 /* events from the main process */
 
 function onHarnessEvent(ev: HarnessEvent): void {
+  // Agent install / sign-in / ensure events are consumed by the designer-mode UI; the current view ignores them.
+  if (!("rootDir" in ev)) return;
+  if (ev.kind === "project-ensure") return;
   const project = projectByRoot(ev.rootDir);
   if (!project) return;
   const a = project.agent;
@@ -2646,12 +2665,14 @@ function renderBanners(): void {
   ge.offlineBanner.hidden = navigator.onLine;
   const showAuth = state.auth === false && isLinked(project) && project.run.status !== "error";
   ge.authBanner.hidden = !showAuth;
+  ge.authSoft.hidden = !(state.authSoft && !authSoftDismissed && state.auth === null && !showAuth);
   if (showAuth) ge.authBannerText.textContent = `${state.authReason ? `${state.authReason}. ` : ""}Pull and push need a Figma session. Sign in opens a Figma window; nothing else is downloaded.`;
   ge.onboardingBanner.toggleAttribute("hidden", state.browserReady || !project || onboardingDismissed);
   lockAll(ge.onboardingBanner);
 }
 
 let onboardingDismissed = false;
+let authSoftDismissed = false;
 
 /* ── Menus ──────────────────────────────────────────────────────────────────── */
 
@@ -2742,7 +2763,7 @@ function openFileMenu(project: ProjectState, file: DiffFile, at: { x: number; y:
   openMenu(anchor, [
     { label: "Compare line by line", icon: "list", run: () => { project.compareOpen = true; renderChanges(project); } },
     { label: "Copy local file", icon: "copy", disabled: !loaded || Boolean(loaded.error) || file.status === "deleted", run: () => copyText(loaded?.content ?? "") },
-    { label: "Copy path", icon: "copy", run: () => { void navigator.clipboard.writeText(file.path).then(() => toast("Path copied", "ok", undefined, 2000), () => toast("Couldn't copy to the clipboard", "bad")); } },
+    { label: "Copy path", icon: "copy", run: () => { copyWithToast(file.path, "Path copied"); } },
     { sep: true },
     { label: "Ignore this path", icon: "eye-off", disabled: state.busy, run: () => { void ignoreFile(project, file.path); } },
   ], at);
@@ -2778,6 +2799,9 @@ function paletteCommands(query: string): PaletteItem[] {
   const reach = canReachFigma() && !state.busy;
   const mod = IS_MAC ? "⌘" : "Ctrl";
   const items: PaletteItem[] = [];
+  items.push(rt.deps?.managed.installed
+    ? { group: "Runtime", label: "Remove private Node.js runtime…", hint: "delete the app-managed copy", icon: "trash", disabled: state.busy, run: removeRuntimePrompt }
+    : { group: "Runtime", label: "Install private Node.js runtime", hint: "no admin rights, nothing outside the app", icon: "down", disabled: state.busy || rt.phase === "installing", run: () => { void installRuntime(); } });
   if (linked) {
     const n = changeCount(project);
     items.push(
@@ -2897,17 +2921,120 @@ function checkBrowserInstalled(): void {
   state.browserReady = store.get("browserInstalled") === "1";
 }
 
+/* ── Private Node runtime ─────────────────────────────────────────────────── */
+
+type RuntimePhase = "idle" | "installing" | "done" | "error";
+const rt: { deps: RuntimeDepsResult | null; phase: RuntimePhase; label: string; pct: number | null; error: string; summary: string; dismissed: boolean } =
+  { deps: null, phase: "idle", label: "", pct: null, error: "", summary: "", dismissed: false };
+
+/** Node or npm unavailable from both the system and the managed copy. pnpm alone never blocks anything (the app uses npm). */
+function runtimeNeeded(): boolean {
+  const d = rt.deps;
+  return !!d && (d.node.source === "missing" || d.npm.source === "missing");
+}
+
+function manualRuntimeSteps(): HTMLElement {
+  const d = rt.deps;
+  const lines: Array<[string, string]> = [];
+  if (!d || d.node.source === "missing") lines.push(["Node.js", "install from nodejs.org, or with nvm (nvm install --lts)."]);
+  if (!d || d.npm.source === "missing") lines.push(["npm", "it ships with Node.js. Reinstall Node to get it."]);
+  if (!d || d.pnpm.source === "missing") lines.push(["pnpm", "run npm install -g pnpm."]);
+  return h("details", { class: "deps-manual" },
+    h("summary", {}, "Install it yourself instead"),
+    h("ul", {}, ...lines.map(([name, how]) => h("li", {}, h("b", {}, `${name}: `), how))));
+}
+
+function runtimeSummary(res: { nodeVersion: string | null; npmVersion: string | null; pnpmVersion: string | null }): string {
+  return [res.nodeVersion && `Node.js ${res.nodeVersion}`, res.npmVersion && `npm ${res.npmVersion}`, res.pnpmVersion && `pnpm ${res.pnpmVersion}`].filter(Boolean).join(" · ");
+}
+
+function renderDepsBanner(): void {
+  const banner = ge.depsBanner;
+  const visible = !rt.dismissed && (rt.phase !== "idle" || runtimeNeeded());
+  banner.hidden = !visible;
+  banner.classList.toggle("ok", rt.phase === "done");
+  banner.classList.toggle("bad", rt.phase === "error");
+  if (!visible) { banner.replaceChildren(); return; }
+  const dismiss = h("button", { type: "button", class: "btn", "data-action": "dismiss-deps", onclick: () => { rt.dismissed = true; if (rt.phase === "done" || rt.phase === "error") rt.phase = "idle"; renderDepsBanner(); renderRuntimeInline(); } }, rt.phase === "done" ? "Done" : "Dismiss");
+  const install = (label: string): HTMLButtonElement => h("button", { type: "button", class: "btn primary", "data-action": "install-runtime", onclick: () => { void installRuntime(); } }, icon("down", true), label);
+  if (rt.phase === "installing") {
+    const bar = h("div", { class: `prog${rt.pct == null ? " indet" : ""}`, role: "progressbar", "aria-label": "Installing Node.js", "aria-valuemin": "0", "aria-valuemax": "100", ...(rt.pct != null ? { "aria-valuenow": String(rt.pct) } : {}) }, h("i", { ...(rt.pct != null ? { style: `width:${rt.pct}%` } : {}) }));
+    banner.replaceChildren(
+      h("span", { class: "spin", "aria-hidden": "true" }),
+      h("div", { class: "t" }, h("b", {}, "Installing a private Node.js. "), h("span", {}, rt.label || "Starting…"), bar),
+      h("div", { class: "banner-actions" }, h("button", { type: "button", class: "btn", "data-action": "cancel-runtime", onclick: () => { void getDesktopApi().cancelOperation(); } }, icon("stop", true), "Cancel")));
+  } else if (rt.phase === "done") {
+    banner.replaceChildren(icon("check-b"),
+      h("div", { class: "t" }, h("b", {}, "Private Node.js is ready. "), h("span", {}, rt.summary || "Installed."), h("span", { class: "sub" }, "Used only by figmake-sync. Your system is unchanged. You can remove it from the command palette.")),
+      h("div", { class: "banner-actions" }, dismiss));
+  } else if (rt.phase === "error") {
+    banner.replaceChildren(icon("warn"),
+      h("div", { class: "t" }, h("b", {}, "Couldn't install Node.js. "), h("span", {}, rt.error), manualRuntimeSteps()),
+      h("div", { class: "banner-actions" }, install("Try again"), dismiss));
+  } else {
+    banner.replaceChildren(icon("warn"),
+      h("div", { class: "t" },
+        h("b", {}, "Node.js is missing. "),
+        h("span", {}, "figmake-sync needs Node.js to run your project. Install a private copy for this app only: about 100 MB to download (270 MB on disk), no admin rights, doesn't change your system."),
+        h("span", { class: "sub" }, "Downloaded from nodejs.org and checked against its SHA-256 checksum. It includes npm and pnpm. This is an isolated folder, not a security sandbox."),
+        manualRuntimeSteps()),
+      h("div", { class: "banner-actions" }, install("Install automatically"), dismiss));
+  }
+}
+
+/** Keeps the Agent view Setup row in step with the runtime state. */
+function renderRuntimeInline(): void {
+  const p = activeProject();
+  if (p?.agent.refs) renderEnv(p);
+}
+
 async function checkRuntimeDeps(): Promise<void> {
   try {
-    const deps = await getDesktopApi().checkRuntimeDeps();
-    const missing: string[] = [];
-    if (!deps.node) missing.push("Node.js: install from nodejs.org, or with nvm (nvm install --lts).");
-    if (!deps.npm) missing.push("npm: it ships with Node.js. Reinstall Node to get it.");
-    if (!deps.pnpm) missing.push("pnpm: run npm install -g pnpm.");
-    if (missing.length === 0) { ge.depsBanner.hidden = true; return; }
-    ge.depsStatus.replaceChildren(...missing.map((m) => h("span", { class: "deps-line" }, m)));
-    ge.depsBanner.hidden = false;
+    rt.deps = await getDesktopApi().checkRuntimeDeps();
+    renderDepsBanner();
+    renderRuntimeInline();
   } catch { /* best-effort */ }
+}
+
+async function installRuntime(): Promise<boolean> {
+  if (rt.phase === "installing") return false;
+  Object.assign(rt, { phase: "installing", label: "Looking up the current Node.js LTS", pct: null, error: "", dismissed: false });
+  setBusy(true, "installing Node.js");
+  renderDepsBanner(); renderRuntimeInline();
+  try {
+    const res = await getDesktopApi().installRuntime();
+    if (res.ok) {
+      rt.phase = "done";
+      rt.summary = runtimeSummary(res) + (res.pnpmVersion ? "" : " (pnpm could not be added)");
+      announce("Private Node.js installed.");
+    } else if (res.code === "cancelled") {
+      rt.phase = "idle";
+      toast("Install stopped. Nothing was kept.", "info");
+    } else {
+      rt.phase = "error";
+      rt.error = res.message;
+      announce("Node.js install failed.");
+    }
+  } catch (error) {
+    rt.phase = "error";
+    rt.error = errMsg(error);
+  } finally {
+    setBusy(false);
+  }
+  await checkRuntimeDeps();
+  return rt.phase === "done";
+}
+
+function removeRuntimePrompt(): void {
+  toast("Remove the private Node.js? Projects will need Node.js installed on your system to run.", "warn", { label: "Remove", run: () => { void removeRuntime(); } }, 15000);
+}
+
+async function removeRuntime(): Promise<void> {
+  const res = await getDesktopApi().removeRuntime();
+  if (res.error) { toast(`Couldn't remove it: ${res.error}`, "bad"); return; }
+  rt.phase = "idle"; rt.dismissed = false;
+  toast(res.removed ? "Private Node.js removed." : "There was no private Node.js to remove.", "ok");
+  await checkRuntimeDeps();
 }
 
 /** Runs a standalone task (no project) in the progress sheet. */
@@ -2971,16 +3098,19 @@ async function updateAuthStatus(): Promise<void> {
   try {
     if (typeof api.checkAuthStatus !== "function") {
       state.auth = null;
+      state.authSoft = false;
       set("unknown", "Session not checked");
     } else {
-      const res = await api.checkAuthStatus() as { authenticated: boolean | null; reason?: string };
+      const res = await api.checkAuthStatus() as { authenticated: boolean | null; unconfirmed?: boolean; reason?: string };
       state.authReason = res.reason ?? "";
+      state.authSoft = res.authenticated === null && res.unconfirmed === true;
       if (res.authenticated === true) { state.auth = true; set("authenticated", "Signed in"); }
       else if (res.authenticated === false) { state.auth = false; set("unauthenticated", "Not signed in", state.authReason); }
       else { state.auth = null; set("unknown", "Session not checked", state.authReason); }
     }
   } catch {
     state.auth = null;
+    state.authSoft = false;
     set("unknown", "Session not checked");
   }
   const project = activeProject();
@@ -3055,9 +3185,10 @@ async function boot(): Promise<void> {
   ge.addProject.addEventListener("click", addProject);
   ge.authChip.addEventListener("click", () => { void runFigmaAuth(); });
   ge.authBanner.querySelector("[data-action='figma-auth']")?.addEventListener("click", () => { void runFigmaAuth(); });
+  ge.authSoft.querySelector("[data-action='figma-auth']")?.addEventListener("click", () => { void runFigmaAuth(); });
+  ge.authSoft.querySelector("[data-action='dismiss-auth-soft']")?.addEventListener("click", () => { authSoftDismissed = true; ge.authSoft.hidden = true; });
   document.querySelector("[data-action='install-browser']")?.addEventListener("click", () => { void installBrowser(); });
   document.querySelector("[data-action='dismiss-onboarding']")?.addEventListener("click", () => { onboardingDismissed = true; ge.onboardingBanner.hidden = true; });
-  document.querySelector("[data-action='dismiss-deps']")?.addEventListener("click", () => { ge.depsBanner.hidden = true; });
   document.querySelector("[data-action='open-palette']")?.addEventListener("click", openPalette);
   ge.pull.addEventListener("click", () => { const p = activeProject(); if (isLinked(p)) void handleCommand(p, "pull"); });
   ge.push.addEventListener("click", () => { const p = activeProject(); if (isLinked(p)) void handleCommand(p, "push"); });
@@ -3087,6 +3218,13 @@ async function boot(): Promise<void> {
   });
 
   api.onHarnessEvent?.(onHarnessEvent);
+  api.onRuntimeProgress?.((e) => {
+    if (rt.phase !== "installing") return;
+    rt.label = e.message;
+    rt.pct = e.percent ?? null;
+    renderDepsBanner();
+    renderRuntimeInline();
+  });
 
   checkBrowserInstalled();
   try {

@@ -174,14 +174,29 @@ export async function probeLoginState(
 
   let context: BrowserContext | undefined;
   try {
+    // Same context options as openHandle (viewport); only headless differs.
     context = await chromium.launchPersistentContext(profileDir, {
       headless: true,
+      viewport: { width: 1440, height: 960 },
     });
     const cookies = await context.cookies("https://www.figma.com");
     if (cookies.length === 0) {
       return { authenticated: false, reason: "no Figma cookies" };
     }
     const page = context.pages()[0] ?? (await context.newPage());
+    // Headless Chromium advertises "HeadlessChrome" in its UA, which Figma may
+    // treat as a bot; send the normal Chrome UA like the headed sessions do.
+    try {
+      const ua = await page.evaluate(() => navigator.userAgent);
+      if (ua.includes("HeadlessChrome")) {
+        const cdp = await context.newCDPSession(page);
+        await cdp.send("Network.setUserAgentOverride", {
+          userAgent: ua.replace("HeadlessChrome", "Chrome"),
+        });
+      }
+    } catch {
+      // best effort; probe is advisory
+    }
     await page.goto(FIGMA_HOME, {
       waitUntil: "domcontentloaded",
       timeout: 20_000,

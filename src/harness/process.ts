@@ -5,6 +5,8 @@ import { StringDecoder } from "node:string_decoder";
 
 import fs from "fs-extra";
 
+import { getAgentBinDirs, getManagedBinDirs } from "../runtime/managed.js";
+
 /** Minimal child surface the harness needs; node's ChildProcess satisfies it, fakes are easy. */
 export interface ChildLike {
   pid?: number | undefined;
@@ -102,10 +104,24 @@ export function agentEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   );
 }
 
+/**
+ * PATH for children, system tools first: inherited PATH, then common user dirs, then the app-managed
+ * runtime dirs and the private agent CLI dir (only when present). Returns a copy; the app's own process.env is never modified.
+ */
 export function buildEnv(base: NodeJS.ProcessEnv = process.env, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+  return composeEnv(base, extra, [...getManagedBinDirs(), ...getAgentBinDirs()]);
+}
+
+/** Same as buildEnv but without the managed dirs (used to probe whether a system tool works). */
+export function systemEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return composeEnv(base, {}, []);
+}
+
+function composeEnv(base: NodeJS.ProcessEnv, extra: Record<string, string>, managed: string[]): NodeJS.ProcessEnv {
   const sep = path.delimiter;
   const existing = (base["PATH"] ?? "").split(sep).filter(Boolean);
-  const merged = [...existing, ...extraBinDirs().filter((d) => !existing.includes(d))];
+  const merged = [...existing];
+  for (const d of [...extraBinDirs(), ...managed]) if (!merged.includes(d)) merged.push(d);
   return { ...base, PATH: merged.join(sep), ...extra };
 }
 

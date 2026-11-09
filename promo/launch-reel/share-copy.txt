@@ -1,0 +1,1 @@
+Figma Make gives you a real React app, but editing it means doing it by hand or spending Figma's AI tokens on every tweak. figmake-sync pulls it to a local folder so your own Claude Code or Codex subscription does the work, then you push it back. Free for Mac and Windows: sherlabs.com (unofficial, not affiliated with Figma)

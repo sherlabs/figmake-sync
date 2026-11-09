@@ -32,6 +32,7 @@ What it does:
 - Claude Code: install it (`npm install -g @anthropic-ai/claude-code`), then sign in once from a terminal with `claude auth login`.
 - Codex: install it (`npm install -g @openai/codex`), then sign in from a terminal. **Codex support is untested**: it is built against the documented `codex exec` interface, but it has not been run against a real Codex install yet.
 - Node.js and npm are needed to run the prototype locally.
+- The app can install the CLI for you into its own private folder (`<app data>/runtime/tools-agents`, via `npm install --prefix`, never `-g`), then run the CLI's own browser sign-in. A system-installed CLI always wins; the private copy is only added to the PATH of processes the app starts. The Codex install and sign-in path is untested against a real account.
 - Open the project in figmake-sync, choose the Agent view, and use Check again after installing or signing in.
 
 ### Safety posture
@@ -63,6 +64,17 @@ It exists for one very specific gap: Figma Make is great at generating and editi
 - It automates pull, status, push, and verify flows.
 - It keeps state, manifests, backups, and logs on your machine.
 - It never stores your Figma password or tries to bypass login, MFA, captcha, or security prompts.
+
+### Private Node.js runtime (optional)
+
+Running your project needs Node.js and npm. If they are not on your computer, the app offers to install a private copy for itself (Install automatically in the banner, the Agent Set up row, or the command palette). It is an isolated app-managed folder, not an OS sandbox.
+
+- **What is downloaded:** the current Node.js LTS from `nodejs.org/dist` (about 50 MB), then pnpm from the npm registry into the same folder (about 50 MB). About 270 MB on disk.
+- **Verification:** the Node.js archive is checked against nodejs.org's published `SHASUMS256.txt` (SHA-256) before anything is unpacked. On a mismatch it is discarded and nothing is installed. Archives are unpacked with path-traversal and symlink-escape checks. pnpm is installed by npm, which verifies the registry's package integrity; it is not pinned or independently checksummed by figmake-sync.
+- **Where it lives:** `<app data>/runtime/node-v<version>/` only (on macOS `~/Library/Application Support/figmake-sync/runtime`). No admin rights, no changes to your PATH, shell profile or global npm settings, and the npm cache for the install is inside that folder and removed afterwards.
+- **When it is used:** only if a working system Node/npm is not found. Your own installs always win. The private copy is added to the PATH of the processes figmake-sync starts (npm install, the dev server, the agent), never to the app's own environment.
+- **Remove it:** run Remove private Node.js runtime from the command palette, or delete that `runtime` folder. A half-finished install is never used (a `.complete` marker is written last).
+- **No internet, or a proxy that blocks it?** Install Node.js yourself from nodejs.org; the app will pick it up.
 
 ## The Problem
 

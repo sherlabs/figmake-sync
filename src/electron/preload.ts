@@ -3,12 +3,14 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import type {
   DesktopAppState,
   DesktopProgressEvent,
+  RuntimeProgressEvent,
   FigmakeDesktopApi,
 } from "./contracts.js";
 import type { HarnessEvent } from "../harness/types.js";
 
 const progressChannel = "figmake:progress";
 const harnessEventChannel = "figmake:harness:event";
+const runtimeProgressChannel = "figmake:runtime:progress";
 
 const api: FigmakeDesktopApi = {
   loadAppState: () => ipcRenderer.invoke("figmake:load-app-state"),
@@ -43,6 +45,17 @@ const api: FigmakeDesktopApi = {
     ipcRenderer.invoke("figmake:get-custom-ignore-patterns", rootDir),
   rebaselineProject: (options) => ipcRenderer.invoke("figmake:rebaseline-project", options),
   checkRuntimeDeps: () => ipcRenderer.invoke("figmake:check-runtime-deps"),
+  installRuntime: () => ipcRenderer.invoke("figmake:runtime:install"),
+  removeRuntime: () => ipcRenderer.invoke("figmake:runtime:remove"),
+  onRuntimeProgress: (listener) => {
+    const wrapped = (_event: IpcRendererEvent, payload: RuntimeProgressEvent) => {
+      listener(payload);
+    };
+    ipcRenderer.on(runtimeProgressChannel, wrapped);
+    return () => {
+      ipcRenderer.removeListener(runtimeProgressChannel, wrapped);
+    };
+  },
   checkAuthStatus: () => ipcRenderer.invoke("figmake:check-auth-status"),
   cancelOperation: () => ipcRenderer.invoke("figmake:cancel-operation"),
   harnessDetectAgents: () => ipcRenderer.invoke("figmake:harness:detect-agents"),
@@ -57,6 +70,12 @@ const api: FigmakeDesktopApi = {
   harnessRunAgent: (input) => ipcRenderer.invoke("figmake:harness:run-agent", input),
   harnessCancelRun: (rootDir) => ipcRenderer.invoke("figmake:harness:cancel-run", { rootDir }),
   harnessChanges: (rootDir) => ipcRenderer.invoke("figmake:harness:changes", { rootDir }),
+  harnessEnsureAgent: (agent) => ipcRenderer.invoke("figmake:harness:ensure-agent", { agent }),
+  harnessEnsureProject: (rootDir) => ipcRenderer.invoke("figmake:harness:ensure-project", { rootDir }),
+  harnessInstallAgent: (agent) => ipcRenderer.invoke("figmake:harness:agent-install", { agent }),
+  harnessLoginAgent: (agent) => ipcRenderer.invoke("figmake:harness:agent-login", { agent }),
+  harnessOpenAgentLogin: (agent) => ipcRenderer.invoke("figmake:harness:agent-open-login", { agent }),
+  clipboardWrite: (text) => ipcRenderer.invoke("figmake:clipboard-write", text),
   onHarnessEvent: (listener) => {
     const wrapped = (_event: IpcRendererEvent, payload: HarnessEvent) => {
       listener(payload);

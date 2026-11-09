@@ -112,11 +112,7 @@
             <button type="button" class="btn primary" data-action="install-browser" data-lock>Install browser</button>
             <button type="button" class="btn" data-action="dismiss-onboarding">Later</button>
           </div>
-          <div class="banner" data-deps-banner role="status" hidden>
-            <svg class="i" aria-hidden="true"><use href="#i-warn"/></svg>
-            <div class="t"><b>Missing runtime tools.</b> <span data-deps-status></span></div>
-            <button type="button" class="btn" data-action="dismiss-deps">Dismiss</button>
-          </div>
+          <div class="banner deps" data-deps-banner role="group" aria-label="Node.js runtime" hidden></div>
           <div class="banner" data-offline-banner role="status" hidden>
             <svg class="i" aria-hidden="true"><use href="#i-globe-off"/></svg>
             <div class="t"><b>You're offline.</b> <span>Pull and push need a connection. Your local files are untouched.</span></div>
@@ -125,6 +121,12 @@
             <svg class="i" aria-hidden="true"><use href="#i-person"/></svg>
             <div class="t"><b>Not signed in to Figma.</b> <span data-auth-banner-text>Pull and push need a Figma session. Sign in opens a Figma window; nothing else is downloaded.</span></div>
             <button type="button" class="btn primary" data-action="figma-auth" data-lock>Sign in to Figma</button>
+          </div>
+          <div class="banner soft" data-auth-soft role="status" hidden>
+            <svg class="i" aria-hidden="true"><use href="#i-info"/></svg>
+            <div class="t"><b>Couldn't confirm your Figma session.</b> <span>If pull or push asks you to sign in, use Sign in.</span></div>
+            <button type="button" class="btn" data-action="figma-auth" data-lock>Sign in</button>
+            <button type="button" class="btn" data-action="dismiss-auth-soft">Dismiss</button>
           </div>
         </div>
 

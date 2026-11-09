@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=1920, height=1080" />
+<title>figmake-sync demo</title>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<style>
+@font-face{font-family:"Fraunces";src:url(fonts/fraunces-latin-wght-normal.woff2) format("woff2");font-weight:100 900}
+@font-face{font-family:"Instrument Sans";src:url(fonts/instrument-sans-latin-wght-normal.woff2) format("woff2");font-weight:400 700}
+@font-face{font-family:"JetBrains Mono";src:url(fonts/jetbrains-mono-latin-400-normal.woff2) format("woff2");font-weight:400}
+@font-face{font-family:"JetBrains Mono";src:url(fonts/jetbrains-mono-latin-500-normal.woff2) format("woff2");font-weight:500}
+:root{--bg:#0a0a0a;--ink:#f4f4f5;--mute:#9ca3af;--ind:#6366f1;--ind2:#818cf8;--ind3:#c7d2fe}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg)}
+#root{position:relative;width:1920px;height:1080px;overflow:hidden;background:var(--bg);font-family:"Instrument Sans",system-ui,sans-serif;color:var(--ink)}
+/* scene 1 */
+#s1{position:absolute;inset:0;opacity:0}
+#s1 .lab{position:absolute;left:220px;top:300px;font:500 28px/1 "JetBrains Mono",monospace;letter-spacing:.18em;color:var(--ind2)}
+#s1 .bar{position:absolute;left:176px;top:296px;width:4px;height:520px;background:var(--ind);transform-origin:0 0}
+#s1 h1{position:absolute;left:220px;top:356px;width:1480px;margin:0;font:500 96px/1.06 "Fraunces",serif;letter-spacing:-.02em}
+#s1 p{position:absolute;left:220px;top:640px;width:1560px;margin:0;font:400 54px/1.25 "Fraunces",serif;color:var(--ind3);letter-spacing:-.01em}
+.w{display:inline-block}
+/* window */
+#frame{position:absolute;left:256px;top:36px;width:1408px;height:902px;border-radius:14px;overflow:hidden;background:#1e1e20;box-shadow:0 40px 90px rgba(0,0,0,.65),0 0 0 1px rgba(255,255,255,.09);opacity:0}
+.shot{position:absolute;left:0;top:0;transform-origin:0 0;opacity:0}
+.shot img{display:block}
+.ring{position:absolute;border:2px solid var(--ind2);border-radius:8px;opacity:0;box-shadow:0 0 0 5px rgba(129,140,248,.22)}
+#maskS{position:absolute;left:262px;top:957px;width:855px;height:260px;background:#2a2a2d}
+#typed{opacity:0;position:absolute;left:272px;top:899px;width:828px;height:66px;background:#333336}
+#typed span{position:absolute;left:9px;top:8px;font:400 14.5px/1.35 "Instrument Sans",sans-serif;color:#ececee;white-space:nowrap}
+#typed i{display:inline-block;width:1.5px;height:15px;background:#c7d2fe;margin-left:1px;vertical-align:-3px}
+#sendGlow{position:absolute;left:993px;top:983px;width:114px;height:28px;border-radius:6px;background:rgba(59,130,246,.62);opacity:0;mix-blend-mode:screen}
+/* cursor */
+#cur{position:absolute;left:0;top:0;width:40px;height:40px;opacity:0;z-index:30;filter:drop-shadow(0 4px 6px rgba(0,0,0,.55))}
+.rip{position:absolute;left:0;top:0;width:70px;height:70px;margin:-35px 0 0 -35px;border-radius:50%;border:4px solid var(--ind2);opacity:0;z-index:29}
+/* captions */
+.cap{position:absolute;left:256px;top:962px;width:1160px;height:84px;font:500 46px/84px "Fraunces",serif;letter-spacing:-.01em;opacity:0;white-space:nowrap}
+.cap b{font-weight:500;color:var(--ind2)}
+#stepw{position:absolute;right:256px;top:972px;height:64px;width:300px;font:500 28px/1 "JetBrains Mono",monospace;letter-spacing:.08em;color:var(--mute)}
+#stepw div{position:absolute;right:0;top:19px;opacity:0;white-space:nowrap}
+#stepw em{font-style:normal;color:var(--ind2)}
+#prog{position:absolute;left:0;bottom:0;width:1920px;height:5px;background:rgba(255,255,255,.07);opacity:0}
+#progf{height:100%;background:var(--ind);transform-origin:0 0;transform:scaleX(0)}
+#done{position:absolute;left:960px;top:760px;transform:translateX(-50%);padding:18px 34px;border-radius:999px;background:rgba(10,10,10,.92);border:2px solid var(--ind2);font:600 34px/1 "Instrument Sans",sans-serif;display:flex;gap:16px;align-items:center;opacity:0;white-space:nowrap;box-shadow:0 20px 50px rgba(0,0,0,.5)}
+#done svg{width:34px;height:34px}
+/* end card */
+#end{position:absolute;inset:0;opacity:0}
+#end .ico{position:absolute;left:960px;top:236px;width:150px;height:150px;margin-left:-75px;border-radius:34px;box-shadow:0 20px 60px rgba(99,102,241,.25)}
+#end h2{position:absolute;left:0;top:420px;width:1920px;text-align:center;margin:0;font:500 112px/1 "Fraunces",serif;letter-spacing:-.025em}
+#end .sub{position:absolute;left:0;top:560px;width:1920px;text-align:center;font:400 46px/1.2 "Fraunces",serif;color:var(--ind3)}
+#end .rule{position:absolute;left:810px;top:690px;width:300px;height:1px;background:rgba(255,255,255,.18)}
+#end .wm{position:absolute;left:960px;top:736px;width:300px;margin-left:-150px;height:auto}
+#end .un{position:absolute;left:0;top:850px;width:1920px;display:flex;justify-content:center;align-items:center;gap:16px;font:500 32px/1 "Instrument Sans",sans-serif;color:var(--mute)}
+#end .un img{height:34px;width:auto;display:block}
+</style>
+</head>
+<body>
+<div id="root" data-composition-id="main" data-start="0" data-width="1920" data-height="1080" data-duration="41">
+
+<div id="s1">
+  <div class="bar" id="s1bar"></div>
+  <div class="lab">THE PROBLEM</div>
+  <h1 id="s1h"></h1>
+  <p id="s1p"></p>
+</div>
+
+<div id="frame">
+  <div class="shot" id="sA"><img src="assets/06-sync-idle-clean-dark.png" width="1280" height="820" alt=""></div>
+  <div class="shot" id="sB"><img src="assets/08-pull-running-progress-dark.png" width="1280" height="820" alt=""></div>
+  <div class="shot" id="sC"><img src="assets/17b-changes-table-inspector-dark.png" width="1280" height="820" alt=""><div class="ring" id="rC" style="left:1013px;top:64px;width:258px;height:144px"></div></div>
+  <div class="shot" id="sD"><img src="assets/a02-claude-ready-dark.png" width="1280" height="1500" alt=""><div class="ring" id="rD" style="left:253px;top:152px;width:870px;height:64px"></div></div>
+  <div class="shot" id="sE"><img src="assets/a04-setup-running-dark.png" width="1280" height="1500" alt=""></div>
+  <div class="shot" id="sF"><img src="assets/a05-dev-running-url-dark.png" width="1280" height="1500" alt=""><div class="ring" id="rF" style="left:292px;top:526px;width:188px;height:26px;border-radius:13px"></div><div id="typed" data-layout-ignore><span id="typedT"></span></div><div id="sendGlow"></div></div>
+  <div class="shot" id="sG"><img src="assets/a08-agent-streaming-dark.png" width="1280" height="1500" alt=""><div id="maskS"></div></div>
+  <div class="shot" id="sH"><img src="assets/a09-run-finished-changes-dark.png" width="1280" height="1500" alt=""><div class="ring" id="rH" style="left:253px;top:1203px;width:870px;height:112px"></div></div>
+  <div class="shot" id="sI"><img src="assets/12-push-confirm-dialog-dark.png" width="1280" height="820" alt=""></div>
+</div>
+
+<div id="done"><svg viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Sent to Figma Make</div>
+
+<div id="stepw"></div>
+<div id="prog"><div id="progf"></div></div>
+
+<div id="end">
+  <img class="ico" src="assets/figmake-sync-icon.svg" alt="figmake-sync">
+  <h2>figmake-sync</h2>
+  <div class="sub">Edit your Figma Make code with your own Claude Code.</div>
+  <div class="rule"></div>
+  <img class="wm" src="assets/sherlabs-wordmark-light.svg" alt="Sherlabs">
+  <div class="un"><img src="assets/figma-mark.svg" alt="Figma"><span>Unofficial. Not affiliated with Figma.</span></div>
+</div>
+
+<svg id="cur" viewBox="0 0 24 24"><path d="M4 2.5v17l4.6-4.2 3 6.7 3-1.4-3-6.6h6.2z" fill="#fff" stroke="#0a0a0a" stroke-width="1.5" stroke-linejoin="round"/></svg>
+<div class="rip" id="rip"></div>
+
+<audio id="sfx" src="assets/sfx.wav" data-start="0" data-duration="41" data-track-index="1" data-volume="0.8"></audio>
+<audio id="bed" src="assets/bed.wav" data-start="0" data-duration="41" data-track-index="2" data-volume="0.16"></audio>
+</div>
+
+<script>
+const FL=256, FT=36, FW=1408, FH=902, B=1.1;
+const camState=(c)=>{const S=B*c[2];return {S,x:FW/2-c[0]*S,y:FH/2-c[1]*S}};
+const cp=(c,sx,sy)=>{const k=camState(c);return {x:FL+k.x+sx*k.S-6,y:FT+k.y+sy*k.S-4}}; // -6/-4: arrow tip offset inside svg
+const tl=gsap.timeline({paused:true});
+const E="power3.inOut";
+
+/* ---------- captions ---------- */
+const caps=[];
+function addCap(id,html,t0,t1){
+  const d=document.createElement('div');d.className='cap';d.id=id;d.innerHTML=html;document.getElementById('root').appendChild(d);
+  tl.fromTo(d,{opacity:0,y:14},{opacity:1,y:0,duration:.45,ease:"power2.out"},t0);
+  tl.to(d,{opacity:0,duration:.3,ease:"power1.in"},t1-.3);
+}
+addCap('c2','Pull your <b>Figma Make</b> code to a local folder.',4.8,8.0);
+addCap('c3','Review every changed file, <b>line by line</b>.',8.2,11.2);
+addCap('c4','Use your own <b>Claude Code</b> subscription.',11.4,14.4);
+addCap('c5','Install it and run it <b>on your machine</b>.',14.6,19.0);
+addCap('c6','Just describe <b>the change</b>.',19.2,23.4);
+addCap('c7','Claude Code edits <b>the code in your folder</b>.',23.7,27.8);
+addCap('c8','See <b>exactly what</b> it changed.',28.0,31.0);
+addCap('c9','Push it back to <b>Figma Make</b>.',31.2,34.2);
+addCap('c10','Done. <b>No Figma AI tokens</b> spent.',34.1,36.5);
+
+/* steps */
+const steps=[['PULL',4.8,8.0],['REVIEW',8.2,11.2],['CONNECT',11.4,14.4],['RUN',14.6,19.0],['ASK',19.2,23.4],['EDIT',23.7,27.8],['CHANGES',28.0,31.0],['PUSH',31.2,36.2]];
+const sw=document.getElementById('stepw');
+steps.forEach((s,i)=>{const d=document.createElement('div');d.innerHTML='<em>0'+(i+1)+'</em> / 08 &nbsp;'+s[0];sw.appendChild(d);
+  tl.fromTo(d,{opacity:0},{opacity:1,duration:.3},s[1]);tl.to(d,{opacity:0,duration:.25},s[2]-.25);});
+tl.to('#prog',{opacity:1,duration:.4},4.6);tl.to('#prog',{opacity:0,duration:.3},36.1);
+tl.fromTo('#progf',{scaleX:0},{scaleX:1,duration:31.4,ease:"none"},4.8);
+
+/* ---------- scene 1 ---------- */
+const h1w="Figma Make edits spend Figma’s AI tokens.".split(' ');
+document.getElementById('s1h').innerHTML=h1w.map(w=>'<span class="w">'+w+'</span>').join(' ');
+const p1w="The code is right there, but you can only edit it by hand.".split(' ');
+document.getElementById('s1p').innerHTML=p1w.map(w=>'<span class="w">'+w+'</span>').join(' ');
+tl.set('#s1',{opacity:1},0);
+tl.fromTo('#s1bar',{scaleY:0},{scaleY:1,duration:.9,ease:"power3.out"},.1);
+
+
+tl.from('#s1p .w',{opacity:0,y:20,duration:.45,stagger:.04,ease:"power3.out"},1.1);
+tl.to('#s1',{opacity:0,duration:.4,ease:"power1.in"},4.3);
+
+/* ---------- frame in/out ---------- */
+tl.fromTo('#frame',{opacity:0,y:30,scale:.98},{opacity:1,y:0,scale:1,duration:.6,ease:"power3.out"},4.3);
+tl.to('#frame',{opacity:0,y:-20,duration:.4,ease:"power2.in"},36.1);
+tl.to('#done',{opacity:0,duration:.3},36.1);
+
+/* ---------- camera helper ---------- */
+const cams={
+ A0:[640,410,1],A1:[860,256,1.6],B:[640,245,1.7],
+ C0:[620,285,1.45],C1:[840,285,1.45],
+ D0:[688,295,1.4],D1:[690,470,1.45],E:[690,470,1.45],
+ F0:[690,540,1.45],F1:[680,935,1.35],
+ G0:[690,860,1.5],G1:[690,780,1.4],
+ H0:[690,780,1.4],H1:[690,1160,1.42],H2:[830,260,1.5],
+ I:[640,245,1.7]};
+function setCam(id,c){const k=camState(cams[c]);gsap.set('#'+id,{x:k.x,y:k.y,scale:k.S});}
+function goCam(id,c,t,d,ease){const k=camState(cams[c]);tl.to('#'+id,{x:k.x,y:k.y,scale:k.S,duration:d,ease:ease||E},t);}
+function show(id,t,d){tl.to('#'+id,{opacity:1,duration:d||.35,ease:"power1.inOut"},t);}
+function hide(id,t,d){tl.to('#'+id,{opacity:0,duration:d||.35,ease:"power1.inOut"},t);}
+setCam('sA','A0');setCam('sB','B');setCam('sC','C0');setCam('sD','D0');setCam('sE','E');setCam('sF','F0');setCam('sG','G0');setCam('sH','H0');setCam('sI','I');
+
+/* shots timeline */
+tl.set('#sA',{opacity:1},4.3);
+goCam('sA','A1',4.5,1.0);
+show('sB',6.25);hide('sA',6.6,.1);
+show('sC',8.0);hide('sB',8.35,.1);
+goCam('sC','C1',9.5,.8);
+tl.to('#rC',{opacity:1,duration:.4},10.0);tl.to('#rC',{opacity:0,duration:.3},11.0);
+show('sD',11.2);hide('sC',11.55,.1);
+tl.to('#rD',{opacity:1,duration:.4},12.2);
+goCam('sD','D1',14.4,.9);
+tl.to('#rD',{opacity:0,duration:.3},14.2);
+show('sE',15.75,.2);hide('sD',15.95,.1);
+show('sF',17.35,.3);hide('sE',17.65,.1);
+goCam('sF','F1',18.4,.8);
+tl.to('#rF',{opacity:1,duration:.4},17.9);tl.to('#rF',{opacity:0,duration:.3},18.4);
+show('sG',23.55,.4);hide('sF',23.95,.1);
+goCam('sG','G1',23.55,1.0,"power2.out");
+show('sH',27.8,.3);hide('sG',28.1,.1);
+goCam('sH','H1',28.0,.9);
+tl.to('#rH',{opacity:1,duration:.4},28.9);tl.to('#rH',{opacity:0,duration:.3},30.8);
+goCam('sH','H2',31.0,.9);
+show('sI',32.5,.25);hide('sI',34.2,.25);
+
+/* streaming mask (source coords) */
+[[23.95,725],[24.55,765],[25.1,815],[25.7,862],[26.3,892],[26.8,922],[27.3,957]].forEach(([t,y])=>{
+  tl.to('#maskS',{scaleY:Math.max(.001,(957-y)/269),duration:.15,ease:"none"},t);});
+gsap.set('#maskS',{top:688,height:269,transformOrigin:'0 100%'});
+
+/* typing */
+const full="Make the cart total include the promo discount and respect quantity";
+const tp={n:0};const tt=document.getElementById('typedT');
+tt.innerHTML='';
+tl.to(tp,{n:full.length,duration:full.length/26,ease:"none",onUpdate:()=>{tt.innerHTML=full.slice(0,Math.round(tp.n)).replace(/ /g,'&nbsp;')+'<i></i>';}},20.3);
+tl.to('#sendGlow',{opacity:1,duration:.3},20.6);tl.to('#typed',{opacity:1,duration:.1},19.95);
+
+/* ---------- cursor ---------- */
+const cur='#cur';
+function at(c,sx,sy){return cp(cams[c],sx,sy)}
+let p=at('A1',830,330);
+gsap.set(cur,{x:p.x,y:p.y});
+tl.to(cur,{opacity:1,duration:.3},5.0);
+function mv(t0,t1,c,sx,sy,e){const q=at(c,sx,sy);tl.to(cur,{x:q.x,y:q.y,duration:t1-t0,ease:e||"power2.inOut"},t0);return q;}
+function click(t,c,sx,sy){const q=at(c,sx,sy);
+  tl.to(cur,{scale:.82,duration:.07,transformOrigin:"6px 4px"},t).to(cur,{scale:1,duration:.12},t+.09);
+  tl.set('#rip',{x:q.x+6,y:q.y+4,scale:.3,opacity:.9},t);tl.to('#rip',{scale:1.4,opacity:0,duration:.5,ease:"power2.out"},t+.001);}
+mv(5.25,6.05,'A1',1118,26);click(6.15,'A1',1118,26);
+mv(8.25,8.85,'C0',372,171);click(8.95,'C0',372,171);
+mv(9.6,10.3,'C1',1137,123);
+mv(11.5,12.3,'D0',352,173);
+mv(14.7,15.5,'D1',1037,447);click(15.6,'D1',1037,447);
+mv(16.2,17.0,'E',1083,597);click(17.1,'E',1083,597);
+mv(18.5,19.2,'F1',560,931);click(19.95,'F1',560,931);
+mv(22.9,23.35,'F1',1050,995);click(23.45,'F1',1050,995);
+tl.to(cur,{opacity:0,duration:.25},23.7);tl.to(cur,{opacity:1,duration:.3},28.3);
+mv(28.5,29.3,'H1',350,1224);
+mv(31.2,32.3,'H2',1208,26);click(32.4,'H2',1208,26);
+mv(32.9,33.8,'I',825,165);click(33.95,'I',825,165);
+tl.to(cur,{opacity:0,duration:.3},35.0);
+/* cursor stays at position between moves; after the Send click the cursor must follow cam shifts: it is page-fixed, fine */
+
+/* done badge */
+tl.fromTo('#done',{opacity:0,y:16},{opacity:1,y:0,duration:.45,ease:"power2.out"},34.3);
+
+/* ---------- end card ---------- */
+tl.set('#end',{opacity:1},36.4);
+tl.from('#end .ico',{opacity:0,y:20,scale:.9,duration:.6,ease:"power3.out"},36.6);
+tl.from('#end h2',{opacity:0,y:24,duration:.6,ease:"power3.out"},36.85);
+tl.from('#end .sub',{opacity:0,y:18,duration:.6,ease:"power3.out"},37.3);
+tl.from('#end .rule',{opacity:0,scaleX:0,duration:.6},38.0);
+tl.from('#end .wm',{opacity:0,duration:.6},38.2);
+tl.from('#end .un',{opacity:0,duration:.6},38.3);
+tl.to('#end',{opacity:0,duration:.3},40.7);
+
+window.__timelines["main"]=tl;
+</script>
+</body>
+</html>

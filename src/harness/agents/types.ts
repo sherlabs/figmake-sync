@@ -45,6 +45,12 @@ export interface AgentAdapter {
   readonly installHint: string;
   /** Shown when the binary exists but the user is not signed in. */
   readonly loginHint: string;
+  /** npm package that provides the binary (installed into the app's private prefix, never globally). */
+  readonly npmPackage?: string;
+  /** Command for the manual fallback shown when in-app sign-in cannot run. */
+  readonly manualLogin?: string;
+  /** argv for the CLI's own browser sign-in (opens the user's browser itself). */
+  loginArgs?(): string[];
   versionArgs(): string[];
   parseVersion(stdout: string): string | null;
   /** Args for a sign-in status probe, or null when the CLI has none. */

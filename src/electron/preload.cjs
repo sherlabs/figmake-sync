@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 const progressChannel = "figmake:progress";
 const harnessEventChannel = "figmake:harness:event";
+const runtimeProgressChannel = "figmake:runtime:progress";
 
 const api = {
   loadAppState: () => ipcRenderer.invoke("figmake:load-app-state"),
@@ -36,6 +37,17 @@ const api = {
     ipcRenderer.invoke("figmake:get-custom-ignore-patterns", rootDir),
   rebaselineProject: (options) => ipcRenderer.invoke("figmake:rebaseline-project", options),
   checkRuntimeDeps: () => ipcRenderer.invoke("figmake:check-runtime-deps"),
+  installRuntime: () => ipcRenderer.invoke("figmake:runtime:install"),
+  removeRuntime: () => ipcRenderer.invoke("figmake:runtime:remove"),
+  onRuntimeProgress: (listener) => {
+    const wrapped = (_event, payload) => {
+      listener(payload);
+    };
+    ipcRenderer.on(runtimeProgressChannel, wrapped);
+    return () => {
+      ipcRenderer.removeListener(runtimeProgressChannel, wrapped);
+    };
+  },
   checkAuthStatus: () => ipcRenderer.invoke("figmake:check-auth-status"),
   harnessDetectAgents: () => ipcRenderer.invoke("figmake:harness:detect-agents"),
   harnessGetSettings: (rootDir) => ipcRenderer.invoke("figmake:harness:get-settings", { rootDir }),
@@ -49,6 +61,12 @@ const api = {
   harnessRunAgent: (input) => ipcRenderer.invoke("figmake:harness:run-agent", input),
   harnessCancelRun: (rootDir) => ipcRenderer.invoke("figmake:harness:cancel-run", { rootDir }),
   harnessChanges: (rootDir) => ipcRenderer.invoke("figmake:harness:changes", { rootDir }),
+  harnessEnsureAgent: (agent) => ipcRenderer.invoke("figmake:harness:ensure-agent", { agent }),
+  harnessEnsureProject: (rootDir) => ipcRenderer.invoke("figmake:harness:ensure-project", { rootDir }),
+  harnessInstallAgent: (agent) => ipcRenderer.invoke("figmake:harness:agent-install", { agent }),
+  harnessLoginAgent: (agent) => ipcRenderer.invoke("figmake:harness:agent-login", { agent }),
+  harnessOpenAgentLogin: (agent) => ipcRenderer.invoke("figmake:harness:agent-open-login", { agent }),
+  clipboardWrite: (text) => ipcRenderer.invoke("figmake:clipboard-write", text),
   onHarnessEvent: (listener) => {
     const wrapped = (_event, payload) => {
       listener(payload);

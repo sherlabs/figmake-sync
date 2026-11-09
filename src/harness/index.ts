@@ -8,6 +8,9 @@ import { runNpmInstall } from "../core/service.js";
 import { ProjectStateStore } from "../core/state.js";
 import type { CommandRuntimeOptions, ProjectConfig } from "../types/config.js";
 import { updateProjectConfig } from "../types/config.js";
+import { getManagedRuntimeRoot } from "../runtime/managed.js";
+import { AgentCliManager } from "./agentCli.js";
+import { ensureAgentReady, ensureProjectRunning, type NodeEnsureResult } from "./ensure.js";
 import { createClaudeAdapter } from "./agents/claude.js";
 import { createCodexAdapter } from "./agents/codex.js";
 import type { AgentAdapter, AgentEvent, AgentId } from "./agents/types.js";
@@ -35,8 +38,10 @@ import {
 } from "./types.js";
 
 export * from "./types.js";
+export { isAllowedLoginUrl, redactUrls, stripUrlQuery, buildInstallArgs } from "./agentCli.js";
+export { ensureAgentReady, ensureProjectRunning } from "./ensure.js";
 export { isSafeLocalUrl, parseDevUrl, detectDevScript } from "./devserver.js";
-export { runAgentInputSchema, rootDirInputSchema, updateSettingsInputSchema } from "./schemas.js";
+export { runAgentInputSchema, rootDirInputSchema, updateSettingsInputSchema, agentInputSchema, clipboardTextSchema } from "./schemas.js";
 
 export interface HarnessSyncPort {
   status(options: CommandRuntimeOptions): Promise<StatusResult>;
@@ -56,6 +61,15 @@ export interface HarnessDeps {
   resolveBin?: (name: string) => Promise<string | null>;
   /** Override npm install (tests). */
   installDeps?: (cwd: string, signal: AbortSignal | undefined, onLog: (line: string) => void) => Promise<void>;
+  /** Where the private runtime lives (default: the registered managed root). */
+  runtimeRoot?: () => string | null;
+  /** Installs a private Node.js when none exists (wired in main; absent in tests). */
+  ensureNode?: (signal?: AbortSignal) => Promise<NodeEnsureResult>;
+  /** Override npm lookup / timings for agent CLI install + sign-in (tests). */
+  resolveNpm?: () => Promise<string | null>;
+  agentInstallTimeoutMs?: number;
+  agentLoginTimeoutMs?: number;
+  agentKillGraceMs?: number;
   /** Dev-server stop grace before SIGKILL (tests). */
   stopGraceMs?: number;
 }
@@ -80,9 +94,72 @@ export class HarnessService {
   private readonly runs = new Map<string, ActiveRun>();
   private configQueue: Promise<unknown> = Promise.resolve();
 
+  private readonly cli: AgentCliManager;
+
   constructor(private readonly deps: HarnessDeps) {
     const list = deps.adapters ?? [createClaudeAdapter(), createCodexAdapter()];
     this.adapters = new Map(list.map((a) => [a.id, a]));
+    this.cli = new AgentCliManager({
+      emit: deps.emit,
+      runtimeRoot: deps.runtimeRoot ?? (() => getManagedRuntimeRoot()),
+      adapters: () => this.adapters,
+      spawn: deps.spawn,
+      killTree: deps.killTree,
+      env: deps.env,
+      resolveNpm: deps.resolveNpm,
+      resolveBin: deps.resolveBin,
+      installTimeoutMs: deps.agentInstallTimeoutMs,
+      loginTimeoutMs: deps.agentLoginTimeoutMs,
+      killGraceMs: deps.agentKillGraceMs,
+    });
+  }
+
+  // ---- 1b. In-app agent CLI install / sign-in / one-call ensure ----------
+
+  async detectAgent(id: AgentId): Promise<AgentInfo> {
+    const adapter = this.adapters.get(id);
+    if (!adapter) throw new HarnessError("invalid_input", `Unknown agent: ${id}`);
+    return this.detectOne(adapter);
+  }
+
+  installAgentCli(id: AgentId, signal?: AbortSignal) {
+    return this.cli.install(id, signal);
+  }
+
+  loginAgent(id: AgentId, signal?: AbortSignal) {
+    return this.cli.login(id, signal);
+  }
+
+  /** Full sign-in URL for the main process to open (re-validated against the host allowlist). */
+  pendingLoginUrl(id: AgentId): string | null {
+    return this.cli.pendingLoginUrl(id);
+  }
+
+  private nodePort() {
+    return {
+      emit: this.deps.emit,
+      hasNpm: () => this.cli.hasNpm(),
+      ensureNode: (signal?: AbortSignal) =>
+        this.deps.ensureNode ? this.deps.ensureNode(signal) : Promise.resolve({ ok: false, message: "Node.js isn't available." }),
+    };
+  }
+
+  /** install if missing -> sign in if needed -> ready. Emits agent-ensure events; never throws. */
+  ensureAgentReady(id: AgentId, signal?: AbortSignal) {
+    return ensureAgentReady(
+      { ...this.nodePort(), detectAgent: (a) => this.detectAgent(a), installAgentCli: (a, s) => this.installAgentCli(a, s), loginAgent: (a, s) => this.loginAgent(a, s) },
+      id,
+      signal,
+    );
+  }
+
+  /** Node -> npm install -> dev server -> url. Emits project-ensure events; never throws. */
+  ensureProjectRunning(rootDir: string, signal?: AbortSignal) {
+    return ensureProjectRunning(
+      { ...this.nodePort(), setup: (r, s) => this.setup(r, s), startDev: (r) => this.startDev(r), devStatus: (r) => this.devStatus(r) },
+      rootDir,
+      signal,
+    );
   }
 
   // ---- 1. Connect -------------------------------------------------------
