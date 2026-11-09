@@ -14,6 +14,11 @@ export const DEFAULT_IGNORE_PATTERNS = [
   "yarn.lock",
   "pnpm-lock.yaml",
   "bun.lock",
+  // Agent CLIs may leave working files behind; they must never be sent to Figma.
+  ".claude/**",
+  ".codex/**",
+  "CLAUDE.md",
+  "AGENTS.md",
 ] as const;
 
 export const DEFAULT_POST_UPLOAD_PROMPT_TEMPLATE =

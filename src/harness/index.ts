@@ -41,7 +41,7 @@ export * from "./types.js";
 export { isAllowedLoginUrl, redactUrls, stripUrlQuery, buildInstallArgs } from "./agentCli.js";
 export { ensureAgentReady, ensureProjectRunning } from "./ensure.js";
 export { isSafeLocalUrl, parseDevUrl, detectDevScript } from "./devserver.js";
-export { runAgentInputSchema, rootDirInputSchema, updateSettingsInputSchema, agentInputSchema, clipboardTextSchema } from "./schemas.js";
+export { runAgentInputSchema, rootDirInputSchema, updateSettingsInputSchema, agentInputSchema } from "./schemas.js";
 
 export interface HarnessSyncPort {
   status(options: CommandRuntimeOptions): Promise<StatusResult>;
@@ -84,7 +84,7 @@ interface ActiveRun {
 }
 
 /** Matches the push remote-divergence confirm prompt in core/service.ts. */
-const REMOTE_DIVERGED_PROMPT = /changed in Figma Make since the last pull/;
+export const REMOTE_DIVERGED_PROMPT = /changed in Figma Make since the last pull/;
 const STAMP_FILE = ".figmake-deps-stamp";
 const LOCKFILES = ["package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lock"];
 

@@ -115,7 +115,7 @@ jobs:
             release/*.dmg
             release/*.zip
             release/*.exe
-            release/*.yml
+            release/latest*.yml
             release/*.blockmap
 
   publish-release:
@@ -142,5 +142,5 @@ jobs:
             release-artifacts/*.dmg
             release-artifacts/*.zip
             release-artifacts/*.exe
-            release-artifacts/*.yml
+            release-artifacts/latest*.yml
             release-artifacts/*.blockmap

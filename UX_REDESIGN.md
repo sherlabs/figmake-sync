@@ -1,3 +1,5 @@
+> Superseded by the minimal redesign (Start, Project, Settings). Kept for history only.
+
 # UX redesign (superseded)
 
 This document described an earlier multi-project tab bar concept that was never shipped. It is kept only as a pointer.

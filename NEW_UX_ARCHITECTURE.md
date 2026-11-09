@@ -1,3 +1,5 @@
+> Superseded by the minimal redesign (Start, Project, Settings). Kept for history only.
+
 # Desktop UX architecture
 
 Source of truth for the Electron renderer in `src/electron/renderer/` (`index.html`, `styles.css`, `app.ts`). It supersedes `UX_REDESIGN.md`.

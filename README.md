@@ -2,78 +2,36 @@
 
 ![figmake-sync icon](src/electron/renderer/assets/icon-512.png)
 
-## The story
+Edit your Figma Make project with your own AI, then send it back.
 
-Figma Make only lets you edit a prototype through Figma's own AI tokens (credits). The prototype is a React app, and its code is visible inside Figma, but there it can only be edited by hand.
+[Download for Mac or Windows](https://github.com/sherlabs/figmake-sync/releases/latest)
 
-`figmake-sync` downloads that code to a local folder so you can:
+1. Paste your Figma Make link and press Open.
+2. Describe a change. Your preview updates as the AI works.
+3. Press Send to Figma.
 
-1. **Pull** the code from Figma Make into a normal local project.
-2. **Edit it with your own AI subscription**, using Claude Code or Codex (ChatGPT) on your own account, instead of spending Figma tokens.
-3. **Run the app locally** (npm install, then the project's own dev server) and iterate.
-4. **Push** the result back into Figma Make, after reviewing exactly what changed.
+First run asks once: sign in to Figma, and pick Claude or ChatGPT. Everything else (Node, the AI tool, installing, running the app, backups) happens by itself. Projects are created for you inside `~/Documents/figmake-sync`; Settings can move that workspace for new projects.
 
-It is a desktop app (Mac and Windows) with an optional CLI. It is not an official Figma integration.
+Good to know:
 
-## Agent: edit with Claude Code or Codex
+- Not an official Figma integration; it drives Figma in a browser window that keeps your own sign-in.
+- Undo and every run are backed up first; if Figma has newer changes at send time, you choose Keep mine or Use Figma's.
+- The AI can only edit files in the project folder; it cannot see the Figma canvas. ChatGPT (Codex) support is untested against a real account.
+- This is not a sandbox: the project's own code runs on your computer, so use projects you trust.
 
-The Agent view in the desktop app runs a coding-agent CLI that is already installed on your computer, inside your project folder.
+## How the AI is run
 
-What it does:
-
-- Detects the `claude` (Claude Code) and `codex` (Codex) CLIs, their versions and whether you are signed in. You pick which one to use.
-- **Run it locally**: a Set up step runs `npm install`, and a Run the app step starts the project's own dev server (`dev`, `start` or `serve` from `package.json`). The localhost URL is detected and can be opened in your browser. Both are manual, one button each; nothing starts by itself. The dev server stops when you quit figmake-sync or switch project.
-- **Ask for a change**: you describe a change in plain language. The agent edits files in the project folder, streams its progress (reads, edits, writes) into the view, and follow-ups continue the same conversation.
-- **Review**: when a run finishes, the changed files are listed against your last pull, with a line-by-line compare.
-- **Push**: you push to Figma Make when you are happy. Auto-push after a successful run exists but is off by default and asks for confirmation; it skips the push if the file changed in Figma since your last pull.
-
-### Setup
-
-- Claude Code: install it (`npm install -g @anthropic-ai/claude-code`), then sign in once from a terminal with `claude auth login`.
-- Codex: install it (`npm install -g @openai/codex`), then sign in from a terminal. **Codex support is untested**: it is built against the documented `codex exec` interface, but it has not been run against a real Codex install yet.
-- Node.js and npm are needed to run the prototype locally.
-- The app can install the CLI for you into its own private folder (`<app data>/runtime/tools-agents`, via `npm install --prefix`, never `-g`), then run the CLI's own browser sign-in. A system-installed CLI always wins; the private copy is only added to the PATH of processes the app starts. The Codex install and sign-in path is untested against a real account.
-- Open the project in figmake-sync, choose the Agent view, and use Check again after installing or signing in.
-
-### Safety posture
-
-- It uses your own sign-in. figmake-sync never sees your login or API keys, and it strips API-key and token style environment variables from the agent's environment.
-- A backup of the project is saved before every run (`.figmake-sync/backups/`).
-- Nothing is sent to Figma until you push (or turn on auto-push).
-- Claude Code runs non-interactively with `acceptEdits`, never with a bypass-permissions flag. It is allowed Read, Edit, Write, Glob, Grep, `npm install`, `npm run build`, `npm run test`, `npm run lint` and `git status`. It is explicitly denied `curl`, `wget`, `ssh`, `scp`, `git push`, `git diff`, `node` and `npx`.
-- Codex runs with `--sandbox workspace-write` in the project folder.
-- Runs have a 30 minute timeout, can be cancelled, and the process tree is killed on cancel. The dev server only accepts localhost URLs.
-
-### Limits
-
-- This is not a full sandbox. npm scripts still run project-defined code, and the dev server runs your project's code on your machine. Only use projects you trust.
-- Claude Code edit and write access relies on Claude's own handling of the working directory.
-- The agent works on files only; it cannot see the Figma Make canvas. Anything it changes has to be pushed back to show up in Figma Make.
-- Codex is untested (see above). Run state is per app session.
-
----
-
-`figmake-sync` is a local-first desktop sync agent for Figma Make projects.
-
-It exists for one very specific gap: Figma Make is great at generating and editing prototype code, but it does not give teams a reliable official two-way sync between a local codebase and the Make editor. In practice, that means designers and prototypers end up stuck in a brittle loop of downloading ZIPs, dragging files by hand, and hoping nothing drifted.
-
-`figmake-sync` turns that manual loop into a safer local workflow.
-
-- Your local folder becomes the source of truth.
-- The app uses your own authenticated browser session.
-- It automates pull, status, push, and verify flows.
-- It keeps state, manifests, backups, and logs on your machine.
-- It never stores your Figma password or tries to bypass login, MFA, captcha, or security prompts.
+The app runs the Claude Code or Codex command-line tool on your own sign-in (it never sees your login or API keys and strips key-style environment variables). If the tool is missing it is installed privately under `<app data>/runtime/tools-agents` (never `-g`). Claude Code runs non-interactively with a short tool allowlist and no bypass flag; Codex runs with `--sandbox workspace-write`. Each prompt gets a short fixed preface, and the app never writes helper files such as `CLAUDE.md` into your project. Runs time out after 30 minutes, can be stopped with Esc, and the preview only ever shows the project's own local dev server.
 
 ### Private Node.js runtime (optional)
 
-Running your project needs Node.js and npm. If they are not on your computer, the app offers to install a private copy for itself (Install automatically in the banner, the Agent Set up row, or the command palette). It is an isolated app-managed folder, not an OS sandbox.
+Running your project needs Node.js and npm. If they are not on your computer, the app installs a private copy for itself automatically. It is an isolated app-managed folder, not an OS sandbox.
 
 - **What is downloaded:** the current Node.js LTS from `nodejs.org/dist` (about 50 MB), then pnpm from the npm registry into the same folder (about 50 MB). About 270 MB on disk.
 - **Verification:** the Node.js archive is checked against nodejs.org's published `SHASUMS256.txt` (SHA-256) before anything is unpacked. On a mismatch it is discarded and nothing is installed. Archives are unpacked with path-traversal and symlink-escape checks. pnpm is installed by npm, which verifies the registry's package integrity; it is not pinned or independently checksummed by figmake-sync.
 - **Where it lives:** `<app data>/runtime/node-v<version>/` only (on macOS `~/Library/Application Support/figmake-sync/runtime`). No admin rights, no changes to your PATH, shell profile or global npm settings, and the npm cache for the install is inside that folder and removed afterwards.
 - **When it is used:** only if a working system Node/npm is not found. Your own installs always win. The private copy is added to the PATH of the processes figmake-sync starts (npm install, the dev server, the agent), never to the app's own environment.
-- **Remove it:** run Remove private Node.js runtime from the command palette, or delete that `runtime` folder. A half-finished install is never used (a `.complete` marker is written last).
+- **Remove it:** delete that `runtime` folder. A half-finished install is never used (a `.complete` marker is written last).
 - **No internet, or a proxy that blocks it?** Install Node.js yourself from nodejs.org; the app will pick it up.
 
 ## The Problem
@@ -206,22 +164,18 @@ The tool re-downloads the remote code to a temporary directory and compares it a
 
 ## Desktop App
 
-The project includes a small Electron app so you do not need to run CLI commands for normal use.
+One window: paste a link, describe changes, send. The preview of your running app is shown inside the window. Settings (the gear, or Cmd-,) has three rows: Claude or ChatGPT, the Workspace folder, and Sign out of Figma. Keyboard: Enter sends a prompt, Esc stops, Cmd-N opens another link.
 
-From the desktop app you can:
+### Updates
 
-- choose a local folder
-- link it to a Figma Make URL
-- authenticate with your own browser session
-- pull from Figma Make
-- run a safe sync from Figma
-- inspect local status
-- push changes back to Make
-- verify drift
+The installed app checks for a newer release shortly after it opens and every 6 hours, and downloads it quietly in the background. When one is ready, a single "Restart to update" button appears; otherwise it installs the next time you quit. Nothing is checked or restarted while a sync, pull, push or agent run is in progress, and failures are only written to the log.
 
-The app also remembers the last selected project folder.
+- **What is checked:** the public GitHub releases of `sherlabs/figmake-sync` over HTTPS (`latest.yml` / `latest-mac.yml`). The downloaded file must match the SHA-512 in that metadata, and on macOS the update must carry a valid signature for the app. Pre-releases and older versions are never installed. No token or account is used, and no usage data is sent beyond the normal request to GitHub.
+- **Turn it off:** set `FIGMAKE_DISABLE_UPDATES=1` in the environment, or set `updates.enabled` to `false` in the app settings (default `true`). Unpackaged/dev runs never check.
 
-The interface follows your system light or dark theme and is fully keyboard accessible. The Sync tab leads with a status panel (up to date, syncing, needs review, offline or signed out) and shows live progress with a Stop button. Finished runs report counts for pulled, pushed, skipped and conflicted files. Design notes live in [NEW_UX_ARCHITECTURE.md](NEW_UX_ARCHITECTURE.md).
+### Reporting a problem
+
+When something fails, the message has a quiet **Report** button next to Try again. It opens a pre-filled new issue on GitHub in your browser; nothing is sent until you review it and press Submit, and the app uses no token or account. The issue contains only: the app version, your OS and CPU, the Electron version, the step that failed, a stable error code with the plain message, the last ~40 log lines, and which self-heal lookups were repaired or not (names only). Log lines are cleaned as they are written: Figma links and file ids, your home folder and other paths, usernames, emails, tokens and cookies, project names, query strings and anything you typed are removed. No code, file contents or prompts are included. If the report is too long for a link, the full text is copied to your clipboard to paste into the issue.
 
 ## CLI
 
@@ -334,14 +288,9 @@ If these secrets are not configured, the workflow will fall back to unsigned bui
 
 ### Desktop Workflow
 
-1. Launch the app with `npm run app`.
-2. Choose a local folder for the project.
-3. Paste the Figma Make URL and click `Link Folder`.
-4. Click `Authenticate`.
-5. Complete the login flow in the opened browser window.
-6. Use `Pull` to bring code local.
-7. Make changes locally in your editor.
-8. Use `Status`, `Push`, and `Verify` as needed.
+1. Launch the app (`npm run app` from source).
+2. Paste the Figma Make link and press Open.
+3. Describe a change; press Send to Figma when you are happy.
 
 ### CLI Workflow
 
@@ -381,7 +330,7 @@ The code is split so browser automation is replaceable later if Figma exposes an
 - [src/diff/manifest.ts](./src/diff/manifest.ts): manifests, hashes, rename detection, and merge foundations
 - [src/browser/session.ts](./src/browser/session.ts): Playwright persistent browser session lifecycle
 - [src/figma/adapter.ts](./src/figma/adapter.ts): `FigmaMakeAdapter` interface and isolated selector-driven Playwright adapter
-- [src/harness/](./src/harness): Agent view backend (Claude Code and Codex adapters, process runner, local dev server)
+- [src/harness/](./src/harness): agent backend (Claude Code and Codex adapters, process runner, local dev server)
 - [src/electron/main.ts](./src/electron/main.ts): desktop shell
 - [src/electron/renderer/app.ts](./src/electron/renderer/app.ts): desktop UI
 - [src/cli/index.ts](./src/cli/index.ts): optional CLI
@@ -392,9 +341,15 @@ Figma Make does not expose a stable public automation contract for these interac
 
 Because of that:
 
-- selectors are isolated inside [src/figma/adapter.ts](./src/figma/adapter.ts)
+- selectors are data, not code: [src/figma/selectors.default.json](./src/figma/selectors.default.json) holds an ordered selector list plus metadata (goal, kind, healable, expectTerms) for every key, validated with zod in [src/figma/selectors.ts](./src/figma/selectors.ts) and bundled into `dist` by `npm run build`
+- optional hotfix without a release: drop a `selectors.local.json` (`{"version":1,"keys":{"codeModeButton":{"selectors":["..."]}}}`) in the app's data folder; its selectors are grammar-checked and tried before the built-in ones (it cannot change which keys are healable)
+- layering, highest priority first: remembered self-heal fixes, `selectors.local.json`, the JSON defaults (config `selectorOverrides` still replaces a key's defaults)
 - selector overrides are supported in config
 - browser automation is designed to fail conservatively when the UI changes
+
+### Self-healing when Figma changes its page
+
+When Figma renames or moves a control, the app can repair that lookup on its own, with no extra screens. Every key marked `healable` in the selector JSON is covered: the Files/Code tab, the Files actions menu, Download code, Upload, Create file, Rename, the prompt box, Send, Stop, Save and quick-open. Delete and confirm-delete are never healed (the schema forbids it). It sends a small outline of the page's buttons, menus and inputs (labels and attribute names only: no code, file contents, typed text, URLs or cookies; emails and token-like strings are redacted) to the AI assistant you connected yourself (Claude Code or Codex) and nothing else: no telemetry, no figmake server. The assistant runs once, with no tools and read-only. Its answer is treated as untrusted: a suggested selector must pass a strict format check, match exactly one visible, enabled control whose own label contains an expected word for that key, have the right shape (menu items inside an open menu, inputs editable), and the step it belongs to must then really work (editor appears, menu opens, download starts, file chooser opens, name box appears, prompt retained and accepted) before it is remembered (in `selector-overrides.json` in the app's data folder). The Stop control is only observed, never clicked. Remembered fixes expire after 30 days or after repeated misses, and the app asks at most twice per key per session, with a one-hour cooldown after a failed attempt. The built-in selectors target the current Browser/Files tab layout (verified against live Figma Make; the Codex path has not been tested against a real Codex install, and Stop, Save and quick-open could not be exercised live). See [src/heal/index.ts](./src/heal/index.ts).
 
 ## Testing
 
@@ -417,6 +372,7 @@ Current automated coverage includes:
 ├── examples/
 ├── scripts/
 ├── src/
+│   ├── app/
 │   ├── browser/
 │   ├── cli/
 │   ├── core/

@@ -6,8 +6,13 @@ import { z } from "zod";
 import type { DesktopAppState } from "./contracts.js";
 
 const desktopAppStateSchema = z.object({
-  lastProjectRoot: z.string().nullable().default(null),
-  lastAuthOkAt: z.string().nullable().optional(),
+  lastLink: z.string().nullable().default(null),
+  agent: z.enum(["claude", "codex"]).nullable().default(null),
+  workspace: z.string().nullable().default(null),
+  /** Figma Make file key -> absolute project folder (existing projects keep their path). */
+  projects: z.record(z.string(), z.string()).default({}),
+  /** A malformed value falls back to "on" instead of discarding the rest of the saved state. */
+  updates: z.object({ enabled: z.boolean().catch(true) }).catch({ enabled: true }).default({ enabled: true }),
 });
 
 export class DesktopAppStateStore {
@@ -52,13 +57,5 @@ export class DesktopAppStateStore {
     });
     this.queue = run.catch(() => undefined);
     return run;
-  }
-
-  async clear(): Promise<DesktopAppState> {
-    if (await fs.pathExists(this.statePath)) {
-      await fs.remove(this.statePath);
-    }
-
-    return desktopAppStateSchema.parse({});
   }
 }

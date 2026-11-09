@@ -7,6 +7,7 @@ import { z } from "zod";
 
 import {
   createHashIndex,
+  createManifest,
   type ManifestEntry,
   type SnapshotManifest,
 } from "../diff/manifest.js";
@@ -410,6 +411,38 @@ export class ProjectStateStore {
     );
 
     return backupDir;
+  }
+
+  /**
+   * Puts the workspace back exactly as a backup snapshot saw it: snapshot files are
+   * copied back and tracked files created since are removed. Ignored paths are untouched.
+   */
+  async restoreBackup(
+    backupDir: string,
+    ignore?: readonly string[],
+  ): Promise<void> {
+    const snapshot = path.join(backupDir, "workspace");
+    if (!(await fs.pathExists(snapshot))) {
+      throw new Error("Backup snapshot is missing.");
+    }
+
+    const keep = new Set(await this.listFilesRecursive(snapshot));
+    const current = await createManifest(this.paths.rootDir, {
+      ...(ignore ? { ignore } : {}),
+    });
+
+    for (const entry of current.files) {
+      if (!keep.has(entry.path)) {
+        await fs.remove(path.join(this.paths.rootDir, entry.path));
+      }
+    }
+
+    for (const relativePath of keep) {
+      await writeFileAtomic(
+        path.join(this.paths.rootDir, relativePath),
+        await fs.readFile(path.join(snapshot, relativePath)),
+      );
+    }
   }
 
   async createTempDir(prefix: string): Promise<string> {

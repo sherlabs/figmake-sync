@@ -11,12 +11,25 @@ import {
 } from "../browser/session.js";
 import type { ProjectStatePaths } from "../core/state.js";
 import type { ProjectConfig } from "../types/config.js";
+import { HealSession } from "../heal/heal.js";
+import type { HealContext } from "../heal/types.js";
 import { withRetry } from "../utils/retry.js";
+import {
+  DEFAULT_SELECTOR_TABLE,
+  layerSelectors,
+  loadLocalSelectors,
+  selectorMapOf,
+  type LocalSelectors,
+  type SelectorKey,
+  type SelectorMap,
+} from "./selectors.js";
 
 export interface AdapterContext {
   config: ProjectConfig;
   logger: Logger;
   paths: ProjectStatePaths;
+  /** Optional silent self-healing (learned selector overrides + AI-assisted repair). Absent => legacy behaviour. */
+  heal?: HealContext;
 }
 
 export interface DownloadResult {
@@ -596,139 +609,11 @@ const TARGET_SELECTOR = '[data-fm-target="1"]';
 // Selectors
 // ---------------------------------------------------------------------------
 
-type SelectorKey =
-  | "workspaceRoot"
-  | "codeModeButton"
-  | "codeEditorRoot"
-  | "fileTreeRoot"
-  | "downloadButton"
-  | "downloadZipAction"
-  | "uploadInput"
-  | "uploadButton"
-  | "newFileButton"
-  | "createFileAction"
-  | "newFileInput"
-  | "saveButton"
-  | "promptTextarea"
-  | "promptSendButton"
-  | "promptStopButton"
-  | "deleteAction"
-  | "renameAction"
-  | "deleteConfirmButton"
-  | "quickOpenInput";
+export type { SelectorKey, SelectorMap } from "./selectors.js";
 
-type SelectorMap = Record<SelectorKey, string[]>;
-
-// These selectors are intentionally isolated because the Figma Make UI is not a stable public API
-// and will likely need adjustment over time.
-export const DEFAULT_FIGMA_MAKE_SELECTORS: SelectorMap = {
-  workspaceRoot: [
-    '[data-radio-options-root="true"]',
-    '[data-testid="code-display-toggle"]',
-    '[data-testid="header-nav-toolbar"]',
-    '[data-testid="figmake-full-view"]',
-  ],
-  codeModeButton: [
-    '[data-radio-options-root="true"] input[value="code"]',
-    'input[type="radio"][value="code"][data-tooltip="Code"]',
-    'input[type="radio"][value="code"]',
-    '[data-testid="code-display-toggle"] input[value="code"]',
-    '[data-testid="code-display-toggle"] label:has-text("Code")',
-    '[data-testid="code-display-toggle"]',
-    '[aria-label="Code"]',
-    'button[aria-label="Code"]',
-    '[role="radio"][value="code"]',
-    '[role="tab"]:has-text("Code")',
-    'label:has-text("Code")',
-  ],
-  codeEditorRoot: [
-    '[data-testid="code-editor"]',
-    '.cm-content[role="textbox"]',
-    ".cm-editor",
-    ".monaco-editor",
-  ],
-  fileTreeRoot: [
-    'div:has(button[data-testid="code-file-item"])',
-    'div:has([data-folder-item="true"])',
-    'div:has(h2:has-text("Files"))',
-  ],
-  downloadButton: [
-    'button[aria-label="Download code"]',
-    'button[data-tooltip="Download code"]',
-    '[data-testid="download-code"]',
-  ],
-  downloadZipAction: [
-    '[role="menuitem"]:has-text("ZIP")',
-    '[role="menuitem"]:has-text("Download code")',
-    "text=/download.*zip/i",
-  ],
-  uploadInput: [
-    '[data-testid="code-upload-input"]',
-    'input[type="file"][webkitdirectory]',
-    '[data-testid="upload-input"]',
-  ],
-  uploadButton: [
-    'button[aria-label="Upload files"]',
-    'button:has-text("Upload files")',
-    '[data-testid="code-upload-button"]',
-  ],
-  newFileButton: ['button:has-text("New file")', '[data-testid="new-file"]'],
-  createFileAction: [
-    '[role="menuitem"]:has-text("Create file")',
-    'button:has-text("Create file")',
-  ],
-  newFileInput: [
-    'input[data-testid="code-file-name-input"]:focus',
-    'input[data-testid="code-file-name-input"][value="new-file.tsx"]',
-    'input[placeholder*="file"]',
-    '[role="dialog"] input[type="text"]',
-    '[data-testid="new-file-input"]',
-    'input[data-testid="code-file-name-input"]',
-  ],
-  saveButton: [
-    'button[aria-label="Save"]',
-    'button:text-is("Save")',
-    '[data-testid="save-file"]',
-  ],
-  promptTextarea: [
-    'textarea[data-testid="code-chat-chat-box"]',
-    'textarea[placeholder*="Ask for changes"]',
-    '[data-testid="composer-input"]',
-  ],
-  promptSendButton: [
-    '[data-testid="composer-submit"]',
-    'button[aria-label^="Send" i]',
-    'button:text-is("Send")',
-  ],
-  promptStopButton: [
-    '[data-testid="composer-stop"]',
-    'button[aria-label^="Stop" i]',
-  ],
-  deleteAction: [
-    '[role="menuitem"]:has-text("Delete")',
-    'button:has-text("Delete")',
-  ],
-  renameAction: [
-    '[role="menuitem"]:has-text("Rename")',
-    'button:has-text("Rename")',
-  ],
-  deleteConfirmButton: [
-    '[role="dialog"] button:has-text("Delete")',
-    '[role="alertdialog"] button:has-text("Delete")',
-    '[role="dialog"] button:has-text("Confirm")',
-    '[role="alertdialog"] button:has-text("Confirm")',
-    '[data-testid="confirm-delete"]',
-  ],
-  quickOpenInput: [
-    'input[placeholder*="Open"]',
-    'input[placeholder*="Go to"]',
-    'input[placeholder*="Search"]',
-    'input[placeholder*="file"]',
-    '[role="dialog"] input[type="search"]',
-    '[role="combobox"][aria-label*="file" i]',
-    '[role="dialog"] input[type="text"]',
-  ],
-};
+// The Figma Make UI is not a stable public API. The selector table is DATA (selectors.default.json, validated and
+// layered in selectors.ts); this export is derived from it for callers/tests that want the plain key -> selectors map.
+export const DEFAULT_FIGMA_MAKE_SELECTORS: SelectorMap = selectorMapOf(DEFAULT_SELECTOR_TABLE);
 
 const SELECT_ALL = "ControlOrMeta+A";
 const SUBMIT_SHORTCUT = "ControlOrMeta+Enter";
@@ -861,11 +746,15 @@ interface LocateOptions {
   expandLast?: boolean;
 }
 
-class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSession {
+/** @internal exported for tests */
+export class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSession {
   private readonly selectors: SelectorMap;
   private hasPendingEditorChanges = false;
   private activePath: string | null = null;
   private closePromise: Promise<void> | null = null;
+  private readonly healSession: HealSession | null;
+  /** How long to wait for the Code toggle before treating the UI as changed (tests shorten it). */
+  private codeModeWaitMs = 20_000;
 
   private readonly inflightMutations = new Set<Request>();
   private mutationSeq = 0;
@@ -876,11 +765,19 @@ class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSession {
     private readonly handle: PersistentBrowserHandle,
     private readonly context: AdapterContext,
     private readonly signal?: AbortSignal,
+    localSelectors: LocalSelectors = {},
   ) {
-    this.selectors = {
+    const base: SelectorMap = {
       ...DEFAULT_FIGMA_MAKE_SELECTORS,
       ...(context.config.adapter.selectorOverrides as Partial<SelectorMap>),
     };
+
+    // Layer 2: the optional selectors.local.json hotfix goes in front of the JSON defaults.
+    this.selectors = Object.fromEntries(
+      Object.entries(base).map(([key, list]) => [key, layerSelectors(list, localSelectors[key as SelectorKey])]),
+    ) as SelectorMap;
+
+    this.healSession = context.heal ? new HealSession(context.heal) : null;
 
     const page = handle.page as Partial<typeof handle.page>;
 
@@ -923,20 +820,13 @@ class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSession {
     return this.step("download-latest-code", async () => {
       await this.ensureCodeSurfaceReady();
 
-      const downloadButton = await this.findVisible("downloadButton");
       const downloadPromise = this.handle.page.waitForEvent("download", {
         timeout: this.context.config.adapter.downloadTimeoutMs,
       });
       // The click may fail before the download starts; do not leak the rejection.
       downloadPromise.catch(() => undefined);
 
-      await downloadButton.click();
-
-      const zipAction = await this.tryFindVisible("downloadZipAction", 2_000);
-
-      if (zipAction) {
-        await zipAction.click();
-      }
+      await this.triggerDownload(downloadPromise);
 
       const download = await this.raceAbort(downloadPromise);
       const suggestedFileName = sanitizeFileName(
@@ -1055,37 +945,32 @@ class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSession {
 
       const flatPaths = flat.map((entry) => entry.absolutePath);
       let attempted = false;
+      let usedInput = false;
       let failure = "";
 
+      // 1. Hidden file input (newer UI exposes input[data-testid=upload-file-input]); 2. Files actions menu or toolbar
+      // button + file chooser. A healed "uploadButton" is only used inside (2).
       const uploadInput = await this.tryFind("uploadInput", 2_000, "attached");
 
       if (uploadInput) {
-        await uploadInput.setInputFiles(flatPaths);
-        attempted = true;
-      } else {
-        const uploadButton = await this.tryFindVisible("uploadButton", 2_000);
-
-        if (uploadButton) {
-          try {
-            const [chooser] = await Promise.all([
-              this.handle.page.waitForEvent("filechooser", { timeout: 5_000 }),
-              uploadButton.click(),
-            ]);
-            await chooser.setFiles(flatPaths);
-            attempted = true;
-          } catch (error) {
-            if (error instanceof AutomationAbortedError) {
-              throw error;
-            }
-
-            failure = `File chooser upload failed: ${
-              error instanceof Error ? error.message : String(error)
-            }`;
+        try {
+          await uploadInput.setInputFiles(flatPaths);
+          attempted = true;
+          usedInput = true;
+        } catch (error) {
+          if (error instanceof AutomationAbortedError) {
+            throw error;
           }
-        } else {
-          failure =
-            "No upload control matched the configured Figma Make selectors.";
+
+          failure = `Upload input failed: ${error instanceof Error ? error.message : String(error)}`;
         }
+      }
+
+      if (!attempted) {
+        const viaChooser = await this.uploadViaChooser(flatPaths);
+
+        attempted = viaChooser.ok;
+        failure = viaChooser.failure || failure;
       }
 
       if (!attempted) {
@@ -1096,24 +981,43 @@ class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSession {
         return { uploaded: [], unresolved };
       }
 
-      const uploaded: string[] = [];
+      const appeared = async (): Promise<string[]> => {
+        const found: string[] = [];
+
+        for (const entry of flat) {
+          const ok = await this.pollUntil(
+            async () =>
+              Boolean(
+                await this.locateTreeItem(splitPath(entry.relativePath), {
+                  kind: "file",
+                  expand: false,
+                  scan: false,
+                }),
+              ),
+            found.length === 0 && usedInput ? 6_000 : 8_000,
+          );
+
+          if (ok) {
+            found.push(entry.relativePath);
+          }
+        }
+
+        return found;
+      };
+
+      let uploaded = await appeared();
+
+      if (uploaded.length === 0 && usedInput) {
+        // The hidden input did not trigger an upload: fall back to the real menu + file chooser.
+        const viaChooser = await this.uploadViaChooser(flatPaths);
+
+        if (viaChooser.ok) {
+          uploaded = await appeared();
+        }
+      }
 
       for (const entry of flat) {
-        const appeared = await this.pollUntil(
-          async () =>
-            Boolean(
-              await this.locateTreeItem(splitPath(entry.relativePath), {
-                kind: "file",
-                expand: false,
-                scan: false,
-              }),
-            ),
-          8_000,
-        );
-
-        if (appeared) {
-          uploaded.push(entry.relativePath);
-        } else {
+        if (!uploaded.includes(entry.relativePath)) {
           unresolved.push({
             path: entry.relativePath,
             reason: "Uploaded file did not appear in the file explorer.",
@@ -1201,10 +1105,25 @@ class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSession {
     return this.step("submit-prompt", async () => {
       await this.ensureCodeSurfaceReady();
 
-      const promptTextarea = await this.findVisible("promptTextarea", 4_000);
+      let promptTextarea = await this.tryFindVisible("promptTextarea", 4_000);
+      let filled = false;
+
+      if (!promptTextarea) {
+        // Healed prompt box: the post-condition is that the message is retained by it (the flow types it anyway).
+        promptTextarea = await this.healKey("promptTextarea", async (candidate) => {
+          await this.fillPrompt(candidate, message);
+        });
+        filled = promptTextarea !== null;
+      }
+
+      if (!promptTextarea) {
+        throw new SelectorNotFoundError("promptTextarea", this.sel("promptTextarea"));
+      }
+
+      const promptBox = promptTextarea;
 
       const idleBefore = await this.pollUntil(
-        () => this.isPromptIdle(promptTextarea),
+        () => this.isPromptIdle(promptBox),
         PROMPT_IDLE_TIMEOUT_MS,
         250,
       );
@@ -1215,12 +1134,8 @@ class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSession {
         );
       }
 
-      await promptTextarea.fill(message);
-
-      if ((await promptTextarea.inputValue().catch(() => message)) !== message) {
-        throw new FigmaAutomationError(
-          "The prompt text was not retained by the composer.",
-        );
+      if (!filled) {
+        await this.fillPrompt(promptBox, message);
       }
 
       const sendButton = await this.tryFindVisible("promptSendButton", 2_000);
@@ -1232,23 +1147,36 @@ class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSession {
         );
         await sendButton.click();
       } else {
-        await promptTextarea.press(SUBMIT_SHORTCUT);
+        await promptBox.press(SUBMIT_SHORTCUT);
       }
 
       const accepted = async (): Promise<boolean> =>
-        (await promptTextarea.inputValue().catch(() => "")) === "" ||
-        (await promptTextarea.isDisabled().catch(() => false)) ||
+        (await this.readPromptValue(promptBox).catch(() => "x")).trim() === "" ||
+        (await promptBox.isDisabled().catch(() => false)) ||
         (await this.isAnyVisibleNow("promptStopButton"));
 
       let wasAccepted = await this.pollUntil(accepted, 5_000);
 
       if (!wasAccepted) {
-        await promptTextarea.press(SUBMIT_SHORTCUT);
+        await promptBox.press(SUBMIT_SHORTCUT);
         wasAccepted = await this.pollUntil(accepted, 3_000);
       }
 
+      if (!wasAccepted && !sendButton) {
+        // No Send control matched and the keyboard did not submit: heal it (post-condition: the composer accepts).
+        const healedSend = await this.healKey("promptSendButton", async (candidate) => {
+          await candidate.click();
+
+          if (!(await this.pollUntil(accepted, 5_000))) {
+            throw new UiChangedError("The composer did not accept the prompt.");
+          }
+        });
+
+        wasAccepted = healedSend !== null;
+      }
+
       if (!wasAccepted) {
-        await promptTextarea.press("Enter");
+        await promptBox.press("Enter");
         wasAccepted = await this.pollUntil(accepted, 3_000);
       }
 
@@ -1258,11 +1186,19 @@ class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSession {
         );
       }
 
+      // The composer is locked (generating) but no Stop control matched: heal the indicator (observed, never clicked).
+      if (
+        (await promptBox.isDisabled().catch(() => false)) &&
+        !(await this.isAnyVisibleNow("promptStopButton"))
+      ) {
+        await this.healKey("promptStopButton", () => Promise.resolve());
+      }
+
       // Busy phase may be too short to observe; idle is what matters.
-      await this.pollUntil(async () => !(await this.isPromptIdle(promptTextarea)), 5_000);
+      await this.pollUntil(async () => !(await this.isPromptIdle(promptBox)), 5_000);
 
       const finished = await this.pollUntil(
-        () => this.isPromptIdle(promptTextarea),
+        () => this.isPromptIdle(promptBox),
         PROMPT_COMPLETION_TIMEOUT_MS,
         500,
       );
@@ -1297,6 +1233,7 @@ class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSession {
   // -------------------------------------------------------------------------
 
   private closeOnce(): Promise<void> {
+    void this.context.heal?.store.flush().catch(() => undefined);
     this.closePromise ??= this.handle.close().catch((error: unknown) => {
       this.context.logger.warn({ error }, "failed to close browser handle");
     });
@@ -1484,7 +1421,7 @@ class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSession {
         }
 
         // All candidates race; the workspace has up to 20s to appear.
-        const codeModeButton = await this.tryFindVisible("codeModeButton", 20_000);
+        const codeModeButton = await this.tryFindVisible("codeModeButton", this.codeModeWaitMs);
 
         if (!codeModeButton) {
           const lateState = await this.classifyPage();
@@ -1494,14 +1431,18 @@ class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSession {
           }
 
           if (await this.isAnyVisibleNow("workspaceRoot")) {
+            if (await this.healCodeModeButton()) {
+              return;
+            }
+
             throw new UiChangedError(
-              `Figma Make workspace loaded but no code-mode control matched: ${this.selectors.codeModeButton.join(", ")}`,
+              `Figma Make workspace loaded but no code-mode control matched: ${this.sel("codeModeButton").join(", ")}`,
             );
           }
 
           throw new SelectorNotFoundError(
             "workspaceRoot",
-            this.selectors.workspaceRoot,
+            this.sel("workspaceRoot"),
           );
         }
 
@@ -1512,6 +1453,291 @@ class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSession {
         attempts: 2,
         shouldRetry: (error) => !isNonRetryable(error),
       },
+    );
+  }
+
+  /**
+   * Self-healing for the Code/Files toggle: the injected healer proposes selectors, heal/gate.ts validates them
+   * against the live page, and the adapter's own action (switchToCodeMode + editor visible) is the post-condition.
+   * Returns true when the workspace is now in code mode.
+   */
+  private async healCodeModeButton(): Promise<boolean> {
+    const healed = await this.healKey("codeModeButton", async (locator) => {
+      await this.switchToCodeMode(locator);
+      await this.findVisible("codeEditorRoot", 15_000);
+    });
+
+    return healed !== null;
+  }
+
+  /**
+   * Generic auto-heal hook for ANY healable key (healable: true in selectors.default.json). Call it only where the
+   * flow would otherwise fail with SelectorNotFound/UiChanged. HealSession enforces the safety gate (grammar, exactly
+   * one visible enabled element, expected term, kind shape), the per-key/session limits and the cooldown; `act` runs
+   * the flow's own action on the gated element and throws when its post-condition does not hold. Resolves the healed
+   * locator (the action has ALREADY been performed on it) or null.
+   */
+  private async healKey(
+    key: SelectorKey,
+    act: (locator: Locator) => Promise<void>,
+  ): Promise<Locator | null> {
+    if (!this.healSession?.enabled) {
+      return null;
+    }
+
+    return this.healSession.tryHeal({
+      page: this.handle.page,
+      key,
+      failedSelectors: this.sel(key),
+      signal: this.signal,
+      log: (msg, extra) => this.context.logger.info({ ...extra }, msg),
+      act: async (locator) => {
+        try {
+          await act(locator);
+          return true;
+        } catch (error) {
+          if (error instanceof AutomationAbortedError) {
+            throw error;
+          }
+
+          return false;
+        }
+      },
+    });
+  }
+
+  /** Clicks a control; when no selector matches, heals the key once (post-condition after the click) and retries. */
+  private async clickKey(
+    key: SelectorKey,
+    timeoutMs: number,
+    post?: () => Promise<void>,
+  ): Promise<void> {
+    const locator = await this.tryFindVisible(key, timeoutMs);
+
+    if (locator) {
+      await locator.click();
+      return;
+    }
+
+    const healed = await this.healKey(key, async (candidate) => {
+      await candidate.click();
+      await post?.();
+    });
+
+    if (!healed) {
+      throw new SelectorNotFoundError(key, this.sel(key));
+    }
+  }
+
+  private async isMenuOpen(): Promise<boolean> {
+    return this.handle.page
+      .locator('[role="menu"]')
+      .first()
+      .isVisible()
+      .catch(() => false);
+  }
+
+  /** Clicks a menu trigger and waits for a role=menu to appear. Throws when it never opens. */
+  private async openMenuWith(trigger: Locator): Promise<void> {
+    await trigger.click();
+
+    if (!(await this.pollUntil(() => this.isMenuOpen(), 3_000))) {
+      throw new UiChangedError("The file actions menu did not open.");
+    }
+  }
+
+  /** Opens the Files header actions menu (newer UI). Returns false when there is no menu or it did not open. */
+  private async openFilesActionsMenu(timeoutMs = 2_000): Promise<boolean> {
+    if (await this.isMenuOpen()) {
+      return true;
+    }
+
+    const trigger = await this.tryFindVisible("filesActionsMenuButton", timeoutMs);
+
+    if (trigger) {
+      try {
+        await this.openMenuWith(trigger);
+        return true;
+      } catch (error) {
+        if (error instanceof AutomationAbortedError) {
+          throw error;
+        }
+
+        return false;
+      }
+    }
+
+    // Heal the trigger only when nothing else could start the flow (the legacy direct buttons are absent).
+    if (
+      (await this.isAnyVisibleNow("downloadButton")) ||
+      (await this.isAnyVisibleNow("newFileButton")) ||
+      (await this.isAnyVisibleNow("uploadButton"))
+    ) {
+      return false;
+    }
+
+    const healed = await this.healKey("filesActionsMenuButton", async (candidate) => {
+      await this.openMenuWith(candidate);
+
+      // Post-condition: it must be the FILES actions menu (offers Download/Upload/Create), not just any menu.
+      const items = await this.handle.page.locator('[role="menu"] [role="menuitem"]').allInnerTexts();
+
+      if (!items.some((text) => /\b(download|upload|create)\b/i.test(text))) {
+        await this.closeMenu();
+        throw new UiChangedError("The opened menu is not the file actions menu.");
+      }
+    });
+
+    return healed !== null;
+  }
+
+  private async closeMenu(): Promise<void> {
+    if (await this.isMenuOpen()) {
+      await this.handle.page.keyboard.press("Escape").catch(() => undefined);
+      await this.pollUntil(async () => !(await this.isMenuOpen()), 800);
+    }
+  }
+
+  /**
+   * Starts the ZIP download. Newer UI: Files actions menu -> "Download code". Fallback: the legacy direct Download
+   * button (+ optional ZIP menu item). Each step is healable; the post-condition of a healed click is the download event.
+   */
+  private async triggerDownload(downloadPromise: Promise<unknown>): Promise<void> {
+    let downloaded = false;
+    void downloadPromise.then(
+      () => {
+        downloaded = true;
+      },
+      () => undefined,
+    );
+    const waitStarted = async (): Promise<void> => {
+      if (!(await this.pollUntil(() => Promise.resolve(downloaded), 15_000))) {
+        throw new UiChangedError("The download did not start.");
+      }
+    };
+
+    if (await this.openFilesActionsMenu()) {
+      const item = await this.tryFindVisible("downloadZipAction", 3_000);
+
+      if (item) {
+        await item.click();
+        return;
+      }
+
+      const healedItem = await this.healKey("downloadZipAction", async (candidate) => {
+        await candidate.click();
+        await waitStarted();
+      });
+
+      if (healedItem) {
+        return;
+      }
+
+      await this.closeMenu();
+    }
+
+    const direct = await this.tryFindVisible("downloadButton", 2_000);
+
+    if (direct) {
+      await direct.click();
+
+      const zipAction = await this.tryFindVisible("downloadZipAction", 2_000);
+
+      if (zipAction) {
+        await zipAction.click();
+      }
+
+      return;
+    }
+
+    const healedDirect = await this.healKey("downloadButton", async (candidate) => {
+      await candidate.click();
+      await waitStarted();
+    });
+
+    if (!healedDirect) {
+      throw new SelectorNotFoundError("downloadButton", this.sel("downloadButton"));
+    }
+  }
+
+  /** Upload through a real file chooser: Files actions menu item, else the legacy toolbar button. */
+  private async uploadViaChooser(
+    paths: string[],
+  ): Promise<{ ok: boolean; failure: string }> {
+    const chooseWith = async (click: () => Promise<void>): Promise<void> => {
+      const [chooser] = await Promise.all([
+        this.handle.page.waitForEvent("filechooser", { timeout: 5_000 }),
+        click(),
+      ]);
+      await chooser.setFiles(paths);
+    };
+    const fail = (error: unknown): { ok: false; failure: string } => {
+      if (error instanceof AutomationAbortedError) {
+        throw error;
+      }
+
+      return {
+        ok: false,
+        failure: `File chooser upload failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    };
+
+    await this.openFilesActionsMenu(1_500);
+
+    const button = await this.tryFindVisible("uploadButton", 2_000);
+
+    if (button) {
+      try {
+        await chooseWith(() => button.click());
+        return { ok: true, failure: "" };
+      } catch (error) {
+        return fail(error);
+      }
+    }
+
+    const healed = await this.healKey("uploadButton", async (candidate) => {
+      await chooseWith(() => candidate.click());
+    });
+
+    if (healed) {
+      return { ok: true, failure: "" };
+    }
+
+    await this.closeMenu();
+
+    return {
+      ok: false,
+      failure: "No upload control matched the configured Figma Make selectors.",
+    };
+  }
+
+  /** Autosave state of the code layer; null when the UI exposes none. */
+  private async readPersistenceStatus(): Promise<string | null> {
+    for (const selector of this.sel("persistenceStatus")) {
+      const status = await this.handle.page
+        .locator(selector)
+        .first()
+        .getAttribute("data-code-layer-persistence-status", { timeout: 500 })
+        .catch(() => null);
+
+      if (status !== null) {
+        return status;
+      }
+    }
+
+    return null;
+  }
+
+  /** True while the autosave indicator reports an unsaved / in-flight state. */
+  private static isPersistenceDirty(status: string | null): boolean {
+    return status !== null && /(^|[\s_-])(saving|pending|dirty|unsaved|syncing|modified|queued|uploading)/i.test(status);
+  }
+
+  private async waitPersistenceIdle(timeoutMs: number): Promise<boolean> {
+    return this.pollUntil(
+      async () => !PlaywrightFigmaMakeProjectSession.isPersistenceDirty(await this.readPersistenceStatus()),
+      timeoutMs,
+      250,
     );
   }
 
@@ -1686,10 +1912,26 @@ class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSession {
 
     for (const shortcut of shortcuts) {
       await this.handle.page.keyboard.press(shortcut);
-      const quickOpenInput = await this.tryFindVisible("quickOpenInput", 2_000);
+      let quickOpenInput = await this.tryFindVisible("quickOpenInput", 2_000);
+      let filled = false;
+
+      if (!quickOpenInput && shortcut === shortcuts.at(-1)) {
+        // Last chance: ask the healer; the post-condition is that the path can be typed into the control.
+        quickOpenInput = await this.healKey("quickOpenInput", async (candidate) => {
+          await candidate.fill(relativePath);
+
+          if ((await candidate.inputValue()) !== relativePath) {
+            throw new UiChangedError("The quick-open input did not retain the typed path.");
+          }
+        });
+        filled = quickOpenInput !== null;
+      }
 
       if (quickOpenInput) {
-        await quickOpenInput.fill(relativePath);
+        if (!filled) {
+          await quickOpenInput.fill(relativePath);
+        }
+
         await quickOpenInput.press("Enter");
         await this.findVisible("codeEditorRoot", 10_000);
         await this.pollUntil(
@@ -1738,16 +1980,9 @@ class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSession {
 
       await parentFolder.locator.scrollIntoViewIfNeeded();
       await parentFolder.locator.click({ button: "right" });
-      await (await this.findVisible("createFileAction", 4_000)).click();
+      await this.clickKey("createFileAction", 4_000, () => this.expectNameInput());
     } else {
-      const directNewFileButton = await this.tryFindVisible("newFileButton", 1_500);
-
-      if (directNewFileButton) {
-        await directNewFileButton.click();
-      } else {
-        await this.openRootFileTreeContextMenu(treeRoot);
-        await (await this.findVisible("createFileAction", 4_000)).click();
-      }
+      await this.startRootFileCreation(treeRoot);
     }
 
     const newFileInput = await this.findVisible("newFileInput", 4_000);
@@ -1762,6 +1997,75 @@ class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSession {
       throw new FigmaAutomationError(
         `Expected exactly one ${relativePath} after creation but found ${opened.matchCount}.`,
       );
+    }
+  }
+
+  private async expectNameInput(): Promise<void> {
+    await this.findVisible("newFileInput", 4_000);
+  }
+
+  /**
+   * Root-level "new file": Files actions menu -> Create file (newer UI), else the legacy direct button, else the
+   * explorer context menu. Every step is healable (createFileAction / newFileButton).
+   */
+  private async startRootFileCreation(treeRoot: Locator): Promise<void> {
+    if (
+      (await this.isAnyVisibleNow("filesActionsMenuButton")) &&
+      (await this.openFilesActionsMenu())
+    ) {
+      const item = await this.tryFindVisible("createFileAction", 3_000);
+
+      if (item) {
+        await item.click();
+        return;
+      }
+
+      const healedItem = await this.healKey("createFileAction", async (candidate) => {
+        await candidate.click();
+        await this.expectNameInput();
+      });
+
+      if (healedItem) {
+        return;
+      }
+
+      await this.closeMenu();
+    }
+
+    const directNewFileButton = await this.tryFindVisible("newFileButton", 1_500);
+
+    if (directNewFileButton) {
+      await directNewFileButton.click();
+      return;
+    }
+
+    await this.openRootFileTreeContextMenu(treeRoot);
+
+    const menuItem = await this.tryFindVisible("createFileAction", 2_500);
+
+    if (menuItem) {
+      await menuItem.click();
+      return;
+    }
+
+    const healedMenuItem = await this.healKey("createFileAction", async (candidate) => {
+      await candidate.click();
+      await this.expectNameInput();
+    });
+
+    if (healedMenuItem) {
+      return;
+    }
+
+    await this.closeMenu();
+
+    const healedButton = await this.healKey("newFileButton", async (candidate) => {
+      await candidate.click();
+      await this.expectNameInput();
+    });
+
+    if (!healedButton) {
+      throw new SelectorNotFoundError("createFileAction", this.sel("createFileAction"));
     }
   }
 
@@ -1820,7 +2124,7 @@ class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSession {
 
     await target.locator.scrollIntoViewIfNeeded();
     await target.locator.click({ button: "right" });
-    await (await this.findVisible("renameAction", 4_000)).click();
+    await this.clickKey("renameAction", 4_000, () => this.expectNameInput());
 
     const renameInput = await this.findVisible("newFileInput", 4_000);
     await this.replaceInlineFileName(renameInput, nextLabel);
@@ -2119,6 +2423,32 @@ class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSession {
   private async saveEditor(): Promise<void> {
     const saveButton = await this.tryFindVisible("saveButton", 2_000);
 
+    if (!saveButton && (await this.readPersistenceStatus()) !== null) {
+      // Autosave UI (no Save button): success = the persistence indicator settles. Only if it stays unsaved is the
+      // Save control healed (post-condition: the indicator settles after the click).
+      await this.settleWrites(2_000);
+
+      if (await this.waitPersistenceIdle(10_000)) {
+        return;
+      }
+
+      const healed = await this.healKey("saveButton", async (candidate) => {
+        await candidate.click({ timeout: 5_000 });
+
+        if (!(await this.waitPersistenceIdle(10_000))) {
+          throw new UiChangedError("The editor still reports unsaved changes.");
+        }
+      });
+
+      if (!healed) {
+        this.context.logger.warn(
+          "the editor still reports unsaved changes and no Save control was found",
+        );
+      }
+
+      return;
+    }
+
     if (saveButton) {
       await this.dismissFloatingOverlays();
 
@@ -2135,6 +2465,10 @@ class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSession {
     // Autosave and explicit save both end in a mutating request; wait for it to
     // start (debounce window) and for the network to go quiet before the caller closes the browser.
     await this.settleWrites(2_000);
+
+    if ((await this.readPersistenceStatus()) !== null) {
+      await this.waitPersistenceIdle(10_000);
+    }
   }
 
   /**
@@ -2254,6 +2588,37 @@ class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSession {
     return editorRoot;
   }
 
+  /** Current text of the prompt box (textarea/input value, or the text of a contenteditable textbox). */
+  private async readPromptValue(box: Locator): Promise<string> {
+    return box.evaluate((node) => {
+      const el = node as HTMLElement & { value?: unknown };
+
+      return typeof el.value === "string" ? el.value : (el.innerText ?? el.textContent ?? "");
+    });
+  }
+
+  /** Types the prompt into a textarea OR a contenteditable textbox and verifies the composer retained it. */
+  private async fillPrompt(box: Locator, message: string): Promise<void> {
+    const norm = (value: string): string => value.replaceAll(/\s+/g, " ").trim();
+    const retained = async (): Promise<boolean> =>
+      norm(await this.readPromptValue(box).catch(() => "")) === norm(message);
+
+    await box.fill(message).catch(() => undefined);
+
+    if (!(await retained())) {
+      // Rich editors may ignore a programmatic fill; real insertText input events work.
+      await box.click().catch(() => undefined);
+      await box.press(SELECT_ALL).catch(() => undefined);
+      await this.handle.page.keyboard.insertText(message);
+    }
+
+    if (!(await this.pollUntil(retained, 2_000))) {
+      throw new FigmaAutomationError(
+        "The prompt text was not retained by the composer.",
+      );
+    }
+  }
+
   private async isPromptIdle(textarea: Locator): Promise<boolean> {
     if (await textarea.isDisabled().catch(() => true)) {
       return false;
@@ -2268,7 +2633,7 @@ class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSession {
 
   private async isAnyVisibleNow(key: SelectorKey): Promise<boolean> {
     const results = await Promise.all(
-      this.selectors[key].map((selector) =>
+      this.sel(key).map((selector) =>
         this.handle.page
           .locator(selector)
           .first()
@@ -2287,7 +2652,7 @@ class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSession {
     const locator = await this.tryFindVisible(key, timeoutMs);
 
     if (!locator) {
-      throw new SelectorNotFoundError(key, this.selectors[key]);
+      throw new SelectorNotFoundError(key, this.sel(key));
     }
 
     return locator;
@@ -2311,7 +2676,8 @@ class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSession {
   ): Promise<Locator | null> {
     this.throwIfAborted();
 
-    const locators = this.selectors[key].map((selector) =>
+    const overrides = this.learnedCount(key);
+    const locators = this.sel(key).map((selector) =>
       this.handle.page.locator(selector).first(),
     );
 
@@ -2336,6 +2702,8 @@ class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSession {
       return null;
     }
 
+    let chosen = winner;
+
     for (let index = 0; index < winner; index += 1) {
       const candidate = locators[index];
 
@@ -2345,11 +2713,35 @@ class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSession {
           ? (await candidate.count().catch(() => 0)) > 0
           : await candidate.isVisible().catch(() => false))
       ) {
-        return candidate;
+        chosen = index;
+        break;
       }
     }
 
-    return locators[winner] ?? null;
+    if (overrides > 0) {
+      if (chosen < overrides) {
+        this.context.heal?.store.recordHit(key);
+      } else {
+        await this.context.heal?.store.recordMiss(key);
+      }
+    }
+
+    return locators[chosen] ?? null;
+  }
+
+  /** Learned overrides first, then the built-in / configured selectors (deduplicated). */
+  private sel(key: SelectorKey): string[] {
+    const learned = this.context.heal?.store.get(key) ?? [];
+
+    if (learned.length === 0) {
+      return this.selectors[key];
+    }
+
+    return [...learned, ...this.selectors[key].filter((s) => !learned.includes(s))];
+  }
+
+  private learnedCount(key: SelectorKey): number {
+    return this.context.heal?.store.get(key).length ?? 0;
   }
 }
 
@@ -2393,6 +2785,9 @@ export class PlaywrightFigmaMakeAdapter implements FigmaMakeAdapter {
       throw new AutomationAbortedError();
     }
 
+    await this.context.heal?.store.load();
+    const localSelectors = await loadLocalSelectors(this.context.heal?.localSelectorsPath);
+
     const handle = await this.sessionManager.openHandle("figma-make", url, {
       headless:
         this.context.config.adapter.headlessAutomation ??
@@ -2403,6 +2798,7 @@ export class PlaywrightFigmaMakeAdapter implements FigmaMakeAdapter {
       handle,
       this.context,
       options.signal,
+      localSelectors,
     );
 
     try {

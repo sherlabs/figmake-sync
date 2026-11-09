@@ -8,7 +8,14 @@ files:
   - package.json
 asar: true
 npmRebuild: false
-publish: null
+# Provider config makes electron-builder write latest.yml / latest-mac.yml and
+# embed app-update.yml for electron-updater. Nothing is uploaded by the builder
+# (CI passes no --publish; the publish job uploads the files). Public repo, no credentials.
+publish:
+  - provider: github
+    owner: sherlabs
+    repo: figmake-sync
+    releaseType: release
 mac:
   category: public.app-category.developer-tools
   icon: icon.icns

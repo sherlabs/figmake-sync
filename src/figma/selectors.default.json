@@ -1,0 +1,265 @@
+{
+  "version": 1,
+  "keys": {
+    "workspaceRoot": {
+      "goal": "The Figma Make workspace shell (any view) that proves a project is loaded.",
+      "kind": "container",
+      "healable": false,
+      "selectors": [
+        "[data-testid=\"figmake-full-view\"]",
+        "[data-testid=\"make-workspace-toggle\"]",
+        "[data-radio-options-root=\"true\"]",
+        "[data-testid=\"code-display-toggle\"]",
+        "[data-testid=\"header-nav-toolbar\"]"
+      ]
+    },
+    "codeModeButton": {
+      "goal": "Find the control that switches Figma Make from the Browser (preview) view to the Files / Code view (the file explorer + code editor).",
+      "kind": "click",
+      "healable": true,
+      "expectTerms": ["files", "code"],
+      "selectors": [
+        "button[data-workspace-tab=\"true\"]:has-text(\"Files\")",
+        "nav button:has-text(\"Files\")",
+        "internal:role=button[name=/^files$/i]",
+        "[role=\"tab\"]:has-text(\"Files\")",
+        "[data-radio-options-root=\"true\"] input[value=\"code\"]",
+        "input[type=\"radio\"][value=\"code\"][data-tooltip=\"Code\"]",
+        "input[type=\"radio\"][value=\"code\"]",
+        "[data-testid=\"code-display-toggle\"] input[value=\"code\"]",
+        "[data-testid=\"code-display-toggle\"] label:has-text(\"Code\")",
+        "[data-testid=\"code-display-toggle\"]",
+        "[aria-label=\"Code\"]",
+        "button[aria-label=\"Code\"]",
+        "[role=\"radio\"][value=\"code\"]",
+        "[role=\"tab\"]:has-text(\"Code\")",
+        "label:has-text(\"Code\")",
+        "internal:role=radio[name=/^code( view)?$/i]",
+        "internal:role=tab[name=/^code( view)?$/i]",
+        "internal:role=button[name=/^code( view)?$/i]",
+        "internal:role=switch[name=/^code( view)?$/i]",
+        "[data-tooltip=\"Code\" i]",
+        "[data-tooltip=\"Code view\" i]",
+        "[title=\"Code\" i]",
+        "[aria-label=\"Code view\" i]",
+        "label[aria-label=\"Code\" i]",
+        "button:text-is(\"Code\")",
+        "label:text-is(\"Code\")",
+        "[role=\"radio\"][aria-label=\"Code\" i]"
+      ]
+    },
+    "codeEditorRoot": {
+      "goal": "The code editor surface (proves the Files / Code view is showing).",
+      "kind": "container",
+      "healable": false,
+      "selectors": [
+        "[data-testid=\"code-editor\"]",
+        ".cm-content[role=\"textbox\"]",
+        ".cm-editor",
+        ".monaco-editor"
+      ]
+    },
+    "fileTreeRoot": {
+      "goal": "The file explorer tree container.",
+      "kind": "container",
+      "healable": false,
+      "selectors": [
+        "div:has(button[data-testid=\"code-file-item\"])",
+        "div:has([data-folder-item=\"true\"])",
+        "div:has(h2:has-text(\"Files\"))",
+        "[data-testid=\"virtualized-file-tree-container\"]"
+      ]
+    },
+    "persistenceStatus": {
+      "goal": "The autosave status wrapper around the code editor (carries data-code-layer-persistence-status).",
+      "kind": "container",
+      "healable": false,
+      "selectors": ["[data-testid=\"code-layer-persistence-status\"]"]
+    },
+    "filesActionsMenuButton": {
+      "goal": "Find the button in the Files panel header that opens the file actions menu (Create file, Upload file, Download code...).",
+      "kind": "menutrigger",
+      "healable": true,
+      "expectTerms": ["actions", "file actions", "more", "menu"],
+      "selectors": [
+        "[data-testid=\"files-header-actions-menu-button\"]",
+        "button[aria-label=\"File actions\"]",
+        "button[data-tooltip=\"File actions\"]"
+      ]
+    },
+    "downloadButton": {
+      "goal": "Find a direct control that downloads the project code as a ZIP (older UI: a Download code button in the toolbar).",
+      "kind": "click",
+      "healable": true,
+      "expectTerms": ["download"],
+      "selectors": [
+        "button[aria-label=\"Download code\"]",
+        "button[data-tooltip=\"Download code\"]",
+        "[data-testid=\"download-code\"]"
+      ]
+    },
+    "downloadZipAction": {
+      "goal": "Find the menu item that downloads the project code as a ZIP (Download code), inside the already opened file actions menu.",
+      "kind": "menuitem",
+      "healable": true,
+      "expectTerms": ["download", "zip"],
+      "selectors": [
+        "[role=\"menu\"] [role=\"menuitem\"]:has-text(\"Download code\")",
+        "[role=\"menuitem\"]:has-text(\"Download code\")",
+        "[role=\"menuitem\"]:has-text(\"ZIP\")",
+        "text=/download.*zip/i"
+      ]
+    },
+    "uploadInput": {
+      "goal": "The hidden file input used to upload files into the project.",
+      "kind": "fileinput",
+      "healable": false,
+      "selectors": [
+        "input[type=\"file\"][data-testid=\"upload-file-input\"]",
+        "[data-testid=\"code-upload-input\"]",
+        "input[type=\"file\"][webkitdirectory]",
+        "[data-testid=\"upload-input\"]"
+      ]
+    },
+    "uploadButton": {
+      "goal": "Find the control (menu item 'Upload file' in the file actions menu, or an older toolbar button) that opens the file chooser to upload files.",
+      "kind": "click",
+      "healable": true,
+      "expectTerms": ["upload"],
+      "selectors": [
+        "[data-testid=\"upload-file-header-button\"]",
+        "[role=\"menuitem\"]:has-text(\"Upload file\")",
+        "button[aria-label=\"Upload files\"]",
+        "button:has-text(\"Upload files\")",
+        "[data-testid=\"code-upload-button\"]"
+      ]
+    },
+    "newFileButton": {
+      "goal": "Find a direct control that starts creating a new file in the explorer (older UI toolbar button).",
+      "kind": "click",
+      "healable": true,
+      "expectTerms": ["new file", "create file", "add file"],
+      "selectors": [
+        "button:has-text(\"New file\")",
+        "[data-testid=\"new-file\"]"
+      ]
+    },
+    "createFileAction": {
+      "goal": "Find the menu item that creates a new file (Create file), inside an already opened menu.",
+      "kind": "menuitem",
+      "healable": true,
+      "expectTerms": ["create file", "new file", "add file"],
+      "selectors": [
+        "[data-testid=\"create-file-header-button\"]",
+        "[role=\"menuitem\"]:has-text(\"Create file\")",
+        "button:has-text(\"Create file\")"
+      ]
+    },
+    "newFileInput": {
+      "goal": "The inline text input used to type a file name when creating or renaming a file.",
+      "kind": "input",
+      "healable": false,
+      "selectors": [
+        "input[data-testid=\"code-file-name-input\"]:focus",
+        "input[data-testid=\"code-file-name-input\"][value=\"new-file.tsx\"]",
+        "input[placeholder*=\"file\"]",
+        "[role=\"dialog\"] input[type=\"text\"]",
+        "[data-testid=\"new-file-input\"]",
+        "input[data-testid=\"code-file-name-input\"]"
+      ]
+    },
+    "saveButton": {
+      "goal": "Find the explicit Save button of the code editor (newer UI autosaves and has none).",
+      "kind": "click",
+      "healable": true,
+      "expectTerms": ["save"],
+      "selectors": [
+        "button[aria-label=\"Save\"]",
+        "button:text-is(\"Save\")",
+        "[data-testid=\"save-file\"]"
+      ]
+    },
+    "promptTextarea": {
+      "goal": "Find the AI prompt box of Figma Make (a textarea or a contenteditable textbox labelled 'Prompt for AI agent').",
+      "kind": "input",
+      "healable": true,
+      "expectTerms": ["prompt", "ask", "message", "chat"],
+      "selectors": [
+        "[data-testid=\"code-chat-chat-box\"]",
+        "[role=\"textbox\"][aria-label=\"Prompt for AI agent\"]",
+        "textarea[data-testid=\"code-chat-chat-box\"]",
+        "textarea[placeholder*=\"Ask for changes\"]",
+        "[data-testid=\"composer-input\"]"
+      ]
+    },
+    "promptSendButton": {
+      "goal": "Find the button that sends the AI prompt (Send).",
+      "kind": "click",
+      "healable": true,
+      "expectTerms": ["send", "submit"],
+      "selectors": [
+        "[data-testid=\"code-chat-send-button\"]",
+        "[data-testid=\"composer-submit\"]",
+        "button[aria-label^=\"Send\" i]",
+        "button:text-is(\"Send\")"
+      ]
+    },
+    "promptStopButton": {
+      "goal": "Find the Stop button that is only visible while the AI is generating (indicator: it is never clicked).",
+      "kind": "indicator",
+      "healable": true,
+      "expectTerms": ["stop", "cancel"],
+      "selectors": [
+        "[data-testid=\"code-chat-stop-button\"]",
+        "[data-testid=\"composer-stop\"]",
+        "button[aria-label^=\"Stop\" i]"
+      ]
+    },
+    "deleteAction": {
+      "goal": "Delete menu item (destructive: never auto-healed).",
+      "kind": "destructive",
+      "healable": false,
+      "selectors": [
+        "[role=\"menuitem\"]:has-text(\"Delete\")",
+        "button:has-text(\"Delete\")"
+      ]
+    },
+    "renameAction": {
+      "goal": "Find the menu item that renames a file or folder (Rename), inside an already opened context menu.",
+      "kind": "menuitem",
+      "healable": true,
+      "expectTerms": ["rename"],
+      "selectors": [
+        "[role=\"menuitem\"]:has-text(\"Rename\")",
+        "button:has-text(\"Rename\")"
+      ]
+    },
+    "deleteConfirmButton": {
+      "goal": "Delete confirmation button (destructive: never auto-healed).",
+      "kind": "destructive",
+      "healable": false,
+      "selectors": [
+        "[role=\"dialog\"] button:has-text(\"Delete\")",
+        "[role=\"alertdialog\"] button:has-text(\"Delete\")",
+        "[role=\"dialog\"] button:has-text(\"Confirm\")",
+        "[role=\"alertdialog\"] button:has-text(\"Confirm\")",
+        "[data-testid=\"confirm-delete\"]"
+      ]
+    },
+    "quickOpenInput": {
+      "goal": "Find the quick-open / go-to-file text input that appears after pressing the quick-open shortcut.",
+      "kind": "input",
+      "healable": true,
+      "expectTerms": ["open", "go to", "file", "search"],
+      "selectors": [
+        "input[placeholder*=\"Open\"]",
+        "input[placeholder*=\"Go to\"]",
+        "input[placeholder*=\"Search\"]",
+        "input[placeholder*=\"file\"]",
+        "[role=\"dialog\"] input[type=\"search\"]",
+        "[role=\"combobox\"][aria-label*=\"file\" i]",
+        "[role=\"dialog\"] input[type=\"text\"]"
+      ]
+    }
+  }
+}

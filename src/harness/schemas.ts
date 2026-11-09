@@ -26,6 +26,3 @@ export const runAgentInputSchema = z.object({
 export type RunAgentInput = z.infer<typeof runAgentInputSchema>;
 
 export const agentInputSchema = z.object({ agent: z.enum(["claude", "codex"]) });
-
-/** Clipboard writes from the renderer: plain text, capped. */
-export const clipboardTextSchema = z.string().max(4096);
