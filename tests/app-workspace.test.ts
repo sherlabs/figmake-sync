@@ -92,7 +92,7 @@ describe("validateWorkspace", () => {
   });
 
   it("rejects a folder that is not writable", async () => {
-    if (process.getuid?.() === 0) return;
+    if (process.platform === "win32" || process.getuid?.() === 0) return;
     const base = await tmp();
     const locked = path.join(base, "locked");
     await fs.ensureDir(locked);

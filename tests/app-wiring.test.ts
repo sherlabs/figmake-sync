@@ -1,3 +1,4 @@
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { createHealingAdapterFactory } from "../src/app/healing.js";
@@ -28,7 +29,7 @@ describe("self-heal wiring", () => {
     expect(given[0]?.store).toBe(heal.store);
     expect(given[0]?.healer).toBeTypeOf("function");
     expect(given[0]?.artifactsDir).toBe("/art");
-    expect(heal.localSelectorsPath).toBe("/ud/selectors.local.json");
+    expect(heal.localSelectorsPath).toBe(path.join("/ud", "selectors.local.json"));
   });
 
   it("without an agent, nothing is attempted (learned fixes still apply)", () => {
