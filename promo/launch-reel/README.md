@@ -8,7 +8,7 @@ Vertical 9:16 launch video for figmake-sync (1080x1920, 30 fps, about 30 s), bui
 Render again after editing the composition:
 
 ```sh
-npx hyperframes render
+npx hyperframes render -o figmake-sync-reel.mp4
 ```
 
 The screenshots are captures of the built renderer with a stubbed backend. Regenerate them whenever the UI changes.
