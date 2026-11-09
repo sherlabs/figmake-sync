@@ -89,6 +89,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Install test browser
+        run: npx playwright install chromium
+
       - name: Run tests
         run: npm test
 
