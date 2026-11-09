@@ -63,7 +63,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
+          - os: macos-15
             label: macOS
             script: dist:mac:signed
             artifact: figmake-sync-macos-installers
