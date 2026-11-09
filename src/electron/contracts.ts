@@ -6,8 +6,46 @@ import type {
   StatusResult,
   VerifyResult,
 } from "../core/service.js";
+import type {
+  AgentInfo,
+  ChangeSet,
+  DevStatus,
+  HarnessEvent,
+  HarnessSettings,
+  SetupResult,
+} from "../harness/types.js";
+import type { AgentId } from "../harness/agents/types.js";
 import type { BrowserInstallResult } from "../browser/install.js";
 import type { PullStrategy } from "../types/config.js";
+
+/**
+ * Agent harness IPC (implemented in src/harness, wired in main.ts). All inputs are zod-validated in main;
+ * rootDir must be a known, initialised project. The app never handles agent credentials: it only spawns
+ * the user's own signed-in `claude` / `codex` CLI.
+ *
+ * invoke channels (window.figmakeSyncDesktop.*):
+ *   figmake:harness:detect-agents     harnessDetectAgents()              -> AgentInfo[]
+ *   figmake:harness:get-settings      harnessGetSettings(rootDir)        -> HarnessSettings
+ *   figmake:harness:update-settings   harnessUpdateSettings(rootDir, {preferredAgent?, autoPush?}) -> HarnessSettings
+ *   figmake:harness:setup             harnessSetup(rootDir)              -> SetupResult (npm install if needed; cancel via cancelOperation; logs as "setup-log")
+ *   figmake:harness:dev-start         harnessStartDev(rootDir)           -> DevStatus (also stops dev servers of other projects)
+ *   figmake:harness:dev-stop          harnessStopDev(rootDir)            -> DevStatus
+ *   figmake:harness:dev-status        harnessDevStatus(rootDir)          -> DevStatus
+ *   figmake:harness:dev-open          harnessOpenDev(rootDir)            -> {opened, url?, error?}  (only http(s)://localhost|127.0.0.1)
+ *   figmake:harness:run-agent         harnessRunAgent({rootDir,prompt,agent?,newSession?}) -> {runId} (returns once the run started;
+ *                                       the final RunOutcome arrives as a "run-done" event; cancelOperation also cancels it)
+ *   figmake:harness:cancel-run        harnessCancelRun(rootDir)          -> {cancelled}
+ *   figmake:harness:changes           harnessChanges(rootDir)            -> ChangeSet (local vs last-pull baseline; same ignore rules as status)
+ * Manual push to Figma Make stays the existing pushProject().
+ *
+ * event channel "figmake:harness:event" (onHarnessEvent), payload HarnessEvent (discriminated by `kind`):
+ *   setup-log   {rootDir, line}
+ *   dev-status  {rootDir, status: DevStatus}      state: stopped|starting|running|crashed, url, logTail
+ *   dev-log     {rootDir, line}
+ *   run-phase   {rootDir, runId, phase: backup|agent|diff|push, message}
+ *   run-agent   {rootDir, runId, event: AgentEvent}  AgentEvent: session|text|tool|file_edit|result|error
+ *   run-done    {rootDir, runId, outcome: RunOutcome} outcome.push: skipped|pushed|aborted|failed
+ */
 
 export interface DesktopAppState {
   lastProjectRoot: string | null;
@@ -73,5 +111,25 @@ export interface FigmakeDesktopApi {
     reason?: string;
   }>;
   cancelOperation(): Promise<{ cancelled: boolean }>;
+  harnessDetectAgents(): Promise<AgentInfo[]>;
+  harnessGetSettings(rootDir: string): Promise<HarnessSettings>;
+  harnessUpdateSettings(
+    rootDir: string,
+    patch: { preferredAgent?: AgentId; autoPush?: boolean },
+  ): Promise<HarnessSettings>;
+  harnessSetup(rootDir: string): Promise<SetupResult>;
+  harnessStartDev(rootDir: string): Promise<DevStatus>;
+  harnessStopDev(rootDir: string): Promise<DevStatus>;
+  harnessDevStatus(rootDir: string): Promise<DevStatus>;
+  harnessOpenDev(rootDir: string): Promise<{ opened: boolean; url?: string; error?: string }>;
+  harnessRunAgent(input: {
+    rootDir: string;
+    prompt: string;
+    agent?: AgentId;
+    newSession?: boolean;
+  }): Promise<{ runId: string }>;
+  harnessCancelRun(rootDir: string): Promise<{ cancelled: boolean }>;
+  harnessChanges(rootDir: string): Promise<ChangeSet>;
+  onHarnessEvent(listener: (event: HarnessEvent) => void): () => void;
   onProgress(listener: (event: DesktopProgressEvent) => void): () => void;
 }

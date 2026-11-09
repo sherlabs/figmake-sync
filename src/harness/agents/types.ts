@@ -1,0 +1,64 @@
+/** Shared agent-adapter contract. Each CLI connector implements AgentAdapter. */
+
+export type AgentId = "claude" | "codex";
+
+/** Normalized event streamed from an agent run (CLI-specific formats are parsed by adapters). */
+export type AgentEvent =
+  | { type: "session"; sessionId: string }
+  | { type: "text"; text: string }
+  | { type: "tool"; name: string; summary: string }
+  | { type: "file_edit"; path: string; tool: string }
+  | {
+      type: "result";
+      success: boolean;
+      text: string;
+      sessionId?: string;
+      costUsd?: number;
+      durationMs?: number;
+    }
+  | { type: "error"; message: string };
+
+export interface AgentInvocationInput {
+  prompt: string;
+  /** Project directory; also used as the child's cwd. */
+  cwd: string;
+  /** When set, continue that session instead of starting a new one. */
+  sessionId?: string | undefined;
+}
+
+export interface AgentInvocation {
+  /** Binary name (resolved to an absolute path by the caller). */
+  command: string;
+  /** argv elements only. The prompt is NEVER interpolated into a shell string. */
+  args: string[];
+  /** Prompt text, written to the child's stdin. */
+  stdin: string;
+}
+
+export interface AgentAdapter {
+  readonly id: AgentId;
+  readonly displayName: string;
+  readonly binary: string;
+  /** Connector not verified against a real install. */
+  readonly experimental?: boolean;
+  /** Shown when the binary is missing. */
+  readonly installHint: string;
+  /** Shown when the binary exists but the user is not signed in. */
+  readonly loginHint: string;
+  versionArgs(): string[];
+  parseVersion(stdout: string): string | null;
+  /** Args for a sign-in status probe, or null when the CLI has none. */
+  authArgs(): string[] | null;
+  /** true = signed in, false = not signed in, null = unknown. */
+  parseAuth(stdout: string, exitCode: number | null): boolean | null;
+  buildInvocation(input: AgentInvocationInput): AgentInvocation;
+  /** Stateful per-run parser: one stdout line in, zero or more events out. */
+  createLineParser(): (line: string) => AgentEvent[];
+}
+
+/** Session ids are passed to CLIs as argv; accept only a conservative charset. */
+export const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$/;
+
+export function validSessionId(id: string | undefined | null): string | undefined {
+  return id && SESSION_ID_PATTERN.test(id) ? id : undefined;
+}

@@ -5,8 +5,10 @@ import type {
   DesktopProgressEvent,
   FigmakeDesktopApi,
 } from "./contracts.js";
+import type { HarnessEvent } from "../harness/types.js";
 
 const progressChannel = "figmake:progress";
+const harnessEventChannel = "figmake:harness:event";
 
 const api: FigmakeDesktopApi = {
   loadAppState: () => ipcRenderer.invoke("figmake:load-app-state"),
@@ -43,6 +45,27 @@ const api: FigmakeDesktopApi = {
   checkRuntimeDeps: () => ipcRenderer.invoke("figmake:check-runtime-deps"),
   checkAuthStatus: () => ipcRenderer.invoke("figmake:check-auth-status"),
   cancelOperation: () => ipcRenderer.invoke("figmake:cancel-operation"),
+  harnessDetectAgents: () => ipcRenderer.invoke("figmake:harness:detect-agents"),
+  harnessGetSettings: (rootDir) => ipcRenderer.invoke("figmake:harness:get-settings", { rootDir }),
+  harnessUpdateSettings: (rootDir, patch) =>
+    ipcRenderer.invoke("figmake:harness:update-settings", { rootDir, patch }),
+  harnessSetup: (rootDir) => ipcRenderer.invoke("figmake:harness:setup", { rootDir }),
+  harnessStartDev: (rootDir) => ipcRenderer.invoke("figmake:harness:dev-start", { rootDir }),
+  harnessStopDev: (rootDir) => ipcRenderer.invoke("figmake:harness:dev-stop", { rootDir }),
+  harnessDevStatus: (rootDir) => ipcRenderer.invoke("figmake:harness:dev-status", { rootDir }),
+  harnessOpenDev: (rootDir) => ipcRenderer.invoke("figmake:harness:dev-open", { rootDir }),
+  harnessRunAgent: (input) => ipcRenderer.invoke("figmake:harness:run-agent", input),
+  harnessCancelRun: (rootDir) => ipcRenderer.invoke("figmake:harness:cancel-run", { rootDir }),
+  harnessChanges: (rootDir) => ipcRenderer.invoke("figmake:harness:changes", { rootDir }),
+  onHarnessEvent: (listener) => {
+    const wrapped = (_event: IpcRendererEvent, payload: HarnessEvent) => {
+      listener(payload);
+    };
+    ipcRenderer.on(harnessEventChannel, wrapped);
+    return () => {
+      ipcRenderer.removeListener(harnessEventChannel, wrapped);
+    };
+  },
   onProgress: (listener) => {
     const wrappedListener = (
       _event: IpcRendererEvent,

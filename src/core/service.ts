@@ -98,6 +98,7 @@ export function runNpmInstall(
   cwd: string,
   signal?: AbortSignal,
   timeoutMs = NPM_INSTALL_TIMEOUT_MS,
+  onLog?: (line: string) => void,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const isWin = process.platform === "win32";
@@ -105,7 +106,7 @@ export function runNpmInstall(
     const child = spawn("npm", ["install", "--no-audit", "--no-fund"], {
       cwd,
       shell: isWin,
-      stdio: ["ignore", "ignore", "pipe"],
+      stdio: ["ignore", onLog ? "pipe" : "ignore", "pipe"],
       windowsHide: true,
     });
     let stderrTail = "";
@@ -145,8 +146,17 @@ export function runNpmInstall(
     };
 
     signal?.addEventListener("abort", onAbort, { once: true });
+    let logPending = "";
+    const emitLines = (chunk: Buffer): void => {
+      if (!onLog) return;
+      const parts = (logPending + chunk.toString()).split(/\r?\n/);
+      logPending = parts.pop() ?? "";
+      parts.filter((l) => l.trim()).forEach((l) => onLog(l));
+    };
+    child.stdout?.on("data", (chunk: Buffer) => emitLines(chunk));
     child.stderr?.on("data", (chunk: Buffer) => {
       stderrTail = (stderrTail + chunk.toString()).slice(-4096);
+      emitLines(chunk);
     });
     child.on("error", (error) => finish(error));
     child.on("close", (code) => {
@@ -389,7 +399,9 @@ export class FigmakeSyncService {
     });
   }
 
-  async push(options: SignalOptions = {}): Promise<PushResult> {
+  async push(
+    options: SignalOptions & { requireRemoteCheck?: boolean } = {},
+  ): Promise<PushResult> {
     const context = await this.loadProjectContext("push", options);
     const adapter = this.createAdapter(context);
     const baselineManifest = await context.store.readLastPullManifest();
@@ -496,6 +508,12 @@ export class FigmakeSyncService {
         }
       } catch (error) {
         throwIfAborted(signal);
+        if (options.requireRemoteCheck) {
+          // Unattended callers fail closed: nothing has been written yet.
+          throw new Error(
+            "Could not check Figma Make for newer changes, so nothing was pushed. Try again, or push manually.",
+          );
+        }
         context.logger.warn(
           { err: error },
           "remote divergence check could not run; pushing without it",

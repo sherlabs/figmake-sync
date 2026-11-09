@@ -6,313 +6,278 @@
 <title>figmake-sync launch reel</title>
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
 <style>
-  :root{--ink:#14171c;--paper:#ffffff;--dpaper:#17191d;--acc:#d9641a;--soft:#eceef2}
+  :root{--ink:#14171c;--paper:#f5f5f3;--acc:#d9641a;--blue:#728efb}
   *{box-sizing:border-box}
   body{margin:0;background:#14171c;font-family:Inter,system-ui,sans-serif}
   #root{position:relative;width:1080px;height:1920px;overflow:hidden;background:var(--ink)}
   .scene{position:absolute;inset:0;overflow:hidden}
   .ink{background:var(--ink);color:#f3f4f6}
-  .paper{background:#f5f5f3;color:var(--ink)}
+  .paper{background:var(--paper);color:var(--ink)}
   .orange{background:var(--acc);color:var(--ink)}
   .grid{position:absolute;inset:0;opacity:.07;background-image:linear-gradient(#fff 2px,transparent 2px),linear-gradient(90deg,#fff 2px,transparent 2px);background-size:90px 90px}
-  .paper .grid{background-image:linear-gradient(#14171c 2px,transparent 2px),linear-gradient(90deg,#14171c 2px,transparent 2px);opacity:.05}
-  .orange .grid{background-image:linear-gradient(#14171c 2px,transparent 2px),linear-gradient(90deg,#14171c 2px,transparent 2px);opacity:.08}
-  .cap{position:absolute;left:70px;top:200px;width:860px;font-weight:800;font-size:116px;line-height:1.02;letter-spacing:-.035em}
-  .cap .w{display:inline-block;margin-right:.22em}
-  .cap .ln{display:block}
+  .paper .grid,.orange .grid{background-image:linear-gradient(#14171c 2px,transparent 2px),linear-gradient(90deg,#14171c 2px,transparent 2px);opacity:.06}
+  .cap{position:absolute;left:64px;top:150px;width:960px;font-weight:800;font-size:108px;line-height:1.04;letter-spacing:-.038em}
+  .cap .ln{display:block;white-space:nowrap}
+  .cap .w{display:inline-block;margin-right:.2em}
   .hl{color:var(--acc)}
   .orange .hl{color:#fff}
-  .sub{position:absolute;left:70px;width:860px;font-weight:600;font-size:46px;letter-spacing:-.01em;opacity:.78}
-  .kick{position:absolute;left:70px;top:140px;font:600 30px/1 "JetBrains Mono",ui-monospace,monospace;letter-spacing:.04em;color:var(--acc);display:flex;align-items:center;gap:14px}
-  .kick i{display:block;width:16px;height:16px;border-radius:50%;background:var(--acc)}
-  .win{position:absolute;left:0;top:0;width:1280px;height:864px;transform-origin:0 0;border-radius:18px;overflow:hidden;box-shadow:0 60px 140px rgba(0,0,0,.45),0 0 0 2px rgba(120,125,135,.35)}
-  .win .tb{position:absolute;left:0;top:0;width:1280px;height:44px;display:flex;align-items:center;gap:10px;padding-left:18px;font:600 15px Inter,sans-serif}
+  .kick{position:absolute;left:64px;top:92px;font:600 30px/1 "JetBrains Mono",ui-monospace,monospace;letter-spacing:.04em;color:var(--acc);display:flex;align-items:center;gap:14px}
+  .kick i{display:block;width:16px;height:16px;border-radius:50%;background:currentColor}
+  .orange .kick{color:var(--ink)}
+  .pills{position:absolute;left:64px;display:flex;gap:16px}
+  .pill{font-weight:700;font-size:40px;padding:16px 32px;border-radius:999px;background:rgba(255,255,255,.1);border:2px solid rgba(255,255,255,.3);white-space:nowrap}
+  .paper .pill{background:#fff;border-color:#d4d6db}
+  .stage{position:absolute;left:40px;top:660px;width:1000px;height:1170px;overflow:hidden;border-radius:34px;box-shadow:0 40px 120px rgba(0,0,0,.4),0 0 0 3px rgba(130,135,145,.4);background:#222}
+  .win{position:absolute;left:0;top:0;width:1280px;transform-origin:0 0}
+  .win .tb{position:absolute;left:0;top:0;width:1280px;height:44px;display:flex;align-items:center;gap:10px;padding-left:18px;font:600 15px Inter,sans-serif;z-index:3}
   .win .tb b{width:14px;height:14px;border-radius:50%;display:block}
-  .win .tb span{position:absolute;left:0;right:0;text-align:center;opacity:.6}
-  .win.l .tb{background:#ececee;color:#333}
-  .win.d .tb{background:#2a2c31;color:#ddd}
-  .win img{position:absolute;left:0;top:44px;width:1280px;height:820px;display:block}
-  .ring{position:absolute;border:5px solid var(--acc);border-radius:14px;opacity:0;box-shadow:0 0 0 8px rgba(217,100,26,.25)}
-  .cur{position:absolute;width:44px;height:44px;left:0;top:0;opacity:0;filter:drop-shadow(0 4px 6px rgba(0,0,0,.4))}
-  .rip{position:absolute;width:60px;height:60px;border-radius:50%;border:5px solid var(--acc);opacity:0;margin:-30px 0 0 -30px}
-  .chip{position:absolute;font:600 36px/1 "JetBrains Mono",ui-monospace,monospace;padding:26px 34px;border-radius:20px;background:#fff;color:var(--ink);box-shadow:0 18px 50px rgba(0,0,0,.18);border:2px solid #dcdee3;white-space:nowrap}
-  .pill{display:inline-block;font-weight:700;font-size:40px;padding:18px 34px;border-radius:999px;background:rgba(255,255,255,.1);border:2px solid rgba(255,255,255,.28);margin-right:14px}
+  .win.l .tb{background:#ececee}
+  .win.d .tb{background:#2a2c31}
+  .win img.shot{position:absolute;left:0;top:44px;width:1280px;display:block}
+  .ring{position:absolute;border:5px solid var(--acc);border-radius:12px;opacity:0;box-shadow:0 0 0 8px rgba(217,100,26,.25);z-index:4}
+  .orange .ring{border-color:#14171c;box-shadow:0 0 0 8px rgba(20,23,28,.2)}
+  .cur{position:absolute;width:46px;height:46px;left:0;top:0;opacity:0;z-index:5;filter:drop-shadow(0 4px 6px rgba(0,0,0,.4))}
+  .rip{position:absolute;width:64px;height:64px;border-radius:50%;border:5px solid var(--acc);opacity:0;margin:-32px 0 0 -32px;z-index:5}
+  .orange .rip{border-color:#14171c}
   #wipe{position:absolute;left:0;top:0;width:1080px;height:1920px;background:var(--acc);transform:translateX(-1100px);z-index:50}
-  #wipe2{position:absolute;left:0;top:0;width:1080px;height:1920px;background:var(--ink);transform:translateX(-1100px);z-index:49}
+  #wipe2{position:absolute;left:0;top:0;width:1080px;height:1920px;background:#fff;transform:translateX(-1100px);z-index:49}
+  .task{position:absolute;left:64px;width:880px;height:130px;border-radius:26px;background:#1f242c;border:2px solid #323945;display:flex;align-items:center;padding:0 36px;font-weight:700;font-size:44px}
+  .coin{position:absolute;right:-60px;top:15px;width:100px;height:100px;border-radius:50%;background:var(--acc);box-shadow:0 0 0 10px rgba(217,100,26,.3);display:flex;align-items:center;justify-content:center}
+  .coin i{display:block;width:44px;height:44px;border-radius:50%;border:8px solid rgba(20,23,28,.55)}
+  .codecard{position:absolute;left:64px;top:760px;width:952px;height:520px;border-radius:30px;background:#fff;border:2px solid #d4d6db;box-shadow:0 30px 80px rgba(0,0,0,.12)}
+  .codecard .bar{position:absolute;height:26px;border-radius:13px;background:#d9dce2}
+  .codecard .bar.o{background:var(--acc)}
+  .tag{position:absolute;left:36px;top:30px;font:600 28px "JetBrains Mono",ui-monospace,monospace;color:#6b717c}
+  .big{position:absolute;font-weight:800;letter-spacing:-.035em}
 </style>
 </head>
 <body>
-<div id="root" data-composition-id="main" data-start="0" data-width="1080" data-height="1920" data-duration="29.6">
+<div id="root" data-composition-id="main" data-start="0" data-width="1080" data-height="1920" data-duration="28.6">
 
-<!-- S1 hook -->
-<section id="s1" class="scene ink clip" data-start="0" data-duration="2.3">
+<!-- S1 hook 0-2.8 -->
+<section id="s1" class="scene ink clip" data-start="0" data-duration="2.8">
   <div class="grid"></div>
-  <div class="cap"><span class="ln"><span class="w">Your</span><span class="w">Figma</span><span class="w">Make</span><span class="w">project.</span></span><span class="ln" id="s1b"><span class="w">On</span><span class="w">your</span><span class="w">laptop.</span></span><span class="ln hl" id="s1c"><span class="w">In</span><span class="w">sync.</span></span></div>
-  <div class="win d" id="w1"><div class="tb"><b style="background:#ff5f57"></b><b style="background:#febc2e"></b><b style="background:#28c840"></b></div><img src="assets/07-sync-local-changes-dark.png"/>
-    <div class="ring" id="r1" style="left:742px;top:48px;width:56px;height:46px"></div></div>
+  <div class="cap" style="top:140px;font-size:112px"><span class="ln"><span class="w">Figma Make</span></span><span class="ln"><span class="w">wants</span><span class="w hl">tokens</span></span><span class="ln"><span class="w">for every edit.</span></span></div>
+  <div class="task" id="t1" style="top:780px;height:150px"><span>Change the button color</span><div class="coin" style="top:25px" id="k1"><i></i></div></div>
+  <div class="task" id="t2" style="top:990px;height:150px"><span>Fix the cart total</span><div class="coin" style="top:25px" id="k2"><i></i></div></div>
+  <div class="task" id="t3" style="top:1200px;height:150px"><span>Rename a label</span><div class="coin" style="top:25px" id="k3"><i></i></div></div>
+<div class="task" id="t4" style="top:1410px;height:150px"><span>Add a loading state</span><div class="coin" style="top:25px" id="k4"><i></i></div></div>
 </section>
 
-<!-- S2 pull -->
-<section id="s2" class="scene paper clip" data-start="2.3" data-duration="2.3">
+<!-- S2 problem 2.8-6.0 -->
+<section id="s2" class="scene paper clip" data-start="2.8" data-duration="3.2">
   <div class="grid"></div>
-  <div class="cap"><span class="ln"><span class="w">pull</span><span class="w">from</span></span><span class="ln"><span class="w hl">Figma</span><span class="w hl">Make.</span></span></div>
-  <div class="win l" id="w2"><div class="tb"><b style="background:#ff5f57"></b><b style="background:#febc2e"></b><b style="background:#28c840"></b></div><img src="assets/08-pull-running-progress-light.png"/>
-    <div style="position:absolute;left:400px;top:112px;width:480px;height:10px;background:#fff"></div>
-    <div id="pbtrack" style="position:absolute;left:400px;top:113px;width:480px;height:8px;border-radius:4px;background:#e3e5e9"></div>
-    <div id="pbfill" style="position:absolute;left:400px;top:113px;width:432px;height:8px;border-radius:4px;background:#0a66cc;transform-origin:0 0"></div>
-    <div style="position:absolute;left:846px;top:68px;width:38px;height:24px;background:#fff"></div>
-    <div id="pct" style="position:absolute;left:830px;top:70px;width:54px;text-align:right;font:500 14px Inter,sans-serif;color:#444">90%</div>
-    <div class="ring" id="r2" style="left:392px;top:100px;width:496px;height:34px;border-radius:10px"></div></div>
-</section>
-
-<!-- S3 edit anywhere -->
-<section id="s3" class="scene ink clip" data-start="4.6" data-duration="2.6">
-  <div class="grid"></div>
-  <div class="cap"><span class="ln"><span class="w">edit</span><span class="w">it</span></span><span class="ln"><span class="w hl">anywhere.</span></span></div>
-  <div id="chips" style="position:absolute;left:70px;top:500px;width:880px"><span class="pill">VS Code</span><span class="pill">Cursor</span><span class="pill">Claude Code</span></div>
-  <div class="win d" id="w3"><div class="tb"><b style="background:#ff5f57"></b><b style="background:#febc2e"></b><b style="background:#28c840"></b></div><img src="assets/29-command-palette-dark.png"/>
-    <div class="ring" id="r3" style="left:476px;top:430px;width:558px;height:76px"></div>
-    <svg class="cur" id="c3" viewBox="0 0 24 24"><path d="M3 2l7 19 3-8 8-3z" fill="#fff" stroke="#111" stroke-width="1.6" stroke-linejoin="round"/></svg></div>
-</section>
-
-<!-- S4 review -->
-<section id="s4" class="scene orange clip" data-start="7.2" data-duration="2.8">
-  <div class="grid"></div>
-  <div class="cap"><span class="ln"><span class="w">see</span><span class="w">exactly</span></span><span class="ln"><span class="w hl">what</span><span class="w hl">changed.</span></span></div>
-  <div class="win l" id="w4"><div class="tb"><b style="background:#ff5f57"></b><b style="background:#febc2e"></b><b style="background:#28c840"></b></div>
-    <img src="assets/07-sync-local-changes-light.png"/><img id="w4b" src="assets/17-changes-tab-diff-light.png" style="opacity:0"/>
-    <div class="ring" id="r4" style="left:693px;top:52px;width:100px;height:38px"></div>
-    <div class="ring" id="r4b" style="left:496px;top:166px;width:784px;height:84px;border-radius:6px"></div>
-    <svg class="cur" id="c4" viewBox="0 0 24 24"><path d="M3 2l7 19 3-8 8-3z" fill="#fff" stroke="#111" stroke-width="1.6" stroke-linejoin="round"/></svg>
-    <div class="rip" id="p4"></div></div>
-</section>
-
-<!-- S5 push -->
-<section id="s5" class="scene ink clip" data-start="10.0" data-duration="2.6">
-  <div class="grid"></div>
-  <div class="cap"><span class="ln"><span class="w">push</span><span class="w">it</span></span><span class="ln"><span class="w hl">back.</span></span></div>
-  <div class="win l" id="w5"><div class="tb"><b style="background:#ff5f57"></b><b style="background:#febc2e"></b><b style="background:#28c840"></b></div><img src="assets/17-changes-tab-diff-light.png"/>
-    <div class="ring" id="r5" style="left:1154px;top:48px;width:118px;height:42px"></div>
-    <svg class="cur" id="c5" viewBox="0 0 24 24"><path d="M3 2l7 19 3-8 8-3z" fill="#fff" stroke="#111" stroke-width="1.6" stroke-linejoin="round"/></svg>
-    <div class="rip" id="p5"></div></div>
-</section>
-
-<!-- S6 no duplicates -->
-<section id="s6" class="scene paper clip" data-start="12.6" data-duration="2.2">
-  <div class="grid"></div>
-  <div class="kick"><i></i>new in this release</div>
-  <div class="cap" style="top:220px"><span class="ln"><span class="w">no</span><span class="w hl">duplicate</span></span><span class="ln"><span class="w">re-uploads.</span></span></div>
-  <div id="stack" style="position:absolute;left:0;top:0;width:1080px;height:1920px">
-    <div class="chip g1" data-layout-ignore style="left:130px;top:880px">src/pages/Cart.tsx</div>
-    <div class="chip g2" data-layout-ignore style="left:130px;top:880px">src/pages/Cart.tsx</div>
-    <div class="chip main" style="left:130px;top:880px;border-color:var(--acc)">src/pages/Cart.tsx</div>
-    <svg id="ck" viewBox="0 0 100 100" style="position:absolute;left:700px;top:855px;width:130px;height:130px"><circle cx="50" cy="50" r="46" fill="#d9641a"/><path d="M28 52l16 16 30-34" stroke="#fff" stroke-width="10" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  <div class="cap"><span class="ln"><span class="w">The code</span></span><span class="ln"><span class="w">is</span><span class="w hl">right there.</span></span></div>
+  <div class="codecard" id="cc">
+    <div class="tag">src/pages/Cart.tsx</div>
+    <div class="bar" style="left:36px;top:110px;width:380px"></div>
+    <div class="bar" style="left:76px;top:160px;width:560px"></div>
+    <div class="bar o" style="left:76px;top:210px;width:300px"></div>
+    <div class="bar" style="left:76px;top:260px;width:640px"></div>
+    <div class="bar" style="left:116px;top:310px;width:420px"></div>
+    <div class="bar" style="left:76px;top:360px;width:500px"></div>
+    <div class="bar" style="left:36px;top:410px;width:220px"></div>
+  </div>
+  <div class="pills" style="top:1420px;flex-direction:column;align-items:flex-start;gap:20px">
+    <span class="pill" id="p2a" style="font-size:50px;padding:22px 40px">Edit it by hand</span>
+    <span class="pill" id="p2b" style="font-size:50px;padding:22px 40px;background:var(--ink);color:#fff;border-color:var(--ink)">or with Figma's AI credits</span>
   </div>
 </section>
 
-<!-- S7 no silent overwrites -->
-<section id="s7" class="scene ink clip" data-start="14.8" data-duration="2.8">
+<!-- S3 pull 6.0-8.8 -->
+<section id="s3" class="scene orange clip" data-start="6.0" data-duration="2.8">
   <div class="grid"></div>
-  <div class="kick"><i></i>new in this release</div>
-  <div class="cap" style="top:220px"><span class="ln"><span class="w">no</span><span class="w hl">silent</span></span><span class="ln"><span class="w">overwrites.</span></span></div>
-  <div class="sub" style="top:560px">of Figma-side edits.</div>
-  <div class="win d" id="w7"><div class="tb"><b style="background:#ff5f57"></b><b style="background:#febc2e"></b><b style="background:#28c840"></b></div><img src="assets/10-pull-conflicts-dark.png"/>
-    <div class="ring" id="r7" style="left:262px;top:268px;width:858px;height:96px"></div></div>
+  <div class="kick"><i></i>figmake-sync</div>
+  <div class="cap"><span class="ln"><span class="w">Pull it to a</span></span><span class="ln"><span class="w hl">local folder.</span></span></div>
+  <div class="stage" id="st3"><div class="win l" id="w3" data-h="820">
+    <div class="tb"><b style="background:#ff5f57"></b><b style="background:#febc2e"></b><b style="background:#28c840"></b></div>
+    <img class="shot" src="assets/08-pull-running-progress-light.png"/>
+    <div class="ring" id="r3" style="left:388px;top:104px;width:504px;height:34px"></div>
+  </div></div>
 </section>
 
-<!-- S8 backups -->
-<section id="s8" class="scene paper clip" data-start="17.6" data-duration="2.4">
+<!-- S4 subscription 8.8-12.2 -->
+<section id="s4" class="scene ink clip" data-start="8.8" data-duration="3.4">
   <div class="grid"></div>
-  <div class="kick"><i></i>new in this release</div>
-  <div class="cap" style="top:220px"><span class="ln"><span class="w">safer</span><span class="w">pulls.</span></span><span class="ln"><span class="w hl">backed</span><span class="w hl">up</span><span class="w hl">first.</span></span></div>
-  <div class="win l" id="w8"><div class="tb"><b style="background:#ff5f57"></b><b style="background:#febc2e"></b><b style="background:#28c840"></b></div><img src="assets/10-pull-conflicts-light.png"/>
-    <div class="ring" id="r8" style="left:306px;top:150px;width:508px;height:46px;border-radius:10px"></div>
-    <div class="ring" id="r8b" style="left:262px;top:342px;width:180px;height:42px;border-radius:10px"></div></div>
+  <div class="cap" style="font-size:104px"><span class="ln"><span class="w">Use</span><span class="w hl">YOUR</span><span class="w">Claude</span></span><span class="ln"><span class="w">or ChatGPT</span></span><span class="ln"><span class="w">subscription.</span></span></div>
+  <div class="pills" id="pl4" style="top:615px"><span class="pill">Claude Code</span><span class="pill">Codex</span></div>
+  <div class="stage" id="st4" style="top:760px;height:1070px"><div class="win d" id="w4" data-h="1500">
+    <div class="tb"><b style="background:#ff5f57"></b><b style="background:#febc2e"></b><b style="background:#28c840"></b></div>
+    <img class="shot" src="assets/a08-agent-streaming-dark.png"/>
+    <div class="ring" id="r4" style="left:262px;top:136px;width:482px;height:56px"></div>
+  </div></div>
 </section>
 
-<!-- S9 cancel -->
-<section id="s9" class="scene orange clip" data-start="20.0" data-duration="2.4">
+<!-- S5 install + run 12.2-15.4 -->
+<section id="s5" class="scene paper clip" data-start="12.2" data-duration="3.2">
   <div class="grid"></div>
-  <div class="kick" style="color:var(--ink)"><i style="background:var(--ink)"></i>new in this release</div>
-  <div class="cap" style="top:220px"><span class="ln"><span class="w">a</span><span class="w hl">cancel</span></span><span class="ln"><span class="w">button.</span></span></div>
-  <div class="win d" id="w9"><div class="tb"><b style="background:#ff5f57"></b><b style="background:#febc2e"></b><b style="background:#28c840"></b></div>
-    <img src="assets/08-pull-running-progress-dark.png"/><img id="w9b" src="assets/16-run-stopped-dark.png" style="opacity:0"/>
-    <div class="ring" id="r9" style="left:802px;top:296px;width:84px;height:46px;border-radius:10px"></div>
-    <svg class="cur" id="c9" viewBox="0 0 24 24"><path d="M3 2l7 19 3-8 8-3z" fill="#fff" stroke="#111" stroke-width="1.6" stroke-linejoin="round"/></svg>
-    <div class="rip" id="p9"></div></div>
+  <div class="cap"><span class="ln"><span class="w">Install it.</span></span><span class="ln"><span class="w hl">Run it. Locally.</span></span></div>
+  <div class="stage" id="st5"><div class="win l" id="w5" data-h="1500">
+    <div class="tb"><b style="background:#ff5f57"></b><b style="background:#febc2e"></b><b style="background:#28c840"></b></div>
+    <img class="shot" src="assets/a04-setup-running-light.png"/>
+    <img class="shot" id="w5b" src="assets/a05-dev-running-url-light.png" style="opacity:0"/>
+    <div class="ring" id="r5" style="left:284px;top:514px;width:830px;height:104px"></div>
+    <div class="ring" id="r5b" style="left:286px;top:566px;width:200px;height:40px;border-radius:20px"></div>
+  </div></div>
 </section>
 
-<!-- S10 new UI -->
-<section id="s10" class="scene ink clip" data-start="22.4" data-duration="2.4">
+<!-- S6 prompt 15.4-19.0 -->
+<section id="s6" class="scene ink clip" data-start="15.4" data-duration="3.6">
   <div class="grid"></div>
-  <div class="kick"><i></i>new in this release</div>
-  <div class="cap" style="top:220px;font-size:108px"><span class="ln"><span class="w">new</span><span class="w hl">native</span></span><span class="ln"><span class="w hl">macOS-style</span></span><span class="ln"><span class="w">UI.</span></span></div>
-  <div class="win d" id="w10b"><div class="tb"><b style="background:#ff5f57"></b><b style="background:#febc2e"></b><b style="background:#28c840"></b></div><img src="assets/17b-changes-table-inspector-dark.png"/></div>
-  <div class="win l" id="w10"><div class="tb"><b style="background:#ff5f57"></b><b style="background:#febc2e"></b><b style="background:#28c840"></b></div><img src="assets/17b-changes-table-inspector-light.png"/></div>
+  <div class="cap"><span class="ln"><span class="w">Just ask for</span></span><span class="ln"><span class="w hl">the change.</span></span></div>
+  <div class="pills" style="top:520px"><span class="pill" style="font-size:36px">Your agent edits the files</span></div>
+  <div class="stage" id="st6"><div class="win d" id="w6" data-h="1500">
+    <div class="tb"><b style="background:#ff5f57"></b><b style="background:#febc2e"></b><b style="background:#28c840"></b></div>
+    <img class="shot" src="assets/a08-agent-streaming-dark.png"/>
+    <div class="ring" id="r6" style="left:668px;top:660px;width:448px;height:68px"></div>
+    <div class="ring" id="r6b" style="left:262px;top:904px;width:268px;height:70px"></div>
+  </div></div>
 </section>
 
-<!-- S11 logo -->
-<section id="s11" class="scene paper clip" data-start="24.8" data-duration="1.6">
+<!-- S7 diff 19.0-21.6 -->
+<section id="s7" class="scene paper clip" data-start="19.0" data-duration="2.6">
   <div class="grid"></div>
-  <svg id="mk" viewBox="0 0 640 640" style="position:absolute;left:270px;top:360px;width:540px;height:540px;overflow:visible">
-    <path class="t" d="M64 64H256" stroke="#14171c" stroke-width="128" stroke-linecap="round" fill="none"/>
-    <path class="t" d="M64 576H256" stroke="#14171c" stroke-width="128" stroke-linecap="round" fill="none"/>
-    <path class="t r" d="M384 192H576" stroke="#14171c" stroke-width="128" stroke-linecap="round" fill="none"/>
-    <path class="t r" d="M384 448H576" stroke="#14171c" stroke-width="128" stroke-linecap="round" fill="none"/>
-    <path id="acct" d="M64 320H256" stroke="#d9641a" stroke-width="128" stroke-linecap="round" fill="none"/>
-  </svg>
-  <div class="cap" style="top:1030px;text-align:center;left:70px"><span class="ln"><span class="w">and</span><span class="w">a</span><span class="w hl">new</span><span class="w">logo.</span></span></div>
+  <div class="cap"><span class="ln"><span class="w">See what it</span></span><span class="ln"><span class="w hl">changed.</span></span></div>
+  <div class="stage" id="st7"><div class="win l" id="w7" data-h="1500">
+    <div class="tb"><b style="background:#ff5f57"></b><b style="background:#febc2e"></b><b style="background:#28c840"></b></div>
+    <img class="shot" src="assets/a09-run-finished-changes-light.png"/>
+    <div class="ring" id="r7" style="left:258px;top:1250px;width:872px;height:116px"></div>
+  </div></div>
 </section>
 
-<!-- S12 CTA -->
-<section id="s12" class="scene ink clip" data-start="26.4" data-duration="3.2">
+<!-- S8 push 21.6-24.6 -->
+<section id="s8" class="scene orange clip" data-start="21.6" data-duration="3.0">
   <div class="grid"></div>
-  <img id="m12" src="assets/logo-mark-dark.svg" style="position:absolute;left:400px;top:330px;width:280px;height:280px"/>
-  <img id="wm12" src="assets/logo-wordmark-dark.svg" style="position:absolute;left:120px;top:660px;width:840px"/>
-  <div id="free" style="position:absolute;left:0;width:1080px;top:940px;text-align:center;font-weight:800;font-size:68px;letter-spacing:-.03em;color:#f3f4f6">Free for Mac &amp; Windows</div>
-  <div id="url" style="position:absolute;left:0;width:1080px;top:1100px;text-align:center"><span style="display:inline-block;font:700 54px 'JetBrains Mono',ui-monospace,monospace;color:var(--ink);background:var(--acc);padding:22px 44px;border-radius:999px">sherlabs.com</span></div>
+  <div class="cap"><span class="ln"><span class="w">Push it back</span></span><span class="ln"><span class="w hl">to Figma Make.</span></span></div>
+  <div class="pills" style="top:520px"><span class="pill" style="font-size:36px;background:rgba(20,23,28,.1);border-color:rgba(20,23,28,.35)">Nothing is sent until you push</span></div>
+  <div class="stage" id="st8"><div class="win l" id="w8" data-h="1500">
+    <div class="tb"><b style="background:#ff5f57"></b><b style="background:#febc2e"></b><b style="background:#28c840"></b></div>
+    <img class="shot" src="assets/a09-run-finished-changes-light.png"/>
+    <div class="ring" id="r8" style="left:1022px;top:1178px;width:94px;height:40px;border-radius:10px"></div>
+    <svg class="cur" id="c8" viewBox="0 0 24 24"><path d="M3 2l7 19 3-8 8-3z" fill="#fff" stroke="#111" stroke-width="1.6" stroke-linejoin="round"/></svg>
+    <div class="rip" id="p8" style="left:1070px;top:1198px"></div>
+  </div></div>
+</section>
+
+<!-- S9 end card 24.6-28.6 -->
+<section id="s9" class="scene ink clip" data-start="24.6" data-duration="4.0">
+  <div class="grid"></div>
+  <img id="ic9" src="assets/figmake-sync-icon.png" style="position:absolute;left:380px;top:250px;width:320px;height:320px;border-radius:72px"/>
+  <div id="n9" class="big" style="left:0;width:1080px;top:620px;text-align:center;font-size:128px;color:#f3f4f6">figmake-sync</div>
+  <div id="f9" class="big" style="left:0;width:1080px;top:800px;text-align:center;font-size:72px;line-height:1.1;color:#f3f4f6">Free for <span class="hl">Mac</span> and <span class="hl">Windows.</span></div>
+  <div id="u9" style="position:absolute;left:0;width:1080px;top:1010px;text-align:center"><span style="display:inline-block;font:700 62px 'JetBrains Mono',ui-monospace,monospace;color:var(--ink);background:var(--acc);padding:24px 54px;border-radius:999px">sherlabs.com</span></div>
+  <div id="s9b" style="position:absolute;left:0;width:1080px;top:1300px;display:flex;flex-direction:column;align-items:center;gap:30px">
+    <div style="font:600 28px 'JetBrains Mono',ui-monospace,monospace;letter-spacing:.08em;color:#9aa1ad">BUILT BY</div>
+    <div style="display:flex;align-items:center;gap:28px"><img src="assets/sherlabs-icon-dark.svg" style="width:120px;height:120px;border-radius:28px;box-shadow:0 0 0 2px #3a414d"/><img src="assets/sherlabs-wordmark-light.svg" style="height:84px;width:auto"/></div>
+  </div>
 </section>
 
 <div id="wipe"></div>
 <div id="wipe2"></div>
-<audio id="sfx" src="assets/sfx.wav" data-start="0" data-duration="29.6" data-volume="0.5"></audio>
+<audio id="sfx" src="assets/sfx.wav" data-start="0" data-duration="28.6" data-volume="0.5"></audio>
 </div>
 
 <script>
 const tl = gsap.timeline({ paused: true });
-const cam = (s, fx, fy, tx, ty) => ({ x: tx - fx*s, y: ty - (fy+44)*s, scale: s });
-const E = { force3D:false };
-const words = (sel, t) => tl.from(sel+" .w", { y:90, opacity:0, duration:.5, stagger:.07, ease:"back.out(1.7)" }, t+0.05);
-const ring = (id, t, hold=1) => {
-  tl.fromTo(id, { opacity:0, scale:.8 }, { opacity:1, scale:1, duration:.3, ease:"back.out(2)" }, t);
-  tl.to(id, { scale:1.07, duration:.3, yoyo:true, repeat:3, ease:"sine.inOut" }, t+.3);
+const SW = 1000;
+// window camera: put source point (cx,cy) of the screenshot at the stage centre
+const at = (id, s, cx, cy) => {
+  const el = document.querySelector(id); const H = +el.dataset.h; const SH = el.parentNode.offsetHeight;
+  let x = SW/2 - cx*s, y = SH/2 - (cy+44)*s;
+  x = Math.min(0, Math.max(SW - 1280*s, x));
+  y = Math.min(0, Math.max(SH - (H+44)*s, y));
+  return { x, y, scale: s };
 };
-const click = (id, t) => {
-  tl.fromTo(id, { opacity:.9, scale:.3 }, { opacity:0, scale:1.6, duration:.45, ease:"power2.out" }, t);
+const words = (sel, t) => tl.from(sel+" .w", { y:90, opacity:0, duration:.5, stagger:.08, ease:"back.out(1.7)" }, t+0.05);
+const ring = (id, t) => {
+  tl.fromTo(id, { opacity:0, scale:.85 }, { opacity:1, scale:1, duration:.3, ease:"back.out(2)" }, t);
+  tl.to(id, { scale:1.04, duration:.3, yoyo:true, repeat:3, ease:"sine.inOut" }, t+.3);
 };
-// cursor moves (window-local coords)
-const curMove = (id, from, to, t, d) => {
-  tl.fromTo(id, { opacity:0, x:from[0], y:from[1] }, { opacity:1, x:to[0], y:to[1], duration:d, ease:"power3.inOut" }, t);
-};
+const stageIn = (id, t) => tl.fromTo(id, { y:260, opacity:0 }, { y:0, opacity:1, duration:.6, ease:"power3.out" }, t+.1);
 const wip = (id, t) => {
   tl.fromTo(id, { x:-1100 }, { x:0, duration:.14, ease:"power2.in" }, t-.14);
   tl.to(id, { x:1100, duration:.18, ease:"power2.out" }, t);
 };
 
-// S1 hook (0-2.3)
-words("#s1 .ln:nth-child(1)", 0);
-tl.from("#s1b .w", { y:90, opacity:0, duration:.5, stagger:.07, ease:"back.out(1.7)" }, .55);
-tl.from("#s1c .w", { y:90, opacity:0, scale:.7, duration:.5, stagger:.09, ease:"back.out(2)" }, 1.05);
-tl.fromTo("#w1", { ...cam(.74,640,410,540,1150), y:2000 }, { y:cam(.74,640,410,540,1150).y, duration:.6, ease:"power3.out" }, 0);
-tl.to("#w1", { ...cam(.84,640,410,540,1150), duration:1.7, ease:"sine.inOut" }, 0.6);
-ring("#r1", 1.45);
+// S1 hook
+const T1 = 0;
+tl.from("#s1 .cap .w", { y:100, opacity:0, duration:.5, stagger:.12, ease:"back.out(1.7)" }, .05);
+[["#t1",1.0,"#k1"],["#t2",1.35,"#k2"],["#t3",1.7,"#k3"],["#t4",2.0,"#k4"]].forEach(([sel,t,k])=>{
+  tl.from(sel, { x:-120, opacity:0, duration:.4, ease:"power3.out" }, t);
+  tl.from(k, { scale:0, duration:.35, ease:"back.out(3)" }, t+.25);
+});
 
-// S2 pull (2.3-4.6)
-const T2=2.3;
+// S2 problem
+const T2 = 2.8;
 words("#s2 .cap", T2);
-tl.fromTo("#w2", cam(1.25,640,150,540,1050), { ...cam(1.7,640,150,540,1130), duration:2.3, ease:"power2.inOut" }, T2);
-tl.fromTo("#pbfill", { scaleX:.18 }, { scaleX:.9, duration:1.7, ease:"none" }, T2+.1);
-const pc={v:18};
-tl.fromTo(pc, {v:18}, {v:90, duration:1.7, ease:"none", onUpdate(){document.getElementById("pct").textContent=Math.round(pc.v)+"%"}}, T2+.1);
-ring("#r2", T2+1.2);
+tl.from("#cc", { y:120, opacity:0, duration:.5, ease:"power3.out" }, T2+.3);
+tl.from("#cc .bar", { scaleX:0, transformOrigin:"0 50%", duration:.35, stagger:.07, ease:"power2.out" }, T2+.6);
+tl.from("#p2a", { x:-80, opacity:0, duration:.4, ease:"back.out(1.8)" }, T2+1.3);
+tl.from("#p2b", { x:-80, opacity:0, duration:.4, ease:"back.out(1.8)" }, T2+1.8);
 
-// S3 edit (4.6-7.2)
-const T3=4.6;
+// S3 pull
+const T3 = 6.0;
 words("#s3 .cap", T3);
-tl.from("#chips .pill", { y:50, opacity:0, duration:.4, stagger:.14, ease:"back.out(1.8)" }, T3+.5);
-tl.fromTo("#w3", cam(1.05,540,330,540,1180), { ...cam(1.4,540,440,540,1230), duration:2.6, ease:"power2.inOut" }, T3);
-curMove("#c3", [900,200], [700,422], T3+.7, .8);
-ring("#r3", T3+1.2);
+tl.from("#s3 .kick", { x:-40, opacity:0, duration:.4 }, T3);
+stageIn("#st3", T3);
+tl.fromTo("#w3", at("#w3",1.0,640,150), { ...at("#w3",1.6,640,130), duration:2.7, ease:"power2.inOut" }, T3);
+ring("#r3", T3+1.0);
 
-// S4 review (7.2-10.0)
-const T4=7.2;
+// S4 subscription
+const T4 = 8.8;
 words("#s4 .cap", T4);
-tl.fromTo("#w4", cam(1.18,740,100,540,1080), { ...cam(1.45,740,80,540,1080), duration:1.1, ease:"power2.inOut" }, T4);
-curMove("#c4", [1000,300], [736,38], T4+.1, .8);
-ring("#r4", T4+.55);
-click("#p4", T4+1.05); tl.set("#p4",{left:752,top:50},0);
-tl.to("#w4b", { opacity:1, duration:.12 }, T4+1.1);
-tl.to("#w4", { ...cam(1.4,860,150,540,1130), duration:1.6, ease:"power2.inOut" }, T4+1.2);
-tl.to("#r4", { opacity:0, duration:.2 }, T4+1.15);
-ring("#r4b", T4+1.5);
-tl.to("#c4", { x:760, y:190, duration:.9, ease:"sine.inOut" }, T4+1.3);
+tl.from("#pl4 .pill", { y:40, opacity:0, duration:.4, stagger:.15, ease:"back.out(1.8)" }, T4+.7);
+stageIn("#st4", T4);
+tl.fromTo("#w4", at("#w4",1.1,680,300), { ...at("#w4",1.1,680,250), duration:3.4, ease:"sine.inOut" }, T4);
+ring("#r4", T4+1.0);
 
-// S5 push (10.0-12.6)
-const T5=10.0;
+// S5 install + run
+const T5 = 12.2;
 words("#s5 .cap", T5);
-tl.fromTo("#w5", cam(1.3,800,150,430,1130), { ...cam(1.3,900,60,430,1130), duration:2.6, ease:"sine.inOut" }, T5);
-curMove("#c5", [700,260], [1228,44], T5+.4, .9);
-ring("#r5", T5+1.0);
-tl.set("#p5",{left:1232,top:48},0);
-click("#p5", T5+1.5);
-tl.to("#c5", { scale:.85, duration:.1, yoyo:true, repeat:1 }, T5+1.45);
+stageIn("#st5", T5);
+tl.fromTo("#w5", at("#w5",1.1,680,480), { ...at("#w5",1.1,680,520), duration:3.2, ease:"sine.inOut" }, T5);
+ring("#r5", T5+.6);
+tl.to("#r5", { opacity:0, duration:.15 }, T5+1.55);
+tl.to("#w5b", { opacity:1, duration:.15 }, T5+1.6);
+ring("#r5b", T5+1.9);
 
-// S6 no dupes (12.6-14.8)
-const T6=12.6;
+// S6 prompt
+const T6 = 15.4;
 words("#s6 .cap", T6);
-tl.from("#s6 .kick", { x:-40, opacity:0, duration:.4 }, T6);
-tl.from("#s6 .chip.main", { scale:.6, opacity:0, duration:.4, ease:"back.out(2)" }, T6+.3);
-tl.fromTo("#s6 .g1", { opacity:0, y:0, x:0 }, { opacity:.8, y:110, x:30, duration:.4, ease:"power2.out" }, T6+.4);
-tl.fromTo("#s6 .g2", { opacity:0, y:0, x:0 }, { opacity:.8, y:220, x:60, duration:.4, ease:"power2.out" }, T6+.55);
-tl.to("#s6 .g1", { y:0, x:0, opacity:0, duration:.35, ease:"power3.in" }, T6+1.0);
-tl.to("#s6 .g2", { y:0, x:0, opacity:0, duration:.35, ease:"power3.in" }, T6+1.05);
-tl.fromTo("#ck", { scale:0, opacity:0 }, { scale:1, opacity:1, duration:.4, ease:"back.out(2.4)" }, T6+1.35);
+tl.from("#s6 .pill", { y:40, opacity:0, duration:.4 }, T6+.6);
+stageIn("#st6", T6);
+tl.fromTo("#w6", at("#w6",1.1,680,700), { ...at("#w6",1.1,680,900), duration:3.6, ease:"sine.inOut" }, T6);
+ring("#r6", T6+.9);
+tl.to("#r6", { opacity:0, duration:.2 }, T6+2.0);
+ring("#r6b", T6+2.1);
 
-// S7 (14.8-17.6)
-const T7=14.8;
+// S7 diff
+const T7 = 19.0;
 words("#s7 .cap", T7);
-tl.from("#s7 .kick", { x:-40, opacity:0, duration:.4 }, T7);
-tl.from("#s7 .sub", { opacity:0, y:30, duration:.5 }, T7+.5);
-tl.fromTo("#w7", cam(1.1,640,240,540,1260), { ...cam(1.4,690,250,540,1230), duration:2.8, ease:"power2.out" }, T7);
+stageIn("#st7", T7);
+tl.fromTo("#w7", at("#w7",1.05,680,1050), { ...at("#w7",1.1,680,1280), duration:2.6, ease:"power2.inOut" }, T7);
 ring("#r7", T7+.9);
 
-// S8 (17.6-20.0)
-const T8=17.6;
+// S8 push
+const T8 = 21.6;
 words("#s8 .cap", T8);
-tl.from("#s8 .kick", { x:-40, opacity:0, duration:.4 }, T8);
-tl.fromTo("#w8", cam(1.1,620,200,540,1180), { ...cam(1.5,620,200,540,1130), duration:2.4, ease:"power2.out" }, T8);
-ring("#r8", T8+.6);
-ring("#r8b", T8+1.3);
+tl.from("#s8 .pill", { y:40, opacity:0, duration:.4 }, T8+.6);
+stageIn("#st8", T8);
+tl.fromTo("#w8", at("#w8",1.1,680,1200), { ...at("#w8",1.1,680,1180), duration:2.8, ease:"power2.inOut" }, T8);
+tl.fromTo("#c8", { opacity:0, x:700, y:1100 }, { opacity:1, x:1072, y:1196, duration:.8, ease:"power3.inOut" }, T8+.4);
+ring("#r8", T8+1.0);
+tl.fromTo("#p8", { opacity:.9, scale:.3 }, { opacity:0, scale:1.6, duration:.45, ease:"power2.out" }, T8+1.8);
+tl.to("#c8", { scale:.85, duration:.1, yoyo:true, repeat:1 }, T8+1.75);
 
-// S9 cancel (20.0-22.4)
-const T9=20.0;
-words("#s9 .cap", T9);
-tl.from("#s9 .kick", { x:-40, opacity:0, duration:.4 }, T9);
-tl.fromTo("#w9", cam(1.3,640,150,540,1180), { ...cam(1.75,800,230,520,1130), duration:1.2, ease:"power2.inOut" }, T9);
-curMove("#c9", [1000,420], [838,262], T9+.2, .7);
-ring("#r9", T9+.55);
-tl.set("#p9",{left:850,top:268},0);
-click("#p9", T9+1.0);
-tl.to("#w9b", { opacity:1, duration:.1 }, T9+1.1);
-tl.to("#r9", { opacity:0, duration:.1 }, T9+1.1);
-tl.to("#c9", { opacity:0, duration:.1 }, T9+1.1);
-tl.to("#w9", { ...cam(1.3,640,140,540,1170), duration:1.2, ease:"power2.inOut" }, T9+1.15);
+// S9 end card
+const T9 = 24.6;
+tl.from("#ic9", { scale:.5, opacity:0, duration:.55, ease:"back.out(2)" }, T9+.05);
+tl.from("#n9", { y:50, opacity:0, duration:.5, ease:"power3.out" }, T9+.35);
+tl.from("#f9", { y:50, opacity:0, duration:.5, ease:"power3.out" }, T9+.7);
+tl.from("#u9", { y:50, opacity:0, scale:.9, duration:.5, ease:"back.out(2)" }, T9+1.1);
+tl.from("#s9b", { y:40, opacity:0, duration:.5, ease:"power3.out" }, T9+1.7);
 
-// S10 new UI (22.4-24.8)
-const T10=22.4;
-words("#s10 .cap", T10);
-tl.from("#s10 .kick", { x:-40, opacity:0, duration:.4 }, T10);
-tl.fromTo("#w10b", { ...cam(.8,640,410,640,1190), y:1990, opacity:0 }, { ...cam(.8,640,410,640,1190), y:cam(.8,640,410,640,1190).y, opacity:1, duration:.6, ease:"power3.out" }, T10);
-tl.fromTo("#w10", { ...cam(.8,640,410,500,1290), y:2090 }, { y:cam(.8,640,410,500,1290).y, duration:.7, ease:"power3.out" }, T10+.15);
-tl.to("#w10", { ...cam(.88,640,410,500,1290), duration:1.9, ease:"sine.inOut" }, T10+.5);
-tl.to("#w10b", { ...cam(.82,640,410,660,1150), duration:2.2, ease:"sine.inOut" }, T10+.4);
-
-// S11 logo (24.8-26.4)
-const T11=24.8;
-tl.from("#s11 .t:not(.r)", { x:-420, opacity:0, duration:.5, stagger:.08, ease:"power3.out" }, T11);
-tl.from("#s11 .t.r", { x:420, opacity:0, duration:.5, stagger:.08, ease:"power3.out" }, T11+.05);
-tl.fromTo("#acct", { scale:0, opacity:0, transformOrigin:"160px 320px" }, { scale:1, opacity:1, duration:.4, ease:"back.out(3)" }, T11+.45);
-tl.from("#s11 .cap .w", { y:70, opacity:0, duration:.45, stagger:.07, ease:"back.out(1.7)" }, T11+.7);
-
-// S12 CTA (26.4-29.6)
-const T12=26.4;
-tl.from("#m12", { scale:.5, opacity:0, duration:.55, ease:"back.out(2)" }, T12+.05);
-tl.from("#wm12", { y:40, opacity:0, duration:.5, ease:"power3.out" }, T12+.3);
-tl.from("#free", { y:40, opacity:0, duration:.5, ease:"power3.out" }, T12+.6);
-tl.from("#url", { y:40, opacity:0, scale:.9, duration:.5, ease:"back.out(2)" }, T12+.95);
-
-// wipes at cuts
-[[2.3,"#wipe"],[4.6,"#wipe"],[7.2,"#wipe2"],[10.0,"#wipe"],[12.6,"#wipe"],[14.8,"#wipe"],[17.6,"#wipe"],[20.0,"#wipe2"],[22.4,"#wipe"],[24.8,"#wipe"],[26.4,"#wipe"]].forEach(([t,i])=>wip(i,t));
+[[2.8,"#wipe2"],[6.0,"#wipe"],[8.8,"#wipe2"],[12.2,"#wipe"],[15.4,"#wipe2"],[19.0,"#wipe"],[21.6,"#wipe2"],[24.6,"#wipe"]].forEach(([t,i])=>wip(i,t));
 
 window.__timelines["main"] = tl;
 </script>

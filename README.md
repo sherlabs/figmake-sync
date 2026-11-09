@@ -2,6 +2,56 @@
 
 ![figmake-sync icon](src/electron/renderer/assets/icon-512.png)
 
+## The story
+
+Figma Make only lets you edit a prototype through Figma's own AI tokens (credits). The prototype is a React app, and its code is visible inside Figma, but there it can only be edited by hand.
+
+`figmake-sync` downloads that code to a local folder so you can:
+
+1. **Pull** the code from Figma Make into a normal local project.
+2. **Edit it with your own AI subscription**, using Claude Code or Codex (ChatGPT) on your own account, instead of spending Figma tokens.
+3. **Run the app locally** (npm install, then the project's own dev server) and iterate.
+4. **Push** the result back into Figma Make, after reviewing exactly what changed.
+
+It is a desktop app (Mac and Windows) with an optional CLI. It is not an official Figma integration.
+
+## Agent: edit with Claude Code or Codex
+
+The Agent view in the desktop app runs a coding-agent CLI that is already installed on your computer, inside your project folder.
+
+What it does:
+
+- Detects the `claude` (Claude Code) and `codex` (Codex) CLIs, their versions and whether you are signed in. You pick which one to use.
+- **Run it locally**: a Set up step runs `npm install`, and a Run the app step starts the project's own dev server (`dev`, `start` or `serve` from `package.json`). The localhost URL is detected and can be opened in your browser. Both are manual, one button each; nothing starts by itself. The dev server stops when you quit figmake-sync or switch project.
+- **Ask for a change**: you describe a change in plain language. The agent edits files in the project folder, streams its progress (reads, edits, writes) into the view, and follow-ups continue the same conversation.
+- **Review**: when a run finishes, the changed files are listed against your last pull, with a line-by-line compare.
+- **Push**: you push to Figma Make when you are happy. Auto-push after a successful run exists but is off by default and asks for confirmation; it skips the push if the file changed in Figma since your last pull.
+
+### Setup
+
+- Claude Code: install it (`npm install -g @anthropic-ai/claude-code`), then sign in once from a terminal with `claude auth login`.
+- Codex: install it (`npm install -g @openai/codex`), then sign in from a terminal. **Codex support is untested**: it is built against the documented `codex exec` interface, but it has not been run against a real Codex install yet.
+- Node.js and npm are needed to run the prototype locally.
+- Open the project in figmake-sync, choose the Agent view, and use Check again after installing or signing in.
+
+### Safety posture
+
+- It uses your own sign-in. figmake-sync never sees your login or API keys, and it strips API-key and token style environment variables from the agent's environment.
+- A backup of the project is saved before every run (`.figmake-sync/backups/`).
+- Nothing is sent to Figma until you push (or turn on auto-push).
+- Claude Code runs non-interactively with `acceptEdits`, never with a bypass-permissions flag. It is allowed Read, Edit, Write, Glob, Grep, `npm install`, `npm run build`, `npm run test`, `npm run lint` and `git status`. It is explicitly denied `curl`, `wget`, `ssh`, `scp`, `git push`, `git diff`, `node` and `npx`.
+- Codex runs with `--sandbox workspace-write` in the project folder.
+- Runs have a 30 minute timeout, can be cancelled, and the process tree is killed on cancel. The dev server only accepts localhost URLs.
+
+### Limits
+
+- This is not a full sandbox. npm scripts still run project-defined code, and the dev server runs your project's code on your machine. Only use projects you trust.
+- Claude Code edit and write access relies on Claude's own handling of the working directory.
+- The agent works on files only; it cannot see the Figma Make canvas. Anything it changes has to be pushed back to show up in Figma Make.
+- Codex is untested (see above). Run state is per app session.
+
+---
+
 `figmake-sync` is a local-first desktop sync agent for Figma Make projects.
 
 It exists for one very specific gap: Figma Make is great at generating and editing prototype code, but it does not give teams a reliable official two-way sync between a local codebase and the Make editor. In practice, that means designers and prototypers end up stuck in a brittle loop of downloading ZIPs, dragging files by hand, and hoping nothing drifted.
@@ -319,6 +369,7 @@ The code is split so browser automation is replaceable later if Figma exposes an
 - [src/diff/manifest.ts](./src/diff/manifest.ts): manifests, hashes, rename detection, and merge foundations
 - [src/browser/session.ts](./src/browser/session.ts): Playwright persistent browser session lifecycle
 - [src/figma/adapter.ts](./src/figma/adapter.ts): `FigmaMakeAdapter` interface and isolated selector-driven Playwright adapter
+- [src/harness/](./src/harness): Agent view backend (Claude Code and Codex adapters, process runner, local dev server)
 - [src/electron/main.ts](./src/electron/main.ts): desktop shell
 - [src/electron/renderer/app.ts](./src/electron/renderer/app.ts): desktop UI
 - [src/cli/index.ts](./src/cli/index.ts): optional CLI
@@ -360,6 +411,7 @@ Current automated coverage includes:
 │   ├── diff/
 │   ├── electron/
 │   ├── figma/
+│   ├── harness/
 │   ├── logging/
 │   ├── types/
 │   └── utils/

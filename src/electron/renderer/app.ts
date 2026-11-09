@@ -6,6 +6,7 @@ import type {
 import type { ProjectInspection, StatusResult } from "../../core/service.js";
 import type { PullStrategy } from "../../types/config.js";
 import type { ManifestDiff } from "../../diff/manifest.js";
+import type { AgentInfo, ChangeSet, DevStatus, HarnessEvent, HarnessSettings, RunOutcome } from "../../harness/types.js";
 
 declare global {
   interface Window {
@@ -16,7 +17,7 @@ declare global {
 /* ── Types ──────────────────────────────────────────────────────────────────── */
 
 type FileStatus = "added" | "modified" | "deleted" | "renamed";
-type TabName = "sync" | "changes" | "logs" | "setup";
+type TabName = "sync" | "agent" | "changes" | "logs" | "setup";
 
 /** A file named by a result. Only says what the result said. */
 interface RunFile { path: string; local?: string; remote?: string; code?: string }
@@ -73,6 +74,7 @@ interface DiffFile { path: string; status: FileStatus; where: string; lastPull: 
 
 interface ProjectRefs {
   syncPanel: HTMLElement;
+  agentPanel: HTMLElement;
   changesPanel: HTMLElement;
   logsPanel: HTMLElement;
   setupPanel: HTMLElement;
@@ -100,6 +102,7 @@ interface ProjectState {
   facts: SessionFacts;
   log: TimelineEntry[];
   run: RunState;
+  agent: AgentUi;
 }
 
 interface AppState {
@@ -113,6 +116,8 @@ interface AppState {
   authReason: string;
   browserReady: boolean;
   task: LiveTask | null;
+  agents: AgentInfo[] | null;
+  agentsChecking: boolean;
 }
 
 const $ = <T extends HTMLElement>(sel: string): T => document.querySelector<T>(sel)!;
@@ -168,6 +173,8 @@ const state: AppState = {
   authReason: "",
   browserReady: false,
   task: null,
+  agents: null,
+  agentsChecking: false,
 };
 
 const IS_MAC = /Mac/i.test(navigator.platform || navigator.userAgent);
@@ -705,6 +712,7 @@ function panel(name: TabName, cls = ""): HTMLElement {
 
 function buildProjectView(project: ProjectState): { view: HTMLElement; refs: ProjectRefs } {
   const syncPanel = panel("sync");
+  const agentPanel = panel("agent");
   const changesPanel = panel("changes", "fill");
   const activity = h("div", { class: "log", "aria-label": "Activity log", role: "log" });
   const rawPre = h("pre", {});
@@ -715,9 +723,9 @@ function buildProjectView(project: ProjectState): { view: HTMLElement; refs: Pro
   const logsPanel = panel("logs");
   logsPanel.append(activity, shot);
   const setupPanel = panel("setup");
-  const view = h("div", { class: "project-view", "data-project-id": project.id }, syncPanel, changesPanel, logsPanel, setupPanel);
+  const view = h("div", { class: "project-view", "data-project-id": project.id }, syncPanel, agentPanel, changesPanel, logsPanel, setupPanel);
   activity.append(raw);
-  return { view, refs: { syncPanel, changesPanel, logsPanel, setupPanel, activity, raw, rawPre, shot, shotImg, shotCaption } };
+  return { view, refs: { syncPanel, agentPanel, changesPanel, logsPanel, setupPanel, activity, raw, rawPre, shot, shotImg, shotCaption } };
 }
 
 /* ── Options ────────────────────────────────────────────────────────────────── */
@@ -867,7 +875,7 @@ function wizardCard(project: ProjectState): HTMLElement {
       h("div", { class: "art" }, artwork()),
       h("div", { class: "body" },
         h("h2", {}, chosen ? `Set up ${getProjectName(project)}` : "Set up a new project"),
-        h("p", { class: "lead" }, "Pick a folder, paste a Figma Make link, and keep the two in step. Nothing on disk is overwritten without a backup."),
+        h("p", { class: "lead" }, "Pick a folder and paste a Figma Make link. Pull the prototype's code, then change it with your own AI agent and push it back. Nothing on disk is overwritten without a backup."),
         steps,
         chosen && linkForm(project),
         h("div", { class: "foot" },
@@ -1487,6 +1495,642 @@ function renderSettings(project: ProjectState): void {
   lockAll(refs.setupPanel);
 }
 
+/* ── Agent tab ──────────────────────────────────────────────────────────────── */
+/* Connect your own Claude Code / Codex CLI, run the app locally, and let the agent edit the project folder.
+   figmake-sync only launches the CLI you already signed in to; it never reads or stores a login. */
+
+interface ThreadItem { kind: "user" | "text" | "tool" | "edit" | "phase" | "error" | "result"; text: string; extra?: string; tone?: "ok" | "bad" | "warn" }
+
+interface AgentRefs {
+  connectors: HTMLElement;
+  env: HTMLElement;
+  thread: HTMLElement;
+  composerStatus: HTMLElement;
+  textarea: HTMLTextAreaElement;
+  send: HTMLButtonElement;
+  cancel: HTMLButtonElement;
+  fresh: HTMLButtonElement;
+  usingLabel: HTMLElement;
+  changes: HTMLElement;
+}
+
+interface AgentUi {
+  loaded: boolean;
+  settings: HarnessSettings | null;
+  setup: { status: "idle" | "running" | "done" | "error"; lines: string[]; message: string };
+  dev: DevStatus | null;
+  devBusy: boolean;
+  devLogOpen: boolean;
+  thread: ThreadItem[];
+  running: boolean;
+  phase: string;
+  draft: string;
+  newSession: boolean;
+  outcome: RunOutcome | null;
+  changes: ChangeSet | null;
+  refs: AgentRefs | null;
+}
+
+function newAgentUi(): AgentUi {
+  return {
+    loaded: false, settings: null, setup: { status: "idle", lines: [], message: "" }, dev: null, devBusy: false, devLogOpen: false,
+    thread: [], running: false, phase: "", draft: "", newSession: false, outcome: null, changes: null, refs: null,
+  };
+}
+
+/** What to run in a terminal when a CLI is missing or signed out. These are the vendors' own documented commands. */
+const AGENT_COMMANDS: Record<string, { install: string; signIn: string }> = {
+  claude: { install: "npm install -g @anthropic-ai/claude-code", signIn: "claude auth login" },
+  codex: { install: "npm install -g @openai/codex", signIn: "codex login" },
+};
+
+function agentName(id: string | undefined): string {
+  return state.agents?.find((a) => a.id === id)?.displayName ?? (id === "codex" ? "Codex" : "Claude Code");
+}
+
+/** The agent a new prompt will use: the saved choice if usable, else the first usable one. */
+function chosenAgent(project: ProjectState): AgentInfo | null {
+  const usable = (state.agents ?? []).filter((a) => a.usable);
+  return usable.find((a) => a.id === project.agent.settings?.preferredAgent) ?? usable[0] ?? null;
+}
+
+function projectByRoot(rootDir: string): ProjectState | undefined {
+  return Array.from(state.projects.values()).find((p) => p.rootDir === rootDir);
+}
+
+function agentReady(project: ProjectState): boolean {
+  return isLinked(project) && Boolean(project.linkedProject?.metadata?.lastPullAt || project.linkedProject?.metadata?.lastPushAt);
+}
+
+async function detectAgents(): Promise<void> {
+  if (state.agentsChecking) return;
+  state.agentsChecking = true;
+  const project = activeProject();
+  if (project) renderConnectors(project);
+  try {
+    state.agents = await getDesktopApi().harnessDetectAgents();
+  } catch (error) {
+    state.agents = [];
+    toast(`Couldn't look for agent tools: ${errMsg(error)}`, "bad");
+  } finally {
+    state.agentsChecking = false;
+    const p = activeProject();
+    if (p) renderAgent(p);
+  }
+}
+
+async function ensureAgentLoaded(project: ProjectState): Promise<void> {
+  const a = project.agent;
+  if (!agentReady(project)) return;
+  if (!a.loaded) {
+    a.loaded = true;
+    const api = getDesktopApi();
+    try {
+      const [settings, dev, changes] = await Promise.all([api.harnessGetSettings(project.rootDir), api.harnessDevStatus(project.rootDir), api.harnessChanges(project.rootDir)]);
+      a.settings = settings; a.dev = dev; a.changes = changes;
+    } catch (error) {
+      a.loaded = false;
+      toast(`Couldn't load the Agent settings: ${errMsg(error)}`, "bad");
+    }
+    renderAgent(project);
+  }
+  if (!state.agents) void detectAgents();
+}
+
+async function saveHarnessSettings(project: ProjectState, patch: { preferredAgent?: "claude" | "codex"; autoPush?: boolean }): Promise<void> {
+  try {
+    project.agent.settings = await getDesktopApi().harnessUpdateSettings(project.rootDir, patch);
+  } catch (error) {
+    toast(`Couldn't save the setting: ${errMsg(error)}`, "bad");
+  }
+  renderAgent(project);
+}
+
+/* connectors */
+
+function copyCommand(cmd: string): void {
+  void navigator.clipboard.writeText(cmd).then(
+    () => toast("Command copied. Paste it into a terminal.", "ok", undefined, 2500),
+    () => toast("Couldn't copy to the clipboard", "bad"),
+  );
+}
+
+function commandLine(cmd: string): HTMLElement {
+  return h("div", { class: "cmd" },
+    h("code", {}, cmd),
+    h("button", { type: "button", class: "plain quiet", "aria-label": `Copy command: ${cmd}`, onclick: () => copyCommand(cmd) }, icon("copy", true), "Copy"));
+}
+
+function connectorRow(project: ProjectState, info: AgentInfo): HTMLElement {
+  const cmds = AGENT_COMMANDS[info.id];
+  const selected = chosenAgent(project)?.id === info.id;
+  let chip: HTMLElement;
+  let detail: Child;
+  let fix: Child = null;
+  if (!info.installed) {
+    chip = h("span", { class: "chip neutral" }, "Not installed");
+    detail = info.hint ?? `${info.displayName} wasn't found on this computer.`;
+    if (cmds) fix = h("div", {}, h("p", { class: "cmdl" }, "Install it from a terminal, then choose Check again:"), commandLine(cmds.install));
+  } else if (info.signedIn === false) {
+    chip = h("span", { class: "chip chg" }, "Not signed in");
+    detail = info.hint ?? `Sign in to ${info.displayName} in a terminal.`;
+    if (cmds) fix = h("div", {}, h("p", { class: "cmdl" }, "Sign in from a terminal, then choose Check again:"), commandLine(cmds.signIn));
+  } else if (!info.usable) {
+    chip = h("span", { class: "chip chg" }, "Needs attention");
+    detail = info.hint ?? `${info.displayName} is installed but didn't run correctly.`;
+    if (cmds) fix = h("div", {}, h("p", { class: "cmdl" }, "Reinstall it from a terminal, then choose Check again:"), commandLine(cmds.install));
+  } else if (info.signedIn === null) {
+    chip = h("span", { class: "chip neutral" }, "Sign-in unknown");
+    detail = info.hint ?? "Installed. figmake-sync couldn't tell whether you're signed in; a prompt will fail with a clear error if you aren't.";
+  } else {
+    chip = h("span", { class: "chip ok" }, "Ready");
+    detail = "Installed and signed in. The CLI uses its own sign-in; if an API key is set in your environment, the agent doesn't receive it.";
+  }
+  const experimentalNote = info.experimental
+    ? h("p", { class: "muted" }, "Codex support is untested; output may not appear or resume may fail.")
+    : null;
+  const radioId = `agent-pick-${project.id}-${info.id}`;
+  return h("div", { class: "arow", "data-agent": info.id },
+    h("span", { class: "tile", "aria-hidden": "true" }, info.displayName.slice(0, 1)),
+    h("div", { class: "l" },
+      h("div", { class: "nm" }, h("b", { id: radioId }, info.displayName), info.version && h("span", { class: "mono ver" }, info.version), chip, info.experimental && h("span", { class: "chip neutral" }, "Unverified")),
+      h("p", {}, detail), experimentalNote, fix),
+    h("div", { class: "r" }, info.usable
+      ? selected
+        ? h("span", { class: "chip accent", "aria-label": `${info.displayName} is the selected agent` }, icon("check-b", true), "Selected")
+        : h("button", { type: "button", class: "btn sm", "aria-describedby": radioId, onclick: () => { void saveHarnessSettings(project, { preferredAgent: info.id }); } }, "Use this one")
+      : null));
+}
+
+function renderConnectors(project: ProjectState): void {
+  const r = project.agent.refs;
+  if (!r) return;
+  const list = state.agents;
+  const noneUsable = list !== null && !list.some((x) => x.usable);
+  preserveFocus(r.connectors, () => r.connectors.replaceChildren(
+    h("div", { class: "hd" },
+      h("div", {}, h("h2", {}, "Agent"),
+        h("p", { class: "muted sub" }, "Uses the Claude Code or Codex CLI already on this computer, signed in with your own account. figmake-sync never sees your login or API keys.")),
+      h("button", { type: "button", class: "btn sm", "data-action": "recheck-agents", disabled: state.agentsChecking, onclick: () => { void detectAgents(); } }, icon("refresh", true), state.agentsChecking ? "Checking…" : "Check again")),
+    list === null
+      ? h("div", { class: "arow plain-row", role: "status" }, h("span", { class: "spin" }), h("span", { class: "muted" }, "Looking for Claude Code and Codex…"))
+      : h("div", {}, ...list.map((info) => connectorRow(project, info))),
+    ...(!noneUsable ? [] : [h("div", { class: "row note" }, h("p", { class: "hint" }, icon("info"), h("span", {}, "No agent is ready yet. Install and sign in to one of them in a terminal, then choose Check again. You can still run the app and push edits you make by hand.")))])));
+}
+
+/* setup + preview */
+
+function setupStatusText(a: AgentUi): string {
+  if (a.setup.status === "running") return "Installing dependencies with npm…";
+  if (a.setup.status === "done") return a.setup.message || "Dependencies are ready.";
+  if (a.setup.status === "error") return a.setup.message || "npm install failed.";
+  return "Installs the project's dependencies with npm when they're missing or the lockfile changed.";
+}
+
+async function runSetup(project: ProjectState): Promise<boolean> {
+  const a = project.agent;
+  if (a.setup.status === "running") return false;
+  a.setup = { status: "running", lines: [], message: "" };
+  setBusy(true, "installing dependencies");
+  renderEnv(project);
+  try {
+    const res = await getDesktopApi().harnessSetup(project.rootDir);
+    a.setup.status = "done";
+    a.setup.message = res.installed ? "Dependencies installed." : res.reason || "Dependencies are already up to date.";
+    announce(a.setup.message);
+    return true;
+  } catch (error) {
+    const msg = errMsg(error);
+    a.setup.status = /cancel/i.test(msg) ? "idle" : "error";
+    a.setup.message = /cancel/i.test(msg) ? "" : msg;
+    if (a.setup.status === "idle") toast("Install stopped.", "info");
+    return false;
+  } finally {
+    setBusy(false);
+    renderEnv(project);
+  }
+}
+
+async function startDev(project: ProjectState): Promise<void> {
+  const a = project.agent;
+  if (a.devBusy) return;
+  if (a.setup.status !== "done" && !(await runSetup(project))) return;
+  a.devBusy = true; renderEnv(project);
+  try {
+    a.dev = await getDesktopApi().harnessStartDev(project.rootDir);
+  } catch (error) {
+    toast(`Couldn't start the app: ${errMsg(error)}`, "bad");
+  }
+  a.devBusy = false; renderEnv(project);
+}
+
+async function stopDev(project: ProjectState): Promise<void> {
+  const a = project.agent;
+  a.devBusy = true; renderEnv(project);
+  try { a.dev = await getDesktopApi().harnessStopDev(project.rootDir); } catch (error) { toast(`Couldn't stop the app: ${errMsg(error)}`, "bad"); }
+  a.devBusy = false; renderEnv(project);
+}
+
+async function openDev(project: ProjectState): Promise<void> {
+  try {
+    const res = await getDesktopApi().harnessOpenDev(project.rootDir);
+    if (!res.opened) toast(res.error ?? "Couldn't open the browser.", "bad");
+  } catch (error) { toast(`Couldn't open the browser: ${errMsg(error)}`, "bad"); }
+}
+
+function logBlock(lines: string[], label: string, kind: "setup" | "dev"): HTMLElement {
+  const pre = h("pre", { class: "logtail", tabindex: "0", "aria-label": label, "data-log": kind }, lines.slice(-40).join("\n"));
+  queueMicrotask(() => { pre.scrollTop = pre.scrollHeight; });
+  return pre;
+}
+
+/** Update an existing log in place (keeps the card, focus and the reader's scroll position). */
+function updateLogInPlace(root: HTMLElement | undefined, kind: "setup" | "dev", lines: string[]): boolean {
+  const pre = root?.querySelector<HTMLElement>(`pre[data-log="${kind}"]`);
+  if (!pre) return false;
+  const atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 24;
+  pre.textContent = lines.slice(-40).join("\n");
+  if (atBottom) pre.scrollTop = pre.scrollHeight;
+  return true;
+}
+
+/** Rebuild a card but give focus back to the equivalent control afterwards. */
+function preserveFocus(root: HTMLElement, rebuild: () => void): void {
+  const active = document.activeElement;
+  let selector: string | null = null;
+  if (active instanceof HTMLElement && root.contains(active)) {
+    const action = active.getAttribute("data-action");
+    const option = active.getAttribute("data-option");
+    if (action) selector = `[data-action="${action}"]`;
+    else if (option) selector = `[data-option="${option}"]`;
+    else if (active.classList.contains("disc")) selector = ".disc";
+    else if (active.id) selector = `#${CSS.escape(active.id)}`;
+  }
+  rebuild();
+  if (selector) root.querySelector<HTMLElement>(selector)?.focus();
+}
+
+function renderEnv(project: ProjectState): void {
+  const a = project.agent;
+  const r = a.refs;
+  if (!r) return;
+  const s = a.setup;
+  const dev = a.dev;
+  const setupIcon = s.status === "running" ? h("span", { class: "spin", "aria-hidden": "true" })
+    : h("span", { class: `sdot ${s.status === "done" ? "ok" : s.status === "error" ? "bad" : ""}`, "aria-hidden": "true" });
+  const setupRow = h("div", { class: "row stack" },
+    h("div", { class: "rowline" },
+      setupIcon,
+      h("div", { class: "l" }, h("b", {}, "Set up"), h("span", { role: s.status === "running" ? "status" : undefined }, setupStatusText(a))),
+      h("div", { class: "r" }, s.status === "running"
+        ? h("button", { type: "button", class: "btn sm", "data-action": "cancel-setup", onclick: () => { void getDesktopApi().cancelOperation(); } }, icon("stop", true), "Stop")
+        : h("button", { type: "button", class: "btn sm", "data-action": "run-setup", "data-lock": true, onclick: () => { void runSetup(project); } }, s.status === "done" ? "Check again" : s.status === "error" ? "Try again" : "Install dependencies"))),
+    ...((s.status === "running" || s.status === "error") && s.lines.length > 0 ? [logBlock(s.lines, "npm install output", "setup")] : []));
+
+  const st = dev?.state ?? "stopped";
+  const cmd = dev?.script ? `npm run ${dev.script}` : "the dev script";
+  let line: string;
+  if (st === "starting") line = `Starting ${cmd}…`;
+  else if (st === "running") line = `Running ${cmd} on this computer.`;
+  else if (st === "crashed") line = `${cmd} exited${dev?.exitCode != null ? ` with code ${dev.exitCode}` : ""}. The end of its log is below.`;
+  else line = "Starts the project's own dev server (dev, start or serve from package.json) so you can see the app.";
+  const url = dev?.url;
+  const runIcon = st === "starting" ? h("span", { class: "spin", "aria-hidden": "true" }) : h("span", { class: `sdot ${st === "running" ? "ok" : st === "crashed" ? "bad" : ""}`, "aria-hidden": "true" });
+  const active = st === "starting" || st === "running";
+  const log = dev?.logTail ?? [];
+  const logWrap = log.length > 0 && h("div", { class: "logwrap" },
+    h("button", {
+      type: "button", class: "disc", "aria-expanded": String(a.devLogOpen || st === "crashed"),
+      onclick: () => { a.devLogOpen = !(a.devLogOpen || st === "crashed"); renderEnv(project); },
+    }, icon("chev-r", true), h("span", {}, "Server log"), h("span", { class: "mut" }, plural(log.length, "line"))),
+    (a.devLogOpen || st === "crashed") && logBlock(log, "Dev server output", "dev"));
+  const runRow = h("div", { class: "row stack" },
+    h("div", { class: "rowline" },
+      runIcon,
+      h("div", { class: "l" }, h("b", {}, "Run the app"), h("span", {}, line),
+        url && st === "running" && h("button", { type: "button", class: "urlchip", "data-action": "open-dev", title: "Open in your default browser", onclick: () => { void openDev(project); } }, icon("ext", true), h("span", { class: "mono" }, url))),
+      h("div", { class: "r" },
+        active
+          ? h("button", { type: "button", class: "btn sm", "data-action": "stop-dev", disabled: a.devBusy, onclick: () => { void stopDev(project); } }, icon("stop", true), "Stop")
+          : h("button", { type: "button", class: "btn sm primary", "data-action": "start-dev", "data-lock": true, disabled: a.devBusy, onclick: () => { void startDev(project); } }, st === "crashed" ? "Restart" : "Start"),
+        st === "running" && url && h("button", { type: "button", class: "btn sm", onclick: () => { void openDev(project); } }, icon("ext", true), "Open in browser"))),
+    logWrap);
+  preserveFocus(r.env, () => r.env.replaceChildren(
+    h("div", { class: "hd" }, h("div", {}, h("h2", {}, "Run it locally"), h("p", { class: "muted sub" }, "Needs Node and npm. The app stops when you quit figmake-sync or switch project."))),
+    setupRow, runRow));
+  lockAll(r.env);
+}
+
+/* conversation */
+
+function pushThread(project: ProjectState, item: ThreadItem): void {
+  project.agent.thread.push(item);
+  renderThread(project);
+}
+
+const EDIT_TOOL_NAMES = /^(Edit|Write|MultiEdit|NotebookEdit)$/;
+
+function relativeToRoot(file: string, root: string): string {
+  const norm = (v: string): string => v.replace(/\\/g, "/");
+  const f = norm(file);
+  const r = norm(root).replace(/\/+$/, "");
+  return f.startsWith(`${r}/`) ? f.slice(r.length + 1) : file;
+}
+
+function toolVerb(tool: string, path: string): string {
+  return /write/i.test(tool) ? "Wrote" : /edit/i.test(tool) ? "Edited" : `${tool}`.length ? "Changed" : path;
+}
+
+function threadNode(item: ThreadItem, who: string): HTMLElement {
+  switch (item.kind) {
+    case "user": return h("div", { class: "msg user" }, h("span", { class: "who" }, "You"), h("p", {}, item.text));
+    case "text": return h("div", { class: "msg" }, h("span", { class: "who" }, who), h("p", {}, item.text));
+    case "tool": return h("div", { class: "tli" }, icon("gear", true), h("b", {}, item.text), item.extra && h("span", { class: "mono", title: item.extra }, item.extra));
+    case "edit": return h("div", { class: "tli edit" }, item.text.startsWith("Wrote") ? h("span", { class: "chip neutral", title: item.text }, "W") : h("span", { class: "chip M", title: item.text }, "M"), h("span", { class: "mono", title: item.extra ?? "" }, item.extra ?? ""), h("span", { class: "muted" }, item.text));
+    case "phase": return h("div", { class: "ph" }, item.text);
+    case "error": return h("div", { class: "tli bad" }, icon("warn", true), h("span", {}, item.text));
+    case "result": return h("div", { class: `tli res ${item.tone ?? ""}`.trim() }, icon(item.tone === "ok" ? "check" : item.tone === "bad" ? "x" : "info", true), h("span", {}, item.text));
+  }
+}
+
+function renderThread(project: ProjectState): void {
+  const a = project.agent;
+  const r = a.refs;
+  if (!r) return;
+  const el = r.thread;
+  const stick = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+  const who = agentName(a.outcome?.agent ?? chosenAgent(project)?.id);
+  if (a.thread.length === 0) {
+    el.replaceChildren(h("div", { class: "thread-empty" },
+      h("p", {}, chosenAgent(project)?.id === "codex"
+        ? "Describe a change to the app. The agent works inside this project folder and runs in Codex's workspace-write sandbox."
+        : "Describe a change to the app. The agent works inside this project folder and can read and edit files, run npm install, build, test and lint, and check git status."),
+      h("p", { class: "muted" }, "A backup is saved before every run, and nothing is sent to Figma unless you push or turn on auto-push.")));
+  } else {
+    el.replaceChildren(...a.thread.map((item) => threadNode(item, who)));
+  }
+  if (stick) el.scrollTop = el.scrollHeight;
+  renderComposer(project);
+}
+
+function renderComposer(project: ProjectState): void {
+  const a = project.agent;
+  const r = a.refs;
+  if (!r) return;
+  const agent = chosenAgent(project);
+  const canSend = Boolean(agent) && !a.running && !state.busy;
+  r.textarea.disabled = !agent || a.running;
+  r.textarea.placeholder = agent ? "Ask for a change, e.g. “Make the cart total include the promo discount”" : "Install and sign in to an agent above to send prompts";
+  r.send.disabled = !canSend || !r.textarea.value.trim();
+  r.cancel.hidden = !a.running;
+  r.send.hidden = a.running;
+  const hasSession = Boolean(a.settings?.lastSession) && !a.newSession;
+  r.fresh.hidden = a.running || !(a.thread.length > 0 || hasSession);
+  r.usingLabel.textContent = agent
+    ? `${agent.displayName} · ${hasSession ? "continues the previous conversation" : "new conversation"}`
+    : "No agent ready";
+  r.composerStatus.replaceChildren(...(a.running
+    ? [h("span", { class: "spin", "aria-hidden": "true" }), h("span", {}, a.phase || `Working with ${agent?.displayName ?? "the agent"}…`)]
+    : []));
+  r.composerStatus.hidden = !a.running;
+}
+
+async function sendPrompt(project: ProjectState): Promise<void> {
+  const a = project.agent;
+  const r = a.refs;
+  if (!r || a.running || state.busy) return;
+  const prompt = r.textarea.value.trim();
+  const agent = chosenAgent(project);
+  if (!prompt || !agent) return;
+  r.textarea.value = ""; a.draft = "";
+  a.outcome = null;
+  a.thread.push({ kind: "user", text: prompt });
+  a.running = true; a.phase = "Starting…";
+  setBusy(true, "an agent run");
+  renderThread(project); renderChanges2(project);
+  try {
+    await getDesktopApi().harnessRunAgent({ rootDir: project.rootDir, prompt, agent: agent.id, newSession: a.newSession });
+    a.newSession = false;
+  } catch (error) {
+    a.running = false;
+    setBusy(false);
+    // The run was never accepted: give the prompt back and drop its bubble.
+    let idx = -1;
+    for (let i = a.thread.length - 1; i >= 0; i--) { const t = a.thread[i]!; if (t.kind === "user" && t.text === prompt) { idx = i; break; } }
+    if (idx >= 0) a.thread.splice(idx, 1);
+    r.textarea.value = prompt; a.draft = prompt;
+    pushThread(project, { kind: "error", text: errMsg(error) });
+  }
+}
+
+async function cancelPrompt(project: ProjectState): Promise<void> {
+  try { await getDesktopApi().harnessCancelRun(project.rootDir); announce("Stopping the agent"); } catch (error) { toast(`Couldn't stop the run: ${errMsg(error)}`, "bad"); }
+}
+
+function newConversation(project: ProjectState): void {
+  const a = project.agent;
+  if (a.running) return;
+  a.thread = []; a.outcome = null; a.newSession = true;
+  renderThread(project);
+  a.refs?.textarea.focus();
+}
+
+/* results */
+
+function changeSetFiles(cs: ChangeSet): DiffFile[] {
+  return [
+    ...cs.modified.map((p) => ({ path: p, status: "modified" as const, where: "Changed here", lastPull: "" })),
+    ...cs.renamed.map((r) => ({ path: r.to, status: "renamed" as const, where: "Renamed here", lastPull: "", from: r.from })),
+    ...cs.added.map((p) => ({ path: p, status: "added" as const, where: "Only on disk", lastPull: "" })),
+    ...cs.deleted.map((p) => ({ path: p, status: "deleted" as const, where: "Only in last pull", lastPull: "" })),
+  ];
+}
+
+/** Skip reasons the run result already conveys (or that mean auto-push is simply off). */
+const QUIET_SKIP_REASONS = new Set(["Auto-push is off.", "Run did not succeed.", "Run did not complete.", "Cancelled.", "Not attempted."]);
+
+function pushOutcomeNote(o: RunOutcome | null): HTMLElement | null {
+  if (!o) return null;
+  const p = o.push;
+  if (p.status === "pushed") return h("p", { class: "hint ok" }, icon("check", true), h("span", {}, `Auto-push sent ${plural(p.summary.total, "file")} to Figma Make.${p.unresolved.length > 0 ? ` ${plural(p.unresolved.length, "file")} couldn't be pushed and need your review.` : ""}`));
+  if (p.status === "aborted") return h("p", { class: "hint warn" }, icon("warn", true), h("span", {}, "Auto-push didn't run because the Figma file changed since your last pull. Your edits are kept locally. Pull the latest, review under Changes, then push."));
+  if (p.status === "failed") return h("p", { class: "hint bad" }, icon("warn", true), h("span", {}, `Auto-push failed: ${p.reason}`));
+  if (p.status === "skipped" && !QUIET_SKIP_REASONS.has(p.reason)) return h("p", { class: "hint" }, icon("info"), h("span", {}, `Auto-push skipped: ${p.reason}`));
+  return null;
+}
+
+async function toggleAutoPush(project: ProjectState): Promise<void> {
+  const on = Boolean(project.agent.settings?.autoPush);
+  if (!on) {
+    const ok = await confirmSheet({
+      title: "Push automatically after each run?",
+      body: `After a run that finishes with changes, they'll be uploaded to ${figmaName(project)} in Figma Make without asking again.`,
+      detail: [
+        h("p", {}, "This updates the file in Figma for everyone who can open it."),
+        h("p", {}, "Before pushing, figmake-sync checks whether the Figma file changed since your last pull. If it did, the push is skipped and nothing is written. Deleted files are never pushed automatically."),
+      ],
+      hint: "You can turn this off at any time.",
+      confirmLabel: "Turn on auto-push",
+      icon: "up",
+      tone: "warn",
+    });
+    if (!ok) return;
+  }
+  await saveHarnessSettings(project, { autoPush: !on });
+}
+
+function renderChanges2(project: ProjectState): void {
+  const a = project.agent;
+  const r = a.refs;
+  if (!r) return;
+  const cs = a.changes;
+  const autoOn = Boolean(a.settings?.autoPush);
+  const switchRowAuto = h("div", { class: "row" },
+    h("div", { class: "l" }, h("b", { id: `autopush-${project.id}` }, "Auto-push after a successful run"),
+      h("span", {}, autoOn
+        ? "On. Changes are uploaded to Figma Make when a run finishes. Skipped if the Figma file changed since your last pull."
+        : "Off. You choose when to push. When on, a run that finishes with changes is pushed to Figma Make, unless the file changed there since your last pull.")),
+    h("button", { type: "button", class: "sw", role: "switch", "aria-checked": String(autoOn), "aria-labelledby": `autopush-${project.id}`, "data-option": "auto-push", disabled: a.running || !a.settings, onclick: () => { void toggleAutoPush(project); } }));
+  const files = cs ? changeSetFiles(cs) : [];
+  const total = cs?.total ?? 0;
+  const o = a.outcome;
+  const headSub = o?.backupDir ? ["Compared with your last pull. Backup from before the run: ", h("span", { class: "mono" }, prettyPath(o.backupDir))] : ["Your folder compared with the last pull."];
+  const body: Child = !cs || files.length === 0
+    ? h("div", { class: "act none" }, !cs ? "Not compared yet." : "No file changes since the last pull.")
+    : h("ul", { class: "clist agentfiles", "aria-label": "Changed files" }, ...files.slice(0, 30).map((f) => h("li", {},
+        h("span", { class: "path" }, h("span", { class: `chip ${STATUS_CODE[f.status]}`, style: "margin-right:8px", title: STATUS_WORD[f.status] }, STATUS_CODE[f.status]), pathCell(f.path)),
+        h("span", { class: "where" }, f.from ? `from ${basename(f.from)}` : f.where))),
+      files.length > 30 && h("li", {}, h("span", { class: "muted" }, `and ${files.length - 30} more under Changes`)));
+  const canPush = total > 0 && canReachFigma() && !state.busy && !a.running;
+  preserveFocus(r.changes, () => r.changes.replaceChildren(
+    h("div", { class: "hd" },
+      h("div", {}, h("h2", {}, total > 0 ? `${plural(total, "file")} changed` : "Changes"), h("p", { class: "muted sub" }, ...headSub)),
+      total > 0 && h("button", { type: "button", class: "plain", "data-lock": true, onclick: () => { void (async () => { await handleCommand(project, "status"); switchTab("changes"); })(); } }, "Compare line by line"),
+      h("button", { type: "button", class: "btn sm primary", "data-action": "agent-push", "data-lock": true, disabled: !canPush, title: total === 0 ? "Nothing to push" : !canReachFigma() ? "Sign in to Figma and go online to push" : undefined, onclick: () => { void pushFromAgent(project); } }, icon("up", true), total > 0 ? `Push ${total}` : "Push")),
+    body,
+    ...(pushOutcomeNote(o) ? [h("div", { class: "row note" }, pushOutcomeNote(o))] : []),
+    switchRowAuto));
+  lockAll(r.changes);
+}
+
+async function pushFromAgent(project: ProjectState): Promise<void> {
+  await handleCommand(project, "push");
+  await refreshAgentChanges(project);
+}
+
+async function refreshAgentChanges(project: ProjectState): Promise<void> {
+  try { project.agent.changes = await getDesktopApi().harnessChanges(project.rootDir); } catch { /* keep the last known list */ }
+  renderChanges2(project);
+}
+
+/* events from the main process */
+
+function onHarnessEvent(ev: HarnessEvent): void {
+  const project = projectByRoot(ev.rootDir);
+  if (!project) return;
+  const a = project.agent;
+  switch (ev.kind) {
+    case "setup-log":
+      a.setup.lines.push(ev.line); if (a.setup.lines.length > 80) a.setup.lines.shift();
+      if (a.setup.status === "running" && !updateLogInPlace(a.refs?.env, "setup", a.setup.lines)) renderEnv(project);
+      break;
+    case "dev-status": {
+      const was = a.dev?.state;
+      a.dev = ev.status; a.devBusy = false;
+      renderEnv(project);
+      if (was !== "running" && ev.status.state === "running") announce("The app is running");
+      else if (was !== "crashed" && ev.status.state === "crashed") announce("The app stopped unexpectedly");
+      break;
+    }
+    case "dev-log":
+      if (a.dev) { a.dev.logTail = [...a.dev.logTail, ev.line].slice(-100); if (!updateLogInPlace(a.refs?.env, "dev", a.dev.logTail) && (a.devLogOpen || a.dev.state === "crashed")) renderEnv(project); }
+      break;
+    case "run-phase":
+      a.phase = ev.message;
+      a.thread.push({ kind: "phase", text: ev.message });
+      renderThread(project);
+      break;
+    case "run-agent": {
+      const e = ev.event;
+      if (e.type === "text") a.thread.push({ kind: "text", text: e.text });
+      else if (e.type === "tool") {
+        // Edit tools are followed by a file_edit row; skip the duplicate.
+        if (EDIT_TOOL_NAMES.test(e.name)) break;
+        const detail = e.summary.startsWith(`${e.name} `) ? e.summary.slice(e.name.length + 1) : e.summary === e.name ? "" : e.summary;
+        a.thread.push({ kind: "tool", text: e.name, extra: detail });
+      }
+      else if (e.type === "file_edit") a.thread.push({ kind: "edit", text: toolVerb(e.tool, e.path), extra: relativeToRoot(e.path, project.rootDir) });
+      else if (e.type === "error") a.thread.push({ kind: "error", text: e.message });
+      else break;
+      renderThread(project);
+      break;
+    }
+    case "run-done": {
+      const o = ev.outcome;
+      a.running = false; a.outcome = o; a.phase = "";
+      a.changes = o.changes ?? a.changes;
+      setBusy(false);
+      const name = agentName(o.agent);
+      if (o.cancelled) a.thread.push({ kind: "result", tone: "warn", text: "Stopped. Files the agent already changed stay on disk; the backup from before the run is untouched." });
+      else if (o.success) a.thread.push({ kind: "result", tone: "ok", text: o.changes && o.changes.total > 0 ? `${name} finished. ${plural(o.changes.total, "file")} changed since the last pull.` : `${name} finished with no file changes.` });
+      else a.thread.push({ kind: "result", tone: "bad", text: o.error ? `${name} didn't finish: ${o.error}` : `${name} didn't finish.` });
+      announce(o.cancelled ? "Agent run stopped" : o.success ? "Agent run finished" : "Agent run failed");
+      void (async () => {
+        try { a.settings = await getDesktopApi().harnessGetSettings(project.rootDir); } catch { /* keep */ }
+        try { await refreshProject(project); } catch { /* keep */ }
+        // The outcome's change list predates an auto-push; re-compare so the card matches reality.
+        if (o.push.status === "pushed") await refreshAgentChanges(project);
+        renderAgent(project);
+      })();
+      renderAgent(project);
+      break;
+    }
+  }
+}
+
+/* panel */
+
+function renderAgent(project: ProjectState): void {
+  const a = project.agent;
+  const panel = project.refs!.agentPanel;
+  if (!agentReady(project)) {
+    a.refs = null;
+    panel.replaceChildren(emptyState("sparkle", isLinked(project) ? "Pull from Figma first" : "Link a Figma Make file first",
+      isLinked(project)
+        ? "The agent edits the files in your project folder, so pull the prototype's code before sending a prompt."
+        : "Link a Figma Make file and pull it. Then you can run the app and edit it with your own Claude Code or Codex."));
+    return;
+  }
+  if (!a.refs) {
+    const textarea = h("textarea", {
+      class: "composer-input", rows: 3, "aria-label": "Prompt for the agent", "aria-keyshortcuts": "Meta+Enter Control+Enter", spellcheck: "true",
+      oninput: () => { a.draft = textarea.value; renderComposer(project); },
+      onkeydown: (e) => { const k = e as KeyboardEvent; if (k.key === "Enter" && (k.metaKey || k.ctrlKey)) { k.preventDefault(); void sendPrompt(project); } },
+    });
+    const send = h("button", { type: "button", class: "btn primary", "data-action": "send-prompt", onclick: () => { void sendPrompt(project); } }, icon("up", true), "Send", h("span", { class: "kbd", "aria-hidden": "true" }, IS_MAC ? "⌘↵" : "Ctrl ↵"));
+    const cancel = h("button", { type: "button", class: "btn", "data-action": "cancel-run", onclick: () => { void cancelPrompt(project); } }, icon("stop", true), "Cancel");
+    const fresh = h("button", { type: "button", class: "plain quiet", "data-action": "new-conversation", onclick: () => newConversation(project) }, "New conversation");
+    const usingLabel = h("span", { class: "muted using" });
+    const composerStatus = h("div", { class: "cstatus", role: "status" });
+    const thread = h("div", { class: "thread", role: "log", "aria-label": "Conversation with the agent", tabindex: "0" });
+    const refs: AgentRefs = {
+      connectors: h("div", { class: "card" }), env: h("div", { class: "card" }), thread, composerStatus, textarea, send, cancel, fresh, usingLabel, changes: h("div", { class: "card" }),
+    };
+    a.refs = refs;
+    textarea.value = a.draft;
+    const prompt = h("div", { class: "card" },
+      h("div", { class: "hd" }, h("div", {}, h("h2", {}, "Ask for a change"), h("p", { class: "muted sub" }, "Each run is a turn in one conversation, so follow-ups can refer to what came before."))),
+      thread, composerStatus,
+      h("div", { class: "composer" }, textarea,
+        h("div", { class: "cbar" }, usingLabel, fresh, h("span", { class: "sp" }), cancel, send)));
+    panel.replaceChildren(h("div", { class: "sync agent" }, refs.connectors, refs.env, prompt, refs.changes));
+  }
+  renderConnectors(project);
+  renderEnv(project);
+  renderThread(project);
+  renderChanges2(project);
+}
+
 /* ── Rendering a project ────────────────────────────────────────────────────── */
 
 async function chooseFolder(project: ProjectState): Promise<void> {
@@ -1509,6 +2153,7 @@ function renderProject(project: ProjectState): void {
   renderProjectRow(project);
   if (state.activeProjectId !== project.id) return;
   renderSync(project);
+  renderAgent(project);
   renderChanges(project);
   renderActivityShell(project);
   renderSettings(project);
@@ -1891,7 +2536,7 @@ function addProject(): void {
     id, rootDir: "", figmaMakeUrl: "", linkedProject: null,
     options: loadSavedOptions(),
     rowElement: createProjectRow(id), viewElement: null, refs: null,
-    lastDiff: null, selectedFile: null, compareOpen: false, diffCache: new Map(), facts: {}, log: [], run: newRun(),
+    lastDiff: null, selectedFile: null, compareOpen: false, diffCache: new Map(), facts: {}, log: [], run: newRun(), agent: newAgentUi(),
   };
   const { view, refs } = buildProjectView(project);
   project.viewElement = view;
@@ -1956,6 +2601,7 @@ function switchTab(tabName: TabName): void {
     p.hidden = p.dataset.panel !== tabName;
   });
   if (project) renderInspector(project);
+  if (project && tabName === "agent") void ensureAgentLoaded(project);
 }
 
 function resetProjectsUi(): void {
@@ -1985,7 +2631,7 @@ function renderOnboarding(): void {
       h("div", { class: "art" }, artwork()),
       h("div", { class: "body" },
         h("h2", {}, "Welcome to figmake-sync"),
-        h("p", { class: "lead" }, "Pick a folder, paste a Figma Make link, and keep the two in step. Nothing on disk is overwritten without a backup."),
+        h("p", { class: "lead" }, "Edit a Figma Make prototype with your own Claude Code or Codex subscription instead of Figma's AI credits. figmake-sync downloads the React code to a folder, you iterate on it locally, and you push the result back."),
         steps,
         h("div", { class: "foot" },
           h("small", {}, "Each project keeps its state in ", h("span", { class: "mono" }, ".figmake-sync/"), " next to your files."),
@@ -2141,9 +2787,25 @@ function paletteCommands(query: string): PaletteItem[] {
       { group: "Sync", label: "Check Figma now", hint: "compare without changing either side", icon: "check", disabled: !reach, run: () => { void handleCommand(project, "verify"); } },
       { group: "Sync", label: "Review changes", hint: "compare the disk with the last pull", icon: "list", disabled: state.busy, run: () => { void handleCommand(project, "status"); } },
     );
+    if (agentReady(project)) {
+      const ag = project.agent;
+      const st = ag.dev?.state ?? "stopped";
+      const live = st === "starting" || st === "running";
+      items.push(
+        { group: "Agent", label: "Open Agent", hint: "prompt, run, push", icon: "sparkle", run: () => { switchTab("agent"); ge.pane.querySelector<HTMLTextAreaElement>(".composer-input")?.focus(); } },
+        { group: "Agent", label: ag.running ? "Cancel agent run" : "Send the prompt", icon: ag.running ? "stop" : "up", ...(ag.running ? {} : { keys: [mod, "↵"] }), disabled: ag.running ? false : !ag.draft.trim() || !chosenAgent(project) || state.busy, run: () => { if (ag.running) void cancelPrompt(project); else { switchTab("agent"); void sendPrompt(project); } } },
+        { group: "Agent", label: "Start a new conversation", icon: "plus", disabled: ag.running, run: () => { switchTab("agent"); newConversation(project); } },
+        { group: "Agent", label: live ? "Stop the app" : "Run the app locally", hint: "npm dev server", icon: live ? "stop" : "laptop", disabled: ag.devBusy || (!live && state.busy), run: () => { switchTab("agent"); if (live) void stopDev(project); else void startDev(project); } },
+        { group: "Agent", label: "Open the running app in the browser", icon: "ext", disabled: st !== "running", run: () => { void openDev(project); } },
+        { group: "Agent", label: "Install dependencies", hint: "npm install if needed", icon: "down", disabled: state.busy, run: () => { switchTab("agent"); void runSetup(project); } },
+        { group: "Agent", label: ag.settings?.autoPush ? "Turn off auto-push after runs" : "Turn on auto-push after runs", icon: "up", disabled: ag.running || !ag.settings, run: () => { switchTab("agent"); void toggleAutoPush(project); } },
+        { group: "Agent", label: "Check for Claude Code and Codex again", icon: "refresh", run: () => { switchTab("agent"); void detectAgents(); } },
+      );
+    }
     for (const [id, label] of EDITORS) items.push({ group: "Open folder in", label, icon: "ext", run: () => { void openInEditor(id, project); } });
     items.push(
       { group: "Project", label: "Sync", hint: "tab", icon: "chev-r", run: () => switchTab("sync") },
+      { group: "Project", label: "Agent", hint: "tab", icon: "chev-r", run: () => switchTab("agent") },
       { group: "Project", label: "Changes", hint: "tab", icon: "chev-r", run: () => switchTab("changes") },
       { group: "Project", label: "Activity", hint: "tab", icon: "chev-r", run: () => switchTab("logs") },
       { group: "Project", label: "Settings", hint: "tab", icon: "gear", run: () => switchTab("setup") },
@@ -2377,7 +3039,7 @@ function wireGlobalKeys(): void {
     const project = activeProject();
     if (mod && e.shiftKey && e.key.toLowerCase() === "l" && isLinked(project) && canReachFigma()) { e.preventDefault(); void handleCommand(project, "pull"); }
     else if (mod && e.shiftKey && e.key.toLowerCase() === "p" && isLinked(project) && canReachFigma()) { e.preventDefault(); void handleCommand(project, "push"); }
-    else if (mod && /^[1-4]$/.test(e.key) && project) { e.preventDefault(); switchTab((["sync", "changes", "logs", "setup"] as TabName[])[Number(e.key) - 1]!); }
+    else if (mod && /^[1-5]$/.test(e.key) && project) { e.preventDefault(); switchTab((["sync", "agent", "changes", "logs", "setup"] as TabName[])[Number(e.key) - 1]!); }
     else if (e.key === "Escape" && ge.menuHost.childElementCount > 0) closeMenu();
   });
   document.addEventListener("pointerdown", (e) => {
@@ -2423,6 +3085,8 @@ async function boot(): Promise<void> {
       ge.onboardingStatus.textContent = event.message;
     }
   });
+
+  api.onHarnessEvent?.(onHarnessEvent);
 
   checkBrowserInstalled();
   try {

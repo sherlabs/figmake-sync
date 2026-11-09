@@ -25,6 +25,15 @@ import {
 import * as sessionModule from "../browser/session.js";
 import { BrowserSessionManager } from "../browser/session.js";
 import { FigmakeSyncService } from "../core/service.js";
+import {
+  HarnessService,
+  isSafeLocalUrl,
+  rootDirInputSchema,
+  runAgentInputSchema,
+  toChangeSet,
+  updateSettingsInputSchema,
+  type HarnessEvent,
+} from "../harness/index.js";
 import { trackEvent } from "./analytics.js";
 import type {
   DesktopAppState,
@@ -36,6 +45,7 @@ import { DesktopAppStateStore } from "./appState.js";
 const APP_ID = "com.figmake.sync";
 
 let service!: FigmakeSyncService;
+let harness!: HarnessService;
 
 let mainWindow: BrowserWindow | null = null;
 let appStateStore: DesktopAppStateStore | null = null;
@@ -429,6 +439,80 @@ async function clearPersistedProjectRootIfMatches(
   return true;
 }
 
+function sendHarnessEvent(event: HarnessEvent): void {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+  mainWindow.webContents.send("figmake:harness:event", event);
+}
+
+async function harnessRoot(input: unknown): Promise<string> {
+  const { rootDir } = rootDirInputSchema.parse(input);
+  const allowed = await resolveAllowedPath(rootDir, true);
+  if (!allowed) throw new Error("Not a known figmake-sync project folder.");
+  return allowed;
+}
+
+function registerHarnessHandlers(): void {
+  ipcMain.handle("figmake:harness:detect-agents", () => harness.detectAgents());
+  ipcMain.handle("figmake:harness:get-settings", async (_e, input: unknown) =>
+    harness.getSettings(await harnessRoot(input)),
+  );
+  ipcMain.handle("figmake:harness:update-settings", async (_e, input: unknown) => {
+    const parsed = updateSettingsInputSchema.parse(input);
+    const root = await harnessRoot({ rootDir: parsed.rootDir });
+    return harness.updateSettings(root, parsed.patch);
+  });
+  ipcMain.handle("figmake:harness:setup", async (_e, input: unknown) => {
+    const root = await harnessRoot(input);
+    return withOperationLock("harness-setup", (signal) => harness.setup(root, signal));
+  });
+  ipcMain.handle("figmake:harness:dev-start", async (_e, input: unknown) =>
+    harness.startDev(await harnessRoot(input)),
+  );
+  ipcMain.handle("figmake:harness:dev-stop", async (_e, input: unknown) =>
+    harness.stopDev(await harnessRoot(input)),
+  );
+  ipcMain.handle("figmake:harness:dev-status", async (_e, input: unknown) =>
+    harness.devStatus(await harnessRoot(input)),
+  );
+  ipcMain.handle("figmake:harness:dev-open", async (_e, input: unknown) => {
+    const { url, state: devState } = harness.devStatus(await harnessRoot(input));
+    if (devState !== "running" || !isSafeLocalUrl(url)) return { opened: false, error: "Dev server is not running on a local URL." };
+    await shell.openExternal(url);
+    return { opened: true, url };
+  });
+  ipcMain.handle("figmake:harness:cancel-run", async (_e, input: unknown) => ({
+    cancelled: harness.cancelRun(await harnessRoot(input)),
+  }));
+  ipcMain.handle("figmake:harness:changes", async (_e, input: unknown) =>
+    toChangeSet(await service.status({ projectRoot: await harnessRoot(input) })),
+  );
+  ipcMain.handle("figmake:harness:run-agent", async (_e, input: unknown) => {
+    const parsed = runAgentInputSchema.parse(input);
+    const root = await harnessRoot({ rootDir: parsed.rootDir });
+    // The run holds the global operation lock for its whole duration (cancel + quit confirm cover it);
+    // the invoke resolves as soon as the run has started.
+    return new Promise<{ runId: string }>((resolve, reject) => {
+      void withOperationLock("agent-run", async (signal) => {
+        try {
+          const { runId, done } = await harness.startRun(
+            {
+              rootDir: root,
+              prompt: parsed.prompt,
+              agent: parsed.agent,
+              newSession: parsed.newSession,
+            },
+            signal,
+          );
+          resolve({ runId });
+          await done;
+        } catch (error) {
+          reject(error instanceof Error ? error : new Error(String(error)));
+        }
+      }).catch((error: unknown) => reject(error instanceof Error ? error : new Error(String(error))));
+    });
+  });
+}
+
 function getSharedBrowserProfileDir(): string {
   return path.join(app.getPath("userData"), "browser-profile");
 }
@@ -519,6 +603,8 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle("figmake:inspect-project", async (_event, rootDir: string) => {
     await persistLastProjectRoot(rootDir);
+    // Project switch: dev servers of other projects must not keep running.
+    void harness.stopDevExcept(rootDir);
     return service.inspectProject(rootDir);
   });
 
@@ -1028,8 +1114,23 @@ app.on("before-quit", (event) => {
     if (!ok) return;
     quitting = true;
     await abortActiveAndWait();
+    await harness?.shutdown().catch(() => undefined);
     app.exit(0);
   });
+});
+
+let harnessShutdownDone = false;
+app.on("will-quit", (event) => {
+  // Dev servers run in their own process groups; make sure none outlive the app.
+  if (harnessShutdownDone || !harness) return;
+  event.preventDefault();
+  void harness
+    .shutdown()
+    .catch(() => undefined)
+    .then(() => {
+      harnessShutdownDone = true;
+      app.quit();
+    });
 });
 
 app.on("activate", () => {
@@ -1078,6 +1179,7 @@ async function bootstrap(): Promise<void> {
   const sharedProfileDir = path.join(app.getPath("userData"), "browser-profile");
   await fs.ensureDir(sharedProfileDir);
   service = new FigmakeSyncService({ sharedBrowserProfileDir: sharedProfileDir });
+  harness = new HarnessService({ sync: service, emit: sendHarnessEvent });
 
   if (process.platform === "darwin") {
     app.dock?.setIcon(getAppIconPath());
@@ -1086,6 +1188,7 @@ async function bootstrap(): Promise<void> {
 
   Menu.setApplicationMenu(null);
   registerIpcHandlers();
+  registerHarnessHandlers();
   mainWindow = await createMainWindow();
   await writeStartupLog("Main window created successfully.");
 }

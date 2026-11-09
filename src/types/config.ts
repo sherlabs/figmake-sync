@@ -64,6 +64,18 @@ export const projectConfigSchema = z.object({
       level: z.enum(["silent", "info", "debug"]).default("info"),
     })
     .default({}),
+  /** Agent workflow settings (src/harness). Auto-push is opt-in. */
+  harness: z
+    .object({
+      preferredAgent: z.enum(["claude", "codex"]).default("claude"),
+      autoPush: z.boolean().default(false),
+      lastSession: z
+        .object({ agent: z.enum(["claude", "codex"]), id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$/) })
+        .nullable()
+        .catch(null)
+        .default(null),
+    })
+    .default({}),
 });
 
 export type ProjectConfig = z.output<typeof projectConfigSchema>;
