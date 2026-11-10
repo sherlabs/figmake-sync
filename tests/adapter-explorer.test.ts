@@ -108,8 +108,11 @@ describe("fake explorer fixture", { timeout: 30_000 }, () => {
     const input = page.locator('input[data-testid="code-file-name-input"]:not([readonly])');
     expect(await input.count()).toBe(1);
     expect(await input.inputValue()).toBe("new-file-5.tsx");
-    await input.fill("Fresh.tsx");
-    await input.press("Enter");
+    // One synchronous step: a late re-render of the virtualised list can swap the input between a separate fill and Enter.
+    await input.evaluate((el: HTMLInputElement) => {
+      el.value = "Fresh.tsx";
+      el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    });
     await expect.poll(async () => (await model()).files["src/Fresh.tsx"], { timeout: 10_000 }).toBe("");
     expect((await model()).pending).toBeNull();
   });
