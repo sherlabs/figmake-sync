@@ -53,7 +53,8 @@ const reportProblem = (): void => void api.reportIssue({ errorCode: "unknown", m
 const plist = h("ul", { class: "plist", role: "listbox", "aria-labelledby": "projects-h" });
 const sideEmpty = h("p", { class: "side-empty" }, "No projects yet. Paste a Figma Make link to start.");
 const addBtn = h("button", { type: "button", class: "sbtn", onclick: () => openSheet({ kind: "add" }) }, icon("plus"), "Add project");
-const side = h("aside", { class: "side", id: "fm-side", "aria-label": "Projects" }, h("div", { class: "side-top", "aria-hidden": "true" }), h("h2", { id: "projects-h", class: "side-h" }, "Projects"), plist, sideEmpty, addBtn, h("div", { class: "spacer" }));
+const supportBtn = h("button", { type: "button", class: "support", title: "Opens sherlabs.com in your browser", onclick: () => openSupport() }, icon("heart"), h("span", { class: "t" }, h("b", {}, "Support Sherlabs"), h("span", {}, "Free app. Chip in if it helps.")));
+const side = h("aside", { class: "side", id: "fm-side", "aria-label": "Projects" }, h("div", { class: "side-top", "aria-hidden": "true" }), h("h2", { id: "projects-h", class: "side-h" }, "Projects"), plist, sideEmpty, addBtn, h("div", { class: "spacer" }), supportBtn);
 
 const title = h("h1", {}, "figmake-sync");
 const chip = h("span", { class: "chip status", role: "status" });
@@ -798,7 +799,7 @@ function commands(s: SessionState): Cmd[] {
     { group: "Do", label: "Show project files", glyph: "folder", off: !hasChat(s), run: () => { chatOpen = true; store.set("chat.open", "1"); setTab("files", true); layoutChat(); } },
     { group: "Do", label: "Undo last change", glyph: "undo", off: !(s.phase === "ready" && s.canUndo), run: () => void api.undo() },
     { group: "Do", label: "Settings", glyph: "gear", keys: [`${MOD},`], run: () => openSheet({ kind: "settings" }) },
-    { group: "Do", label: "Support Sherlabs", glyph: "info", run: openSupport },
+    { group: "Do", label: "Support Sherlabs", glyph: "heart", run: openSupport },
     { group: "Do", label: "Report a problem", glyph: "info", run: reportProblem },
   ];
   for (const p of s.projects) if (p.key !== s.activeKey) list.push({ group: "Projects", label: p.name, glyph: "folder", run: () => void api.switchProject(p.key) });
