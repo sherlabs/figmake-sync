@@ -304,7 +304,8 @@ async function bootstrap(): Promise<void> {
     sharedBrowserProfileDir: profileDir,
     adapterFactory: createHealingAdapterFactory({ heal, hasAgent: () => Boolean(ref.session?.state.agent), diagnostics }),
   });
-  const documentsDir = process.env["FIGMAKE_DOCUMENTS_DIR"] ?? app.getPath("documents");
+  // Not ~/Documents: iCloud Drive / OneDrive often sync it, and syncing node_modules makes every file read minutes slow.
+  const documentsDir = process.env["FIGMAKE_DOCUMENTS_DIR"] ?? app.getPath("home");
   const store = new DesktopAppStateStore(userData("app-state.json"));
 
   harness = new HarnessService({ sync, emit: (event) => ref.session?.handleHarnessEvent(event), ensureNode });

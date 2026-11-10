@@ -10,7 +10,7 @@ Edit your Figma Make project with your own AI, then send it back.
 2. Describe a change. Your preview updates as the AI works.
 3. Press Send to Figma.
 
-First run asks once: sign in to Figma, and pick Claude or ChatGPT. Everything else (Node, the AI tool, installing, running the app, backups) happens by itself. Projects are created for you inside `~/Documents/figmake-sync`; Settings can move that workspace for new projects.
+First run asks once: sign in to Figma, and pick Claude or ChatGPT. Everything else (Node, the AI tool, installing, running the app, backups) happens by itself. Projects are created for you inside `~/figmake-sync` (not Documents, which iCloud/OneDrive may sync and slow right down); Settings can move that workspace for new projects.
 
 Good to know:
 
