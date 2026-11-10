@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=1080, height=1920" />
+<title>figmake-sync launch reel</title>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<style>
+:root{--ink:#14171c;--paper:#f5f5f3;--acc:#d9641a}
+*{box-sizing:border-box}
+body>svg{position:absolute;width:0;height:0;overflow:hidden}
+body{margin:0;background:#14171c;font-family:Inter,system-ui,sans-serif}
+#root{position:relative;width:1080px;height:1920px;overflow:hidden;background:var(--ink)}
+.scene{position:absolute;inset:0;overflow:hidden}
+.ink{background:var(--ink);color:#f3f4f6}
+.paper{background:var(--paper);color:var(--ink)}
+.orange{background:var(--acc);color:var(--ink)}
+.grid{position:absolute;inset:0;opacity:.07;background-image:linear-gradient(#fff 2px,transparent 2px),linear-gradient(90deg,#fff 2px,transparent 2px);background-size:90px 90px}
+.paper .grid,.orange .grid{background-image:linear-gradient(#14171c 2px,transparent 2px),linear-gradient(90deg,#14171c 2px,transparent 2px);opacity:.06}
+.glow{position:absolute;left:140px;top:560px;width:800px;height:800px;border-radius:50%;background:radial-gradient(circle,rgba(217,100,26,.35),rgba(217,100,26,0) 65%);opacity:.3}
+.cap{position:absolute;left:56px;width:980px;font-weight:800;line-height:1.03;letter-spacing:-.04em}
+.cap .ln{display:block;white-space:nowrap}
+.cap .w{display:inline-block;margin-right:.2em}
+.hl{color:var(--acc)}
+.orange .hl{color:#fff}
+.kick{position:absolute;left:56px;top:84px;height:100px;font:700 54px/1 Inter,system-ui,sans-serif;letter-spacing:-.01em;display:flex;align-items:center;gap:22px;white-space:nowrap}
+.kick .fg{height:84px;width:auto;display:block}
+.kick i{display:block;width:22px;height:22px;border-radius:50%;background:var(--acc)}
+.orange .kick{color:var(--ink)}
+.pills{position:absolute;left:56px;display:flex;gap:18px}
+.pill{font-weight:700;font-size:60px;padding:20px 40px;border-radius:999px;background:rgba(255,255,255,.12);border:3px solid rgba(255,255,255,.35);white-space:nowrap}
+.paper .pill{background:#fff;border-color:#c9ccd3}
+.pillbig{position:absolute;left:40px;width:1000px;text-align:center;font-weight:800;font-size:64px;padding:30px 0;border-radius:999px;background:var(--ink);color:#fff;white-space:nowrap}
+.paper .pillbig{background:var(--acc);color:var(--ink)}
+.pillbig.sm{font-size:40px;font-weight:700;padding:26px 0;color:var(--ink)}
+.crop{position:absolute;overflow:hidden;border-radius:28px;box-shadow:0 40px 120px rgba(0,0,0,.35),0 0 0 4px rgba(130,135,145,.45);background:#fff}
+.crop img{position:absolute;max-width:none;display:block}
+.crop.top{box-shadow:none}
+.ring{position:absolute;border:6px solid var(--acc);border-radius:12px;opacity:0;box-shadow:0 0 0 10px rgba(217,100,26,.28);z-index:4}
+.orange .ring{border-color:var(--ink)}
+.cur{position:absolute;left:0;top:0;opacity:0;z-index:6;filter:drop-shadow(0 6px 8px rgba(0,0,0,.4))}
+.rip{position:absolute;width:90px;height:90px;border-radius:50%;border:7px solid var(--acc);opacity:0;margin:-45px 0 0 -45px;z-index:5}
+#wipe{position:absolute;left:0;top:0;width:1080px;height:1920px;background:var(--acc);z-index:50}
+#wipe2{position:absolute;left:0;top:0;width:1080px;height:1920px;background:#fff;z-index:49}
+.task{position:absolute;left:56px;width:960px;height:150px;border-radius:32px;background:#1f242c;border:3px solid #3a4250;display:flex;align-items:center;padding:0 44px;font-weight:700;font-size:62px;letter-spacing:-.02em}
+.coin{position:absolute;right:-24px;top:25px;width:100px;height:100px;border-radius:50%;background:var(--acc);box-shadow:0 0 0 10px rgba(217,100,26,.3);display:flex;align-items:center;justify-content:center}
+.coin i{display:block;width:44px;height:44px;border-radius:50%;border:8px solid rgba(20,23,28,.55)}
+.coin.sm{right:0;top:8px;width:84px;height:84px}
+.meter{position:absolute;left:56px;width:968px}
+.mlab{font:700 36px/1 "JetBrains Mono",ui-monospace,monospace;letter-spacing:.08em;color:#aab1bd;margin-bottom:22px}
+.mtrack{height:100px;border-radius:50px;background:#262c36;border:3px solid #3a4250;overflow:hidden}
+.mfill{height:100%;background:var(--acc);border-radius:50px}
+.codecard{position:absolute;left:40px;top:830px;width:1000px;height:700px;border-radius:34px;background:#fff;border:3px solid #c9ccd3;box-shadow:0 30px 80px rgba(0,0,0,.14);overflow:hidden}
+.tag{position:absolute;left:44px;top:40px;font:600 38px "JetBrains Mono",ui-monospace,monospace;color:#5b616c}
+.cl{position:absolute;left:44px;font:600 44px "JetBrains Mono",ui-monospace,monospace;color:#14171c;white-space:pre;padding:6px 14px;border-radius:12px}
+.cl.bug{background:rgba(217,100,26,.18);color:#a8470c}
+.opt{position:absolute;left:40px;width:1000px;border-radius:34px;background:#1f242c;border:3px solid #3a4250;padding:40px 44px;height:400px}
+.olab{font:700 36px/1 "JetBrains Mono",ui-monospace,monospace;letter-spacing:.08em;color:var(--acc);margin-bottom:28px}
+.ocode{font:600 68px/1.35 "JetBrains Mono",ui-monospace,monospace;color:#f3f4f6}
+.caret{display:inline-block;width:6px;height:1.05em;background:var(--acc);vertical-align:-.15em;margin-left:4px}
+.orow{position:absolute;left:44px;right:44px;top:270px;display:flex;align-items:center;justify-content:space-between;font-weight:700;font-size:56px}
+#ob .meter{left:44px;width:908px;top:120px}
+#ob .mtrack{height:70px}
+.pbox{position:absolute;left:40px;top:640px;width:1000px;height:400px;border-radius:30px;background:#1b2027;border:3px solid #4a5363;padding:36px 44px}
+.plab{font:700 34px/1 "JetBrains Mono",ui-monospace,monospace;color:#8f98a6;margin-bottom:26px;letter-spacing:.04em}
+.ptxt{font-weight:600;font-size:70px;line-height:1.2;color:#fff;letter-spacing:-.02em}
+.strip{position:absolute;left:40px;width:1000px;top:1180px;padding:34px 0;border-radius:30px;background:var(--acc);color:var(--ink);text-align:center;font-weight:800;font-size:104px;letter-spacing:-.04em;white-space:nowrap}
+.strip u{text-decoration:none}
+.big{position:absolute;font-weight:800;letter-spacing:-.035em}
+
+
+%%CSS%%
+
+</style>
+</head>
+<body>
+<div id="root" data-composition-id="main" data-start="0" data-width="1080" data-height="1920" data-duration="21.4">
+<section id="s1" class="scene ink clip" data-start="0" data-duration="2.46"><div class="grid"></div><div class="glow"></div><div class="cap"  style="font-size:164px;top:262px"><span class="ln"><span class="w">Figma</span><span class="w">Make</span></span><span class="ln"><span class="w">eats</span><span class="w">your</span></span><span class="ln"><span class="w hl">AI</span><span class="w hl">tokens.</span></span></div><div class="meter" id="m1" style="top:820px"><div class="mlab">AI CREDITS</div><div class="mtrack"><div class="mfill" style="width:100%"></div></div></div><div class="task" id="t0" style="top:1030px"><span>Change the button color</span><div class="coin" id="k0"><i></i></div></div><div class="task" id="t1" style="top:1210px"><span>Fix the cart total</span><div class="coin" id="k1"><i></i></div></div><div class="task" id="t2" style="top:1390px"><span>Rename a label</span><div class="coin" id="k2"><i></i></div></div></section>
+<section id="s2" class="scene paper clip" data-start="2.46" data-duration="2.18"><div class="grid"></div><div class="cap"  style="font-size:230px;top:262px"><span class="ln"><span class="w">It's</span><span class="w hl">your</span></span><span class="ln"><span class="w hl">code.</span></span></div><div class="codecard" id="cc"><div class="tag">src/pages/Cart.tsx</div><div class="cl" style="top:170px">export default function Cart() {</div><div class="cl" style="top:270px">  const total = items.reduce(</div><div class="cl bug" style="top:370px">    (s, i) =&gt; s + i.price, 0)</div><div class="cl" style="top:470px">  return &lt;Total value={total} /&gt;</div><div class="cl" style="top:570px">}</div></div></section>
+<section id="s3" class="scene ink clip" data-start="4.64" data-duration="2.71"><div class="grid"></div><div class="glow"></div><div class="cap"  style="font-size:122px;top:270px"><span class="ln"><span class="w">Edit</span><span class="w">it</span><span class="w hl">by</span><span class="w">hand.</span></span><span class="ln"><span class="w">Or</span><span class="w">spend</span><span class="w hl">tokens.</span></span></div><div class="opt" id="oa" style="top:620px"><div class="olab">BY HAND</div><div class="ocode">const total =<br><span id="typ"></span><b class="caret"></b></div></div><div class="opt" id="ob" style="top:1080px"><div class="olab">FIGMA'S AI CREDITS</div><div class="meter" id="m3" style="top:130px"><div class="mlab"></div><div class="mtrack"><div class="mfill" style="width:64%"></div></div></div><div class="orow"><span>Change the button color</span><div class="coin sm" id="k3"><i></i></div></div></div></section>
+%%SCENES%%
+<section id="s9" class="scene ink clip" data-start="19.1" data-duration="2.3"><div class="grid"></div><div class="glow"></div><div id="row9" style="position:absolute;left:0;width:1080px;top:262px;height:320px;display:flex;align-items:center;justify-content:center;gap:56px"><img id="fg9" src="assets/figma-logo.svg" style="height:230px;width:auto;display:block"/><svg id="ar9" width="120" height="90" viewBox="0 0 120 90"><path d="M8 45H100M68 12L104 45L68 78" fill="none" stroke="#d9641a" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/></svg><img id="ic9" src="assets/figmake-sync-icon.svg" style="width:372px;height:372px;margin:-36px;filter:drop-shadow(0 30px 80px rgba(217,100,26,.35));display:block"/></div><div id="n9" class="big" style="left:0;width:1080px;top:600px;text-align:center;font-size:146px;color:#f3f4f6">figmake-sync</div><div id="f9" class="big" style="left:0;width:1080px;top:775px;text-align:center;font-size:88px;line-height:1.1;color:#f3f4f6">Free to <span class="hl">download.</span></div><div id="by9" style="position:absolute;left:0;width:1080px;top:940px;display:flex;flex-direction:column;align-items:center;gap:34px"><div style="font:600 44px/1 'JetBrains Mono',ui-monospace,monospace;letter-spacing:.1em;color:#aab1bd">by</div><img src="assets/sherlabs-wordmark-light.svg" style="width:680px;height:auto;display:block"/></div><div id="u9" style="position:absolute;left:0;width:1080px;top:1250px;text-align:center"><span style="display:inline-block;font:700 70px 'JetBrains Mono',ui-monospace,monospace;color:#14171c;background:#d9641a;padding:26px 60px;border-radius:999px">sherlabs.com</span></div><div id="dis9" style="position:absolute;left:0;width:1080px;top:1420px;text-align:center;font:500 38px/1.3 Inter,system-ui,sans-serif;color:#aab1bd">Unofficial. Not affiliated with Figma.</div></section>
+
+<div id="wipe"></div>
+<div id="wipe2"></div>
+<audio id="bgm" src="assets/music/happy-beats-business-moves-vol-10-by-ende-dot-app.mp3" data-start="0" data-duration="21.4" data-track-index="10"></audio>
+<audio id="sx0" src="assets/sfx/impactSoft_medium_002.ogg" data-start="2.4" data-track-index="11" data-volume="0.8"></audio>
+<audio id="sx1" src="assets/sfx/impactSoft_medium_004.ogg" data-start="4.58" data-track-index="12" data-volume="0.8"></audio>
+<audio id="sx2" src="assets/sfx/impactSoft_medium_001.ogg" data-start="7.29" data-track-index="13" data-volume="0.8"></audio>
+<audio id="sx3" src="assets/sfx/impactSoft_medium_002.ogg" data-start="9.23" data-track-index="14" data-volume="0.8"></audio>
+<audio id="sx4" src="assets/sfx/impactSoft_medium_004.ogg" data-start="11.96" data-track-index="15" data-volume="0.8"></audio>
+<audio id="sx5" src="assets/sfx/impactSoft_medium_001.ogg" data-start="14.14" data-track-index="16" data-volume="0.8"></audio>
+<audio id="sx6" src="assets/sfx/impactSoft_medium_002.ogg" data-start="16.87" data-track-index="17" data-volume="0.8"></audio>
+<audio id="sx7" src="assets/sfx/impactSoft_medium_004.ogg" data-start="19.04" data-track-index="18" data-volume="0.8"></audio>
+<audio id="sx8" src="assets/sfx/drop_001.ogg" data-start="0.6" data-track-index="19" data-volume="0.6"></audio>
+<audio id="sx9" src="assets/sfx/drop_001.ogg" data-start="0.95" data-track-index="20" data-volume="0.6"></audio>
+<audio id="sx10" src="assets/sfx/drop_001.ogg" data-start="1.3" data-track-index="21" data-volume="0.6"></audio>
+<audio id="sx11" src="assets/sfx/chips-stack-3.ogg" data-start="0.85" data-track-index="22" data-volume="0.4"></audio>
+<audio id="sx12" src="assets/sfx/chips-stack-3.ogg" data-start="1.2" data-track-index="23" data-volume="0.4"></audio>
+<audio id="sx13" src="assets/sfx/chips-stack-3.ogg" data-start="1.55" data-track-index="24" data-volume="0.4"></audio>
+<audio id="sx14" src="assets/sfx/card-slide-1.ogg" data-start="2.76" data-track-index="25" data-volume="0.5"></audio>
+<audio id="sx15" src="assets/sfx/click_002.ogg" data-start="3.76" data-track-index="26" data-volume="0.6"></audio>
+<audio id="sx16" src="assets/sfx/keypress-003.wav" data-start="5.39" data-track-index="27" data-volume="0.5"></audio>
+<audio id="sx17" src="assets/sfx/keypress-007.wav" data-start="5.59" data-track-index="28" data-volume="0.5"></audio>
+<audio id="sx18" src="assets/sfx/keypress-011.wav" data-start="5.79" data-track-index="29" data-volume="0.5"></audio>
+<audio id="sx19" src="assets/sfx/keypress-015.wav" data-start="5.99" data-track-index="30" data-volume="0.5"></audio>
+<audio id="sx20" src="assets/sfx/keypress-019.wav" data-start="6.19" data-track-index="31" data-volume="0.5"></audio>
+<audio id="sx21" src="assets/sfx/keypress-023.wav" data-start="6.39" data-track-index="32" data-volume="0.5"></audio>
+<audio id="sx22" src="assets/sfx/keypress-003.wav" data-start="6.59" data-track-index="33" data-volume="0.5"></audio>
+<audio id="sx23" src="assets/sfx/keypress-007.wav" data-start="6.79" data-track-index="34" data-volume="0.5"></audio>
+<audio id="sx24" src="assets/sfx/card-slide-1.ogg" data-start="5.64" data-track-index="35" data-volume="0.5"></audio>
+<audio id="sx25" src="assets/sfx/drop_002.ogg" data-start="6.24" data-track-index="36" data-volume="0.6"></audio>
+<audio id="sx26" src="assets/sfx/card-slide-1.ogg" data-start="7.6" data-track-index="37" data-volume="0.5"></audio>
+<audio id="sx27" src="assets/sfx/drop_001.ogg" data-start="7.95" data-track-index="38" data-volume="0.6"></audio>
+<audio id="sx28" src="assets/sfx/click_003.ogg" data-start="9.74" data-track-index="39" data-volume="0.6"></audio>
+<audio id="sx29" src="assets/sfx/click_003.ogg" data-start="9.89" data-track-index="40" data-volume="0.6"></audio>
+<audio id="sx30" src="assets/sfx/card-slide-1.ogg" data-start="9.94" data-track-index="41" data-volume="0.5"></audio>
+<audio id="sx31" src="assets/sfx/impactSoft_heavy_003.ogg" data-start="10.69" data-track-index="42" data-volume="0.8"></audio>
+<audio id="sx32" src="assets/sfx/keypress-003.wav" data-start="8.050" data-track-index="44" data-volume="0.35"></audio>
+<audio id="sx33" src="assets/sfx/keypress-007.wav" data-start="8.075" data-track-index="45" data-volume="0.35"></audio>
+<audio id="sx34" src="assets/sfx/keypress-011.wav" data-start="8.100" data-track-index="46" data-volume="0.35"></audio>
+<audio id="sx35" src="assets/sfx/keypress-015.wav" data-start="8.125" data-track-index="47" data-volume="0.35"></audio>
+<audio id="sx36" src="assets/sfx/keypress-019.wav" data-start="8.150" data-track-index="48" data-volume="0.35"></audio>
+<audio id="sx37" src="assets/sfx/keypress-023.wav" data-start="8.175" data-track-index="49" data-volume="0.35"></audio>
+<audio id="sx38" src="assets/sfx/keypress-003.wav" data-start="8.200" data-track-index="50" data-volume="0.35"></audio>
+<audio id="sx39" src="assets/sfx/keypress-007.wav" data-start="8.225" data-track-index="51" data-volume="0.35"></audio>
+<audio id="sx40" src="assets/sfx/keypress-011.wav" data-start="8.250" data-track-index="52" data-volume="0.35"></audio>
+<audio id="sx41" src="assets/sfx/keypress-015.wav" data-start="8.275" data-track-index="53" data-volume="0.35"></audio>
+<audio id="sx42" src="assets/sfx/keypress-019.wav" data-start="8.300" data-track-index="54" data-volume="0.35"></audio>
+<audio id="sx43" src="assets/sfx/keypress-023.wav" data-start="8.325" data-track-index="55" data-volume="0.35"></audio>
+<audio id="sx44" src="assets/sfx/keypress-003.wav" data-start="8.350" data-track-index="56" data-volume="0.35"></audio>
+<audio id="sx45" src="assets/sfx/keypress-007.wav" data-start="8.375" data-track-index="57" data-volume="0.35"></audio>
+<audio id="sx46" src="assets/sfx/keypress-011.wav" data-start="8.400" data-track-index="58" data-volume="0.35"></audio>
+<audio id="sx47" src="assets/sfx/keypress-015.wav" data-start="8.425" data-track-index="59" data-volume="0.35"></audio>
+<audio id="sx48" src="assets/sfx/keypress-019.wav" data-start="8.450" data-track-index="60" data-volume="0.35"></audio>
+<audio id="sx49" src="assets/sfx/keypress-023.wav" data-start="8.475" data-track-index="61" data-volume="0.35"></audio>
+<audio id="sx50" src="assets/sfx/keypress-003.wav" data-start="8.500" data-track-index="62" data-volume="0.35"></audio>
+<audio id="sx51" src="assets/sfx/keypress-007.wav" data-start="8.525" data-track-index="63" data-volume="0.35"></audio>
+<audio id="sx52" src="assets/sfx/keypress-011.wav" data-start="8.550" data-track-index="64" data-volume="0.35"></audio>
+<audio id="sx53" src="assets/sfx/keypress-015.wav" data-start="8.575" data-track-index="65" data-volume="0.35"></audio>
+<audio id="sx54" src="assets/sfx/keypress-019.wav" data-start="8.600" data-track-index="66" data-volume="0.35"></audio>
+<audio id="sx55" src="assets/sfx/keypress-023.wav" data-start="8.625" data-track-index="67" data-volume="0.35"></audio>
+<audio id="sx56" src="assets/sfx/keypress-003.wav" data-start="8.650" data-track-index="68" data-volume="0.35"></audio>
+<audio id="sx57" src="assets/sfx/keypress-007.wav" data-start="8.675" data-track-index="69" data-volume="0.35"></audio>
+<audio id="sx58" src="assets/sfx/keypress-011.wav" data-start="8.700" data-track-index="70" data-volume="0.35"></audio>
+<audio id="sx59" src="assets/sfx/keypress-015.wav" data-start="8.725" data-track-index="71" data-volume="0.35"></audio>
+<audio id="sx60" src="assets/sfx/keypress-003.wav" data-start="12.620" data-track-index="72" data-volume="0.4"></audio>
+<audio id="sx61" src="assets/sfx/keypress-023.wav" data-start="12.665" data-track-index="73" data-volume="0.4"></audio>
+<audio id="sx62" src="assets/sfx/keypress-019.wav" data-start="12.710" data-track-index="74" data-volume="0.4"></audio>
+<audio id="sx63" src="assets/sfx/keypress-015.wav" data-start="12.755" data-track-index="75" data-volume="0.4"></audio>
+<audio id="sx64" src="assets/sfx/keypress-011.wav" data-start="12.800" data-track-index="76" data-volume="0.4"></audio>
+<audio id="sx65" src="assets/sfx/keypress-007.wav" data-start="12.845" data-track-index="77" data-volume="0.4"></audio>
+<audio id="sx66" src="assets/sfx/keypress-003.wav" data-start="12.890" data-track-index="78" data-volume="0.4"></audio>
+<audio id="sx67" src="assets/sfx/keypress-023.wav" data-start="12.935" data-track-index="79" data-volume="0.4"></audio>
+<audio id="sx68" src="assets/sfx/keypress-019.wav" data-start="12.980" data-track-index="80" data-volume="0.4"></audio>
+<audio id="sx69" src="assets/sfx/keypress-015.wav" data-start="13.025" data-track-index="81" data-volume="0.4"></audio>
+<audio id="sx70" src="assets/sfx/keypress-011.wav" data-start="13.070" data-track-index="82" data-volume="0.4"></audio>
+<audio id="sx71" src="assets/sfx/keypress-007.wav" data-start="13.115" data-track-index="83" data-volume="0.4"></audio>
+<audio id="sx72" src="assets/sfx/keypress-003.wav" data-start="13.160" data-track-index="84" data-volume="0.4"></audio>
+<audio id="sx73" src="assets/sfx/keypress-023.wav" data-start="13.205" data-track-index="85" data-volume="0.4"></audio>
+<audio id="sx74" src="assets/sfx/keypress-019.wav" data-start="13.250" data-track-index="86" data-volume="0.4"></audio>
+<audio id="sx75" src="assets/sfx/keypress-015.wav" data-start="13.295" data-track-index="87" data-volume="0.4"></audio>
+<audio id="sx76" src="assets/sfx/keypress-011.wav" data-start="13.340" data-track-index="88" data-volume="0.4"></audio>
+<audio id="sx77" src="assets/sfx/keypress-007.wav" data-start="13.385" data-track-index="89" data-volume="0.4"></audio>
+<audio id="sx78" src="assets/sfx/keypress-003.wav" data-start="13.430" data-track-index="90" data-volume="0.4"></audio>
+<audio id="sx79" src="assets/sfx/keypress-023.wav" data-start="13.475" data-track-index="91" data-volume="0.4"></audio>
+<audio id="sx80" src="assets/sfx/card-slide-1.ogg" data-start="12.240" data-track-index="92" data-volume="0.5"></audio>
+<audio id="sx81" src="assets/sfx/click_003.ogg" data-start="13.740" data-track-index="93" data-volume="0.6"></audio>
+<audio id="sx82" src="assets/sfx/card-slide-1.ogg" data-start="14.450" data-track-index="94" data-volume="0.5"></audio>
+<audio id="sx83" src="assets/sfx/drop_002.ogg" data-start="15.450" data-track-index="95" data-volume="0.6"></audio>
+<audio id="sx84" src="assets/sfx/impactSoft_medium_001.ogg" data-start="15.450" data-track-index="96" data-volume="0.45"></audio>
+<audio id="sx85" src="assets/sfx/drop_001.ogg" data-start="15.900" data-track-index="97" data-volume="0.6"></audio>
+<audio id="sx86" src="assets/sfx/card-slide-1.ogg" data-start="17.130" data-track-index="98" data-volume="0.5"></audio>
+<audio id="sx100" src="assets/sfx/mouseclick1.ogg" data-start="18.55" data-track-index="120" data-volume="0.9"></audio>
+<audio id="sx101" src="assets/sfx/impactBell_heavy_000.ogg" data-start="18.6" data-track-index="121" data-volume="0.55"></audio>
+<audio id="sx102" src="assets/sfx/impactBell_heavy_004.ogg" data-start="19.62" data-track-index="122" data-volume="0.85"></audio>
+<audio id="sx103" src="assets/sfx/drop_001.ogg" data-start="20.35" data-track-index="123" data-volume="0.6"></audio>
+
+</div>
+<script>
+const BASS=[0.72,0.61,0.6,0.62,0.63,0.63,0.63,0.62,0.45,0.18,0.04,0.01,0.0,0.0,0.0,0.03,0.34,0.62,0.59,0.59,0.56,0.56,0.55,0.53,0.48,0.26,0.06,0.01,0.13,0.49,0.44,0.47,0.37,0.32,0.14,0.04,0.11,0.39,0.23,0.05,0.09,0.39,0.46,0.44,0.43,0.33,0.13,0.04,0.13,0.71,0.5,0.39,0.39,0.35,0.14,0.03,0.05,0.45,0.61,0.6,0.6,0.58,0.57,0.56,0.57,0.51,0.47,0.52,0.5,0.49,0.49,0.48,0.41,0.22,0.04,0.01,0.0,0.0,0.0,0.0,0.0,0.27,0.72,0.63,0.62,0.6,0.58,0.56,0.53,0.43,0.16,0.02,0.01,0.06,0.35,0.46,0.47,0.47,0.43,0.23,0.08,0.03,0.19,0.16,0.04,0.05,0.37,0.47,0.47,0.48,0.46,0.3,0.09,0.02,0.44,0.51,0.48,0.45,0.43,0.36,0.22,0.08,0.19,0.52,0.52,0.5,0.48,0.48,0.47,0.35,0.3,0.54,0.38,0.37,0.36,0.35,0.33,0.32,0.29,0.27,0.19,0.07,0.02,0.0,0.0,0.0,0.05,0.42,0.52,0.54,0.58,0.53,0.48,0.46,0.42,0.23,0.05,0.02,0.0,0.14,0.44,0.46,0.49,0.48,0.36,0.14,0.04,0.13,0.38,0.15,0.04,0.13,0.41,0.45,0.43,0.41,0.28,0.11,0.03,0.14,0.54,0.55,0.54,0.5,0.37,0.11,0.03,0.06,0.39,0.49,0.52,0.52,0.52,0.51,0.5,0.52,0.8,0.59,0.45,0.47,0.48,0.43,0.22,0.05,0.01,0.01,0.0,0.0,0.0,0.0,0.0,0.0,0.36,0.85,0.56,0.55,0.54,0.53,0.52,0.5,0.38,0.13,0.02,0.0,0.07,0.46,0.53,0.51,0.56,0.69,0.2,0.07,0.05,0.38,0.58,0.56,0.39,0.53,0.5,0.44,0.47,0.45,0.33,0.12,0.02,0.43,0.74,0.6,0.58,0.57,0.44,0.16,0.03,0.23,0.42,0.44,0.43,0.44,0.39,0.18,0.04,0.19,0.63,0.67,0.65,0.67,0.66,0.66,0.63,0.59,0.45,0.17,0.04,0.01,0.0,0.0,0.0,0.06,0.59,0.7,0.6,0.57,0.56,0.54,0.5,0.47,0.29,0.08,0.03,0.01,0.19,0.41,0.38,0.38,0.47,0.42,0.13,0.03,0.11,0.2,0.12,0.06,0.2,0.45,0.46,0.45,0.42,0.21,0.05,0.01,0.21,0.62,0.59,0.58,0.57,0.41,0.15,0.03,0.08,0.52,0.67,0.65,0.64,0.63,0.59,0.57,0.55,0.65,0.49,0.62,0.63,0.61,0.6,0.56,0.45,0.19,0.04,0.02,0.0,0.0,0.0,0.0,0.0,0.38,0.79,0.5,0.51,0.52,0.51,0.5,0.44,0.26,0.06,0.03,0.01,0.09,0.42,0.53,0.53,0.52,0.52,0.24,0.06,0.03,0.11,0.08,0.02,0.03,0.39,0.56,0.53,0.53,0.47,0.24,0.05,0.04,0.59,0.77,0.66,0.67,0.66,0.56,0.25,0.04,0.31,0.53,0.51,0.5,0.5,0.48,0.42,0.22,0.3,0.55,0.57,0.58,0.57,0.55,0.54,0.51,0.49,0.33,0.09,0.02,0.0,0.0,0.0,0.0,0.12,0.59,0.63,0.59,0.57,0.56,0.56,0.54,0.49,0.26,0.06,0.01,0.01,0.27,0.48,0.58,0.58,0.38,0.26,0.08,0.02,0.11,0.25,0.13,0.03,0.25,0.48,0.51,0.53,0.43,0.16,0.03,0.02,0.24,0.7,0.56,0.56,0.52,0.27,0.08,0.03,0.11,0.46,0.6,0.6,0.61,0.6,0.59,0.54,0.54,0.66,0.5,0.48,0.48,0.49,0.48,0.37,0.16,0.03,0.01,0.0,0.0,0.0,0.0,0.0,0.01,0.5,0.72,0.46,0.49,0.5,0.51,0.5,0.48,0.35,0.12,0.02,0.0,0.11,0.39,0.39,0.36,0.43,0.64,0.22,0.06,0.04,0.27,0.19,0.04,0.1,0.49,0.59,0.6,0.59,0.51,0.24,0.05,0.04,0.47,0.54,0.5,0.55,0.55,0.4,0.13,0.02,0.3,0.62,0.63,0.63,0.64,0.64,0.62,0.6,0.52,1.0,0.72,0.65,0.66,0.65,0.64,0.63,0.51,0.21,0.04,0.01,0.0,0.0,0.0,0.0,0.15,0.75,0.69,0.56,0.56,0.57,0.55,0.55,0.47,0.19,0.03,0.01,0.01,0.29,0.59,0.66,0.65,0.67,0.55,0.38,0.24,0.14,0.23,0.09,0.03,0.16,0.49,0.56,0.54,0.51,0.32,0.07,0.01,0.3,0.68,0.5,0.55,0.51,0.32,0.09,0.01,0.07,0.46,0.59,0.6,0.58,0.58,0.58,0.57,0.53,0.54,0.39,0.4,0.43,0.43,0.42,0.43,0.38,0.2,0.04,0.0,0.0,0.0,0.0,0.0,0.03,0.56,0.52,0.39,0.42,0.48,0.47,0.47,0.41,0.22,0.05,0.01,0.0,0.1,0.51,0.61,0.62,0.79,0.81,0.41,0.32,0.18,0.25,0.18,0.04,0.07,0.32,0.43,0.42,0.42,0.36,0.17,0.04,0.08,0.55,0.56,0.59,0.63,0.6,0.46,0.16,0.03,0.3,0.46,0.43,0.41,0.4,0.39,0.4,0.41,0.52,0.52,0.33,0.33,0.33,0.33,0.32,0.31,0.3,0.18,0.05,0.02,0.01,0.01,0.01,0.01,0.18,0.82];
+const T=[0, 2.46, 4.64, 7.35, 9.29, 12.02, 14.2, 16.93, 19.1];
+const tl = gsap.timeline({ paused: true });
+const END = 21.4;
+const q = (s) => document.querySelector(s);
+// build typed-char spans for S3
+const TYP = "sum + i.price";
+const typEl = q("#typ");
+TYP.split("").forEach(ch => { const sp = document.createElement("span"); sp.textContent = ch === " " ? " " : ch; sp.style.opacity = 0; sp.className = "tc"; typEl.appendChild(sp); });
+const words = (sel, t, st) => tl.from(sel, { y: 110, opacity: 0, duration: .4, stagger: st || .07, ease: "back.out(1.7)" }, t);
+const lineIn = (sel, t) => tl.from(sel, { y: 110, opacity: 0, duration: .4, ease: "back.out(1.6)" }, t);
+const pop = (sel, t, y) => tl.from(sel, { y: y === undefined ? 110 : y, opacity: 0, duration: .4, ease: "power3.out" }, t);
+const kick = (sel, t) => tl.from(sel, { x: -70, opacity: 0, duration: .35, ease: "power3.out" }, t);
+const ringIn = (id, t) => { tl.fromTo(id, { opacity: 0, scale: .8 }, { opacity: 1, scale: 1, duration: .3, ease: "back.out(2)" }, t); };
+
+// S1 hook 0 -> 2.46
+let t0 = T[0];
+tl.fromTo("#s1 .cap",{scale:1.07,transformOrigin:"0 30%"},{scale:1,duration:.55,ease:"power3.out"},0);
+[[.6,"#t0","#k0",100,72],[.95,"#t1","#k1b",72,44],[1.3,"#t2","#k2b",44,12]].forEach(([t,r,c,a,b])=>{});
+const rows = [[.6,"#t0",72],[.95,"#t1",44],[1.3,"#t2",12]];
+rows.forEach(([t,r,f],i)=>{
+  tl.from(r, { x: -160, opacity: 0, duration: .35, ease: "power3.out" }, t);
+  tl.from(r + " .coin", { scale: 0, duration: .3, ease: "back.out(3)" }, t + .22);
+  tl.to("#m1 .mfill", { width: f + "%", duration: .35, ease: "power2.out" }, t + .3);
+});
+
+// S2 your code 2.46 -> 4.64
+t0 = T[1];
+lineIn("#s2 .cap .ln:nth-child(1)", t0 + .1); lineIn("#s2 .cap .ln:nth-child(2)", t0 + .2);
+tl.from("#cc", { y: 160, opacity: 0, duration: .45, ease: "power3.out" }, t0 + .3);
+tl.from("#cc .cl", { x: -50, opacity: 0, duration: .3, stagger: .04, ease: "power2.out" }, t0 + .3);
+tl.to("#cc .bug", { scale: 1.04, transformOrigin: "0 50%", duration: .25, yoyo: true, repeat: 1, ease: "sine.inOut" }, t0 + .9);
+
+// S3 by hand / tokens 4.64 -> 7.35
+t0 = T[2];
+lineIn("#s3 .cap .ln:nth-child(1)", t0 + .08);
+lineIn("#s3 .cap .ln:nth-child(2)", t0 + 1.0);
+pop("#oa", t0 + .35, 120);
+document.querySelectorAll("#typ .tc").forEach((sp, k) => tl.set(sp, { opacity: 1 }, t0 + .7 + k * .09));
+pop("#ob", t0 + 1.05, 140);
+tl.to("#m3 .mfill", { width: "28%", duration: .5, ease: "power2.out" }, t0 + 1.5);
+tl.from("#k3", { scale: 0, duration: .3, ease: "back.out(3)" }, t0 + 1.6);
+
+%%JS%%
+
+// S9 end card 19.64 -> 21.4
+t0 = T[8];
+tl.from("#fg9", { scale: .6, opacity: 0, duration: .4, ease: "back.out(2)" }, t0 + .1);
+tl.from("#ar9", { x: -40, opacity: 0, duration: .3, ease: "power3.out" }, t0 + .32);
+// beat-locked: icon slam at 19.64s (beat grid; click at 18.55 is the strong cue)
+tl.from("#ic9", { scale: 1.5, opacity: 0, duration: .35, ease: "power4.out" }, t0 + .55);
+tl.from("#n9", { y: 60, opacity: 0, duration: .4, ease: "power3.out" }, t0 + .62);
+tl.from("#f9", { y: 60, opacity: 0, duration: .4, ease: "power3.out" }, t0 + .78);
+tl.from("#by9", { y: 50, opacity: 0, duration: .4, ease: "power3.out" }, t0 + .9);
+tl.from("#u9", { y: 50, opacity: 0, scale: .92, duration: .4, ease: "back.out(2)" }, t0 + 1.0);
+tl.from("#dis9", { opacity: 0, duration: .4 }, t0 + 1.05);
+
+// cut wipes (solid panel covers every cut: nothing half-drawn is ever visible)
+const wip = (id, t) => {
+  tl.fromTo(id, { x: -1100 }, { x: 0, duration: .12, ease: "power2.in" }, t - .12);
+  tl.to(id, { x: 1100, duration: .16, ease: "power2.out" }, t);
+};
+for (let i = 1; i <= 8; i++) wip(i % 2 ? "#wipe" : "#wipe2", T[i]);
+
+// audio-reactive: bass energy breathes the orange glow in the dark scenes
+[1, 3, 5, 7, 9].forEach(i => {
+  const a = T[i - 1], b = i < 9 ? T[i] : END;
+  for (let f = Math.floor(a * 30); f < Math.floor(b * 30); f += 2) {
+    const v = BASS[f] || 0;
+    tl.set("#s" + i + " .glow", { opacity: .18 + .32 * v, scale: .94 + .12 * v }, f / 30);
+  }
+});
+
+// music bed
+tl.set("#bgm", { volume: 0.34 }, 0);
+tl.to("#bgm", { volume: 0, duration: 1.1, ease: "none" }, END - 1.1);
+
+window.__timelines["main"] = tl;
+
+</script>
+</body>
+</html>

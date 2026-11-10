@@ -1,5 +1,26 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
-<rect x="0" y="0" width="1024" height="1024" rx="180.224" fill="#ffffff"/>
-<path d="M256 224H448M256 736H448M576 352H768M576 608H768" stroke="#14171c" stroke-width="128" stroke-linecap="round" fill="none"/>
-<path d="M256 480H448" stroke="#d9641a" stroke-width="128" stroke-linecap="round" fill="none"/>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1d2028"/><stop offset="1" stop-color="#0e0f14"/></linearGradient>
+    <linearGradient id="o" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f7a064"/><stop offset="1" stop-color="#e8602c"/></linearGradient>
+    <linearGradient id="p" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ab8dfb"/><stop offset="1" stop-color="#6a3ede"/></linearGradient>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#72d3a2"/><stop offset="1" stop-color="#46926a"/></linearGradient>
+    <linearGradient id="b" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#66bcf6"/><stop offset="1" stop-color="#3b88c8"/></linearGradient>
+  </defs>
+  <!-- macOS icon grid: 824px tile centred on a 1024 canvas -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  <rect x="100.5" y="100.5" width="823" height="823" rx="184.5" fill="none" stroke="#ffffff" stroke-opacity=".08"/>
+  <g transform="translate(512 512) scale(1.02) translate(-331 -326)">
+    <circle cx="343" cy="345" r="283" fill="none" stroke="#ffffff" stroke-opacity=".05" stroke-width="2"/>
+    <!-- top: orange cap + purple body; bottom row is mirrored and staggered -->
+    <path d="M242 72H189a125 125 0 0 0 0 250h53z" fill="url(#o)"/>
+    <path d="M258 72H473a125 125 0 0 1 0 250H258z" fill="url(#p)"/>
+    
+    <circle cx="505" cy="463" r="93" fill="url(#g)"/>
+    <path d="M396 347H233.5a116.5 116.5 0 0 0 0 233H396z" fill="url(#b)"/>
+    <g fill="none" stroke="#fff" stroke-width="15" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M502 157l43 40-43 41"/>
+      <path d="M296 423l-41 42 41 40"/>
+      <path d="M525 428l-40 70"/>
+    </g>
+  </g>
 </svg>

@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en" class="is-mac">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=1920, height=1080" />
+<title>figmake-sync demo</title>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<style>
+@font-face{font-family:"Inter";src:url(fonts/inter-latin-wght-normal.woff2) format("woff2");font-weight:100 900}
+@font-face{font-family:"JetBrains Mono";src:url(fonts/jetbrains-mono-latin-400-normal.woff2) format("woff2");font-weight:400}
+%%CSS%%
+:root{--bg:#0b0b0c;--ink:#f5f5f7;--mute:#98989d;--blue:#4c9dff}
+body{margin:0;background:var(--bg)}
+#root{position:relative;width:1920px;height:1080px;overflow:hidden;background:var(--bg);font-family:"Inter",system-ui,sans-serif;color:var(--ink)}
+#glow{position:absolute;left:460px;top:-180px;width:1000px;height:700px;border-radius:50%;background:radial-gradient(circle,rgba(76,157,255,.16),rgba(76,157,255,0) 65%)}
+#win{position:absolute;left:288px;top:26px;width:1344px;height:866px;border-radius:16px;overflow:hidden;background:#fff;box-shadow:0 50px 120px rgba(0,0,0,.7),0 0 0 1px rgba(255,255,255,.12)}
+#cam{position:absolute;left:0;top:0;width:1180px;height:760px;transform-origin:0 0}
+.tl{position:absolute;left:20px;top:19px;display:flex;gap:8px;z-index:70}
+.tl i{display:block;width:12px;height:12px;border-radius:50%}
+.cap{position:absolute;left:0;top:918px;width:1920px;text-align:center;font:700 100px/1 "Inter",sans-serif;letter-spacing:-.04em;white-space:nowrap;opacity:0}
+.cap b{font-weight:700;color:var(--blue)}
+#end{position:absolute;inset:0;opacity:0}
+#end .ico{position:absolute;left:960px;top:124px;width:272px;height:272px;margin-left:-136px;filter:drop-shadow(0 30px 60px rgba(76,157,255,.25))}
+#end h2{position:absolute;left:0;top:410px;width:1920px;text-align:center;margin:0;font:700 120px/1 "Inter",sans-serif;letter-spacing:-.045em}
+#end .sub{position:absolute;left:0;top:565px;width:1920px;text-align:center;font:500 62px/1.1 "Inter",sans-serif;color:var(--mute);letter-spacing:-.03em}
+#end .by{position:absolute;left:0;top:720px;width:1920px;display:flex;justify-content:center;align-items:center;gap:30px;font:500 44px/1 "Inter",sans-serif;color:var(--mute)}
+#end .by img{width:300px;height:auto;display:block}
+#end .un{position:absolute;left:0;top:890px;width:1920px;display:flex;justify-content:center;align-items:center;gap:20px;font:500 36px/1 "Inter",sans-serif;color:var(--mute)}
+#end .un img{height:44px;width:auto;display:block}
+</style>
+</head>
+<body>
+%%SPRITE%%
+<div id="root" data-composition-id="main" data-start="0" data-width="1920" data-height="1080" data-duration="%%DUR%%">
+<div id="glow"></div>
+<div id="win"><div id="cam" data-layout-ignore>
+<div class="tl"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
+%%START%%
+%%PREP%%
+%%READY%%
+<svg class="hfcur" id="cur" viewBox="0 0 24 24"><path d="M4 2.5v17l4.6-4.2 3 6.7 3-1.4-3-6.6h6.2z" fill="#fff" stroke="#111" stroke-width="1.5" stroke-linejoin="round"/></svg><div class="rip" id="rip"></div>
+</div></div>
+<div id="end">
+  <img class="ico" src="assets/figmake-sync-icon.svg" alt="figmake-sync">
+  <h2>figmake-sync</h2>
+  <div class="sub">Edit Figma Make with your own AI.</div>
+  <div class="by"><span>by</span><img src="assets/sherlabs-wordmark-light.svg" alt="Sherlabs"></div>
+  <div class="un"><img src="assets/figma-mark.svg" alt="Figma"><span>Unofficial. Not affiliated with Figma.</span></div>
+</div>
+<audio id="sfx" src="assets/sfx.wav" data-start="0" data-duration="%%DUR%%" data-track-index="1" data-volume="0.9"></audio>
+<audio id="bed" src="assets/bed.wav" data-start="0" data-duration="%%DUR%%" data-track-index="2" data-volume="0.16"></audio>
+</div>
+<script>
+const T=%%T%%;
+const $=s=>document.querySelector(s);
+const tl=gsap.timeline({paused:true});
+const FW=1344,FH=866,S0=FW/1180;
+const cam=(fx,fy,S)=>({x:Math.min(0,Math.max(FW-1180*S,FW/2-fx*S)),y:Math.min(0,Math.max(FH-760*S,FH/2-fy*S)),scale:S});
+const goCam=(t,d,fx,fy,S,e)=>tl.to('#cam',{...cam(fx,fy,S),duration:d,ease:e||"power3.inOut"},t);
+gsap.set('#cam',cam(590,380,S0));
+
+/* ---------- build-time layout measurement (no transform yet) ---------- */
+const camBox=()=>$('#cam').getBoundingClientRect();
+const ctr=el=>{const b=el.getBoundingClientRect(),o=camBox(),k=o.width/1180;return [(b.left-o.left+b.width/2)/k,(b.top-o.top+b.height/2)/k]};
+const ctrR=(el,dx)=>{const b=el.getBoundingClientRect(),o=camBox(),k=o.width/1180;return [(b.left-o.left+b.width*dx)/k,(b.top-o.top+b.height/2)/k]};
+
+/* ---------- captions ---------- */
+function addCap(id,html,t0,t1){
+  const d=document.createElement('div');d.className='cap';d.id=id;d.innerHTML=html;$('#root').appendChild(d);
+  tl.fromTo(d,{opacity:0,y:26},{opacity:1,y:0,duration:.45,ease:"power3.out"},t0);
+  tl.to(d,{opacity:0,y:-12,duration:.3,ease:"power1.in"},t1-.3);
+}
+T.caps.forEach((c,i)=>addCap('c'+i,c[0],c[1],c[2]));
+
+/* ---------- helpers ---------- */
+const vis=(sel,t,on,d)=>tl.set(sel,{opacity:on?1:0},t);
+const fade=(sel,t,on,d)=>tl.to(sel,{opacity:on?1:0,duration:d||.18,ease:"power1.out"},t);
+function typeChars(host,text,t0,cps){
+  const h=$(host);const out=[];
+  [...text].forEach((c,i)=>{const s=document.createElement('span');s.className='c';s.style.opacity=0;s.textContent=c;h.appendChild(s);
+    tl.set(s,{opacity:1},t0+i/cps+((i*7)%5)*0.004);out.push(s)});
+  return {end:t0+text.length/cps,spans:out};
+}
+const click=(t,x,y)=>{
+  tl.to('#cur',{scale:.84,duration:.07,transformOrigin:"4px 3px"},t).to('#cur',{scale:1,duration:.12},t+.09);
+  tl.set('#rip',{x:x,y:y,scale:.3,opacity:.9},t);tl.to('#rip',{scale:1.6,opacity:0,duration:.5,ease:"power2.out"},t+.001);
+};
+const mv=(t0,t1,x,y,e)=>tl.to('#cur',{x:x-4,y:y-3,duration:t1-t0,ease:e||"power2.inOut"},t0);
+const rise=(sel,t,d)=>tl.fromTo(sel,{opacity:0,y:6},{opacity:1,y:0,duration:d||.32,ease:"power2.out"},t);
+
+/* ---------- window in / out ---------- */
+tl.fromTo('#win',{y:30,scale:.97},{y:0,scale:1,duration:.7,ease:"power3.out"},0);
+tl.to('#win',{opacity:0,y:-20,duration:.45,ease:"power2.in"},T.winOut);
+tl.to('#glow',{opacity:0,duration:.6},T.winOut+.1);
+
+/* ---------- spinners / dots (finite, deterministic) ---------- */
+tl.to('.spin',{rotation:360,duration:.8,repeat:Math.floor(T.dur/.8),ease:"none",transformOrigin:"50% 50%"},0);
+tl.fromTo('.dots i',{opacity:.3},{opacity:1,duration:.4,stagger:.15,repeat:Math.floor(T.dur/.55),yoyo:true,ease:"sine.inOut"},0);
+
+/* =================== A: add project =================== */
+gsap.set('#p_layer',{opacity:0});gsap.set('#r_layer',{opacity:0});
+gsap.set('#cur',{x:520,y:440,opacity:0});
+tl.to('#cur',{opacity:1,duration:.3},T.cur0);
+const addp=ctr($('#s_addp'));
+mv(T.cur0,T.addClick-.1,addp[0]-4,addp[1]);
+click(T.addClick,addp[0],addp[1]);
+tl.to('#s_addp',{backgroundColor:"rgba(0,0,0,.08)",duration:.1},T.addClick).to('#s_addp',{backgroundColor:"rgba(0,0,0,0)",duration:.3},T.addClick+.2);
+goCam(T.addClick+.25,.9,590,160,1.55);
+tl.set('#s_sheetw',{opacity:1},T.sheetIn);
+tl.fromTo('#s_scrim',{opacity:0},{opacity:1,duration:.35},T.sheetIn);
+tl.fromTo('#s_sheetm',{y:-34,opacity:0},{y:0,opacity:1,duration:.42,ease:"power3.out"},T.sheetIn);
+const inp=ctr($('#s_inp'));
+mv(T.sheetIn+.3,T.inpClick-.05,inp[0]-90,inp[1]);
+click(T.inpClick,inp[0]-90,inp[1]);
+tl.set('#s_inp',{boxShadow:"0 0 0 3px rgba(11,102,204,.35)",borderColor:"transparent"},T.inpClick+.05);
+tl.set('#s_caret',{opacity:1},T.inpClick+.05);
+tl.set('#s_inp',{attr:{placeholder:""}},T.type1[0]-.02);
+const ty1=typeChars('#s_typed',T.link,T.type1[0],T.type1[1]);
+tl.set('#s_open_off',{opacity:0},T.type1[0]+.2);tl.set('#s_open_on',{opacity:1},T.type1[0]+.2);
+const opn=ctr($('#s_open_on'));
+mv(ty1.end+.15,T.openClick-.05,opn[0],opn[1]);
+click(T.openClick,opn[0],opn[1]);
+tl.set('#s_caret',{opacity:0},T.openClick);
+tl.to('#s_open_on',{filter:"brightness(.9)",duration:.08},T.openClick).to('#s_open_on',{filter:"brightness(1)",duration:.2},T.openClick+.15);
+tl.to('#s_sheetm',{y:-24,opacity:0,duration:.3,ease:"power2.in"},T.openClick+.2);
+tl.to('#s_scrim',{opacity:0,duration:.3},T.openClick+.2);
+tl.to('#cur',{opacity:0,duration:.25},T.openClick+.3);
+
+/* =================== B: getting ready =================== */
+goCam(T.prep0-.1,.9,504,392,1.9);
+tl.set('#p_layer',{opacity:1},T.prep0);tl.set('#s_layer',{opacity:0},T.prep0+.05);
+const PR=[[T.prep0,T.prep1,6,30],[T.prep1,T.prep2,30,62],[T.prep2,T.prep3,62,90],[T.prep3,T.prep4,90,100]];
+for(let k=0;k<4;k++){
+  if(k>0){tl.set('#p_c'+(k-1),{opacity:0},PR[k][0]);tl.set('#p_c'+k,{opacity:1},PR[k][0]);}
+  if(k<3) gsap.set('#p_c'+(k+1),{opacity:0});
+  tl.fromTo('#p_bar'+k,{width:PR[k][2]+'%'},{width:PR[k][3]+'%',duration:PR[k][1]-PR[k][0],ease:"power1.inOut"},PR[k][0]);
+  gsap.set('#p_bar'+k,{width:PR[k][2]+'%'});
+}
+
+/* =================== C: ready, chat =================== */
+const L='#r_layer';
+const D={};
+const els=['r_m1','r_m2','r_u1','r_a1','r_w1','r_u2','r_a2','r_w2','r_card1','r_diff1','r_card2'];
+els.forEach(id=>{const e=$('#'+id);D[id]=getComputedStyle(e).display;});
+D.r_empty=getComputedStyle($('#r_empty')).display;
+const setd=(id,on)=>{$('#'+id).style.display=on?D[id]:'none'};
+const show=(id,t)=>{setd(id,true);tl.set('#'+id,{display:D[id]},t)};
+const hide=(id,t)=>{setd(id,false);tl.set('#'+id,{display:'none'},t)};
+let tinY=0;
+const need=()=>Math.max(0,$('#r_tin').offsetHeight-($('#r_layer .thread').clientHeight-28));
+const scroll=(t,d)=>{const n=need();if(n!==tinY){tl.to('#r_tin',{y:-n,duration:d||.4,ease:"power2.out"},t);tinY=n;}};
+const ctrS=(el,y)=>{const tin=$('#r_tin');tin.style.transform='translateY('+(-y)+'px)';const r=ctr(el);tin.style.transform='';return r};
+/* initial hidden state (also what t=0 shows) */
+['r_u1','r_a1','r_w1','r_u2','r_a2','r_w2'].forEach(id=>setd(id,false));
+setd('r_m1',false);setd('r_m2',false);setd('r_card1',false);setd('r_diff1',false);setd('r_card2',false);
+gsap.set('#r_m1 .w,#r_m2 .w',{opacity:0});gsap.set('#r_al1b,#r_al2b',{opacity:0});
+gsap.set('#r_alist1 li,#r_alist2 li',{opacity:0});
+gsap.set('#r_banner',{height:0,opacity:0});
+/* the "before" look of the sample site: dark square button + square tiles */
+gsap.set('#r_pbtn',{backgroundColor:"#2b2824",borderRadius:"4px"});
+gsap.set('#r_pv .it i',{borderRadius:"3px"});
+gsap.set('#r_pv .ad',{backgroundColor:"#2b2824",borderRadius:"3px"});
+const INIT={};[...els,'r_empty'].forEach(id=>INIT[id]=$('#'+id).style.display);
+function measureAW(n){setd('r_a'+n,true);const w=$('#r_aw'+n);w.style.height='auto';const H=w.offsetHeight;w.style.height='0px';setd('r_a'+n,false);return H}
+const AWH={1:measureAW(1),2:measureAW(2)};
+
+const status=(t,kind)=>{
+  ['ok','busy','chg'].forEach(k=>{tl.set('#r_chip_'+k,{opacity:k===kind?1:0},t);tl.set('#r_t_'+k,{opacity:k===kind?1:0},t)});
+};
+gsap.set('#r_chip_busy,#r_t_busy,#r_chip_chg,#r_t_chg',{opacity:0});
+const footer=(t,k)=>['a','b','c'].forEach(x=>tl.set('#r_st_'+x,{opacity:x===k?1:0},t));
+const sendBtn=(t,on,badge)=>{tl.set('#r_send_off',{opacity:on?0:1},t);tl.set('#r_send_on',{opacity:on?1:0},t);if(on){tl.set('#r_b1',{opacity:badge===1?1:0},t);tl.set('#r_b2',{opacity:badge===2?1:0},t);}};
+gsap.set('#r_send_on',{opacity:0});gsap.set('#r_b2',{opacity:0});
+const ring=(t,on)=>tl.set('#r_layer .cbox',on?{boxShadow:"0 0 0 3px rgba(11,102,204,.35)",borderColor:"transparent"}:{boxShadow:"0 1px 1px rgba(0,0,0,.06), 0 4px 14px rgba(0,0,0,.04)",borderColor:"rgba(0,0,0,.14)"},t);
+gsap.set('#r_pv .pvtag',{opacity:0});
+const tag=(sel,t0,t1)=>{tl.fromTo(sel,{opacity:0,y:-6},{opacity:1,y:0,duration:.25,immediateRender:false},t0);tl.to(sel,{opacity:0,duration:.25},t1)};
+
+/* one full agent turn: working dots, steps stream in and the row opens, reply streams, row folds, card lands */
+function turn(n,t,onPreview){
+  const H=AWH[n],h=H/4,W='#r_aw'+n;
+  show('r_w'+n,t.w);rise('#r_w'+n,t.w);scroll(t.w,.35);
+  show('r_a'+n,t.a);rise('#r_a'+n,t.a);scroll(t.a,.35);
+  tl.to('#r_ach'+n,{rotation:90,duration:.25,ease:"power2.out"},t.a+.3);
+  t.steps.forEach((ts,i)=>{
+    $(W).style.height=(h*(i+1))+'px';
+    tl.fromTo(W,{height:h*i},{height:h*(i+1),duration:.3,ease:"power2.out",immediateRender:false},ts);
+    tl.fromTo('#r_as'+n+'_'+i,{opacity:0,y:5},{opacity:1,y:0,duration:.3,ease:"power2.out",immediateRender:false},ts+.03);
+    scroll(ts,.3);
+  });
+  onPreview();
+  show('r_m'+n,t.text-.02);scroll(t.text,.3);
+  tl.to('#r_m'+n+' .w',{opacity:1,duration:.12,stagger:.1},t.text);
+  hide('r_w'+n,t.card-.05);show('r_card'+n,t.card);rise('#r_card'+n,t.card,.4);
+  scroll(t.card,.45);
+  status(t.card,'chg');footer(t.card,'a');sendBtn(t.card,true,n);
+  tl.set('#r_ph2',{opacity:0},t.card);tl.set('#r_sb_stop',{opacity:0},t.card);tl.set('#r_sb_off',{opacity:1},t.card);
+  tl.set('#r_ph1',{opacity:1},t.card);
+  /* fold the steps back to one calm line */
+  $(W).style.height='0px';
+  tl.fromTo(W,{height:H},{height:0,duration:.4,ease:"power2.inOut",immediateRender:false},t.col);
+  tl.to('#r_ach'+n,{rotation:0,duration:.25},t.col);
+  tl.to('#r_al'+n+'a',{opacity:0,duration:.2},t.col);tl.to('#r_al'+n+'b',{opacity:1,duration:.2},t.col);
+  scroll(t.col+.05,.45);
+}
+const sendPrompt=(n,t,sbc)=>{
+  tl.set('#r_typed'+(n==1?'':'2'),{display:'none'},t+.05);tl.set('#r_caret',{opacity:0},t+.05);ring(t+.05,false);
+  tl.set('#r_ph2',{opacity:1},t+.05);
+  tl.set('#r_sb_on',{opacity:0},t+.05);tl.set('#r_sb_stop',{opacity:1},t+.05);
+  tl.to('#cur',{opacity:0,duration:.25},t+.3);
+  show('r_u'+n,t+.05);tl.fromTo('#r_u'+n,{opacity:0,y:6},{opacity:1,y:0,duration:.3},t+.05);
+  status(t+.05,'busy');footer(t+.05,'b');sendBtn(t+.05,false);
+  scroll(t+.05,.4);
+};
+
+/* layer switch to ready */
+tl.set('#r_layer',{opacity:1},T.ready);
+goCam(T.ready,.9,860,470,1.6);
+tl.set('#p_layer',{opacity:0},T.ready+.05);
+tl.fromTo('#r_layer .stage',{opacity:0},{opacity:1,duration:.4},T.ready);
+tl.to('#cur',{opacity:1,duration:.25},T.ready+.3);
+const ta=ctr($('#r_ta'));
+tl.set('#cur',{x:760,y:520},T.ready+.29);
+mv(T.ready+.35,T.taClick1-.05,ta[0]+40,ta[1]);
+click(T.taClick1,ta[0]+40,ta[1]);
+ring(T.taClick1+.05,true);tl.set('#r_caret',{opacity:1},T.taClick1+.05);
+tl.set('#r_ph1',{opacity:0},T.p1[0]-.02);
+tl.set('#r_sb_off',{opacity:0},T.p1[0]+.05);tl.set('#r_sb_on',{opacity:1},T.p1[0]+.05);
+const tp1=typeChars('#r_typed',T.prompt1,T.p1[0],T.p1[1]);
+const sbc=ctr($('#r_sb_on'));
+mv(tp1.end+.1,T.send1-.05,sbc[0],sbc[1]);
+click(T.send1,sbc[0],sbc[1]);
+/* send 1 */
+hide('r_empty',T.send1+.05);
+sendPrompt(1,T.send1,sbc);
+goCam(T.send1+.1,1.0,590,380,1.17);
+turn(1,{w:T.w1,a:T.a1,steps:T.steps1,text:T.text1,col:T.col1,card:T.card1},()=>{
+  /* cause and effect: highlight + Before/After tag while the file is edited */
+  tag('#r_tagb',T.pv1-.9,T.pv1-.05);
+  tl.to('#r_pbtn',{backgroundColor:"#2563eb",borderRadius:"14px",duration:.55,ease:"power2.out"},T.pv1);
+  tl.fromTo('#r_pbtn',{boxShadow:"0 0 0 0 rgba(37,99,235,0)"},{boxShadow:"0 0 0 7px rgba(37,99,235,.38)",duration:.4,yoyo:true,repeat:3,ease:"sine.inOut",immediateRender:false},T.pv1);
+  tl.set('#r_pbtn',{boxShadow:"0 0 0 0 rgba(37,99,235,0)"},T.pv1+1.75);
+  tag('#r_taga',T.pv1+.5,T.pv1+2.4);
+});
+
+/* view changes */
+goCam(T.view0,.9,960,400,1.75);
+const vc=ctrS($('#r_view1'),tinY);
+tl.set('#cur',{x:vc[0]+60,y:vc[1]+80},T.view0);
+tl.to('#cur',{opacity:1,duration:.25},T.view0+.1);
+setd('r_diff1',true);const dh=$('#r_diff1').offsetHeight;setd('r_diff1',false);
+mv(T.view0+.15,T.viewClick-.05,vc[0],vc[1]);
+click(T.viewClick,vc[0],vc[1]);
+tl.set('#r_diff1',{display:D.r_diff1},T.viewClick+.05);
+tl.fromTo('#r_diff1',{height:0,opacity:0},{height:dh,opacity:1,duration:.4,ease:"power3.out"},T.viewClick+.05);
+tl.to('#r_chev1',{rotation:90,duration:.2},T.viewClick+.05);
+setd('r_diff1',true);
+const nd=need();
+tl.to('#r_tin',{y:-nd,duration:.5,ease:"power2.out"},T.viewClick+.1);tinY=nd;
+const vcO=ctrS($('#r_view1'),nd);
+mv(T.viewClose-.6,T.viewClose-.05,vcO[0],vcO[1]);
+click(T.viewClose,vcO[0],vcO[1]);
+tl.to('#r_diff1',{height:0,opacity:0,duration:.35,ease:"power2.inOut"},T.viewClose+.05);
+tl.set('#r_diff1',{display:'none'},T.viewClose+.4);
+tl.to('#r_chev1',{rotation:0,duration:.2},T.viewClose+.05);
+setd('r_diff1',false);
+{const n=need();tl.to('#r_tin',{y:-n,duration:.45,ease:"power2.inOut"},T.viewClose+.3);tinY=n;}
+tl.to('#cur',{opacity:0,duration:.25},T.viewClose+.5);
+
+/* second prompt: it remembers the first change */
+goCam(T.p2cam,.9,820,470,1.45);
+tl.set('#cur',{x:ta[0]-60,y:ta[1]-120},T.p2cam);
+tl.to('#cur',{opacity:1,duration:.2},T.p2cam+.1);
+mv(T.p2cam+.1,T.taClick2-.05,ta[0]+40,ta[1]);
+click(T.taClick2,ta[0]+40,ta[1]);
+ring(T.taClick2+.05,true);tl.set('#r_caret',{opacity:1},T.taClick2+.05);
+tl.set('#r_ph1',{opacity:0},T.p2[0]-.02);
+tl.set('#r_sb_off',{opacity:0},T.p2[0]+.05);tl.set('#r_sb_on',{opacity:1},T.p2[0]+.05);
+const tp2=typeChars('#r_typed2',T.prompt2,T.p2[0],T.p2[1]);
+mv(tp2.end+.1,T.send2-.05,sbc[0],sbc[1]);
+click(T.send2,sbc[0],sbc[1]);
+sendPrompt(2,T.send2,sbc);
+goCam(T.send2+.15,1.0,590,380,1.17);
+turn(2,{w:T.w2,a:T.a2,steps:T.steps2,text:T.text2,col:T.col2,card:T.card2},()=>{
+  tag('#r_tagb',T.pv2-.9,T.pv2-.05);
+  tl.to('#r_pv .it i',{borderRadius:"22px",duration:.6,ease:"power2.out",stagger:.12},T.pv2);
+  tl.to('#r_pv .ad',{backgroundColor:"#2563eb",borderRadius:"12px",duration:.6,ease:"power2.out",stagger:.12},T.pv2);
+  tl.fromTo('#r_pv .ad',{boxShadow:"0 0 0 0 rgba(37,99,235,0)"},{boxShadow:"0 0 0 6px rgba(37,99,235,.38)",duration:.4,yoyo:true,repeat:3,ease:"sine.inOut",stagger:.12,immediateRender:false},T.pv2);
+  tl.set('#r_pv .ad',{boxShadow:"0 0 0 0 rgba(37,99,235,0)"},T.pv2+2.2);
+  tag('#r_taga',T.pv2+.6,T.pv2+2.6);
+});
+
+/* =================== undo: safe to try =================== */
+goCam(T.undoCam,.9,590,380,1.17);
+const un=ctrS($('#r_undo2'),tinY);
+tl.set('#cur',{x:un[0]-120,y:un[1]-160},T.undoCam);
+tl.to('#cur',{opacity:1,duration:.2},T.undoCam+.15);
+mv(T.undoCam+.15,T.undoClick-.05,un[0],un[1]);
+click(T.undoClick,un[0],un[1]);
+tl.to('#r_undo2',{backgroundColor:"rgba(0,0,0,.1)",duration:.1},T.undoClick).to('#r_undo2',{backgroundColor:"rgba(0,0,0,0)",duration:.2},T.undoClick+.2);
+tl.set('#r_card2',{attr:{class:"chcard undone tail"}},T.undoClick+.1);
+tl.to('#r_cn2a',{opacity:0,duration:.15},T.undoClick+.1);tl.to('#r_cn2b',{opacity:1,duration:.15},T.undoClick+.1);
+tl.to('#r_undo2,#r_view2',{opacity:0,duration:.2},T.undoClick+.1);
+tl.to('#r_pv .it i',{borderRadius:"3px",duration:.5,ease:"power2.inOut"},T.undoClick+.1);
+tl.to('#r_pv .ad',{backgroundColor:"#2b2824",borderRadius:"3px",duration:.5,ease:"power2.inOut"},T.undoClick+.1);
+tag('#r_tagb',T.undoClick+.3,T.undoClick+2.0);
+sendBtn(T.undoClick+.1,true,1);
+tl.to('#cur',{opacity:0,duration:.25},T.undoClick+.4);
+
+/* =================== D: send =================== */
+goCam(T.sendCam,.9,1010,150,1.85);
+const sn=ctr($('#r_send_on'));
+tl.set('#cur',{x:sn[0]-150,y:sn[1]+200},T.sendCam);
+tl.to('#cur',{opacity:1,duration:.2},T.sendCam+.1);
+mv(T.sendCam+.1,T.sendClick-.05,sn[0],sn[1],"power3.inOut");
+click(T.sendClick,sn[0],sn[1]);
+tl.to('#r_send_on',{filter:"brightness(.88)",duration:.08},T.sendClick).to('#r_send_on',{filter:"brightness(1)",duration:.2},T.sendClick+.15);
+status(T.sendClick+.1,'busy');footer(T.sendClick+.1,'c');sendBtn(T.sendClick+.1,false);
+tl.to('#cur',{opacity:0,duration:.25},T.sendClick+.3);
+goCam(T.sent-.2,1.0,520,560,1.7);
+tl.set('#r_toast',{opacity:1},T.sent);
+tl.fromTo('#r_toast',{y:12,opacity:0},{y:0,opacity:1,duration:.42,ease:"back.out(1.5)"},T.sent);
+tl.to('#r_toast',{opacity:0,y:6,duration:.35},T.toastOut);
+status(T.sent,'ok');footer(T.sent,'a');
+
+/* =================== end card =================== */
+tl.set('#end',{opacity:1},T.end);
+tl.from('#end .ico',{opacity:0,y:24,scale:.92,duration:.6,ease:"power3.out"},T.end+.15);
+tl.from('#end h2',{opacity:0,y:26,duration:.6,ease:"power3.out"},T.end+.45);
+tl.from('#end .sub',{opacity:0,y:20,duration:.6,ease:"power3.out"},T.end+.85);
+tl.from('#end .by',{opacity:0,y:16,duration:.6,ease:"power3.out"},T.end+1.1);
+tl.from('#end .un',{opacity:0,duration:.6},T.end+1.35);
+
+els.concat(['r_empty']).forEach(id=>{$('#'+id).style.display=INIT[id]});$('#r_tin').style.transform='';['r_aw1','r_aw2'].forEach(id=>$('#'+id).style.height='0px');
+window.__timelines["main"]=tl;
+</script>
+</body>
+</html>

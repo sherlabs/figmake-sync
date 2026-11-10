@@ -6,3 +6,4 @@ coverage
 .figmake-sync/
 output/
 promo/launch-reel/.hyperframes/
+__pycache__/

@@ -1,5 +1,8 @@
-0:00  Paste your Figma Make link.
-0:05  Describe a change.
-0:09  Your own AI. Not Figma's tokens.
-0:14  Send it back.
-0:20  figmake-sync. Edit Figma Make with your own AI. by Sherlabs. Unofficial. Not affiliated with Figma.
+0:00  Paste your Figma Make link.  (Add project, link pasted, Open, "Getting your project ready")
+0:07  You ask.                     (chat empty state, types "Make the button blue and rounded", send)
+0:10  The agent works.             (Working dots, the activity row opens: Looked at Button.tsx, Edited Button.tsx, Added button.css, Checked the app builds; the preview button turns blue and rounded with Before / After tags)
+0:16  You see it.                  (reply and change card land, View changes opens the before / after diff)
+0:21  It remembers.                (follow-up "Now do the same for the cards", steps stream again, the product cards turn blue and rounded, second change card)
+0:28  Undo anytime.                (Undo on the second card, the preview reverts, card shows Undone)
+0:33  Send it back.                (Send to Figma, "Sent to Figma")
+0:37  figmake-sync. Edit Figma Make with your own AI. by Sherlabs. Unofficial. Not affiliated with Figma.

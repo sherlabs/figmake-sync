@@ -1,5 +1,6 @@
-import numpy as np, wave, sys
-SR=44100; DUR=25.5
+import numpy as np, wave, sys, json, pathlib
+CUES=json.loads((pathlib.Path(__file__).parent/'cues.json').read_text())
+SR=44100; DUR=CUES['dur']
 rng=np.random.default_rng(7)
 def env(n,a,d): 
     t=np.arange(n)/SR; return np.minimum(t/a,1)*np.exp(-t/d)
@@ -28,13 +29,13 @@ def chime(f=880,vol=.5):
 sfx=np.zeros(int(DUR*SR))
 def put(t,s):
     i=int(t*SR); sfx[i:i+len(s)]+=s[:len(sfx)-i]
-for t in [4.15,7.1,15.6]: put(t,click())
-for st,txt,cps in [(1.95,"figma.com/make/Hk3xQp/Oak-and-Ember",24),(7.5,"Make the button blue",13)]:
+for t in CUES['clicks']: put(t,click())
+for st,txt,cps in CUES['typing']:
     for i,c in enumerate(txt):
         if c==' ': continue
         put(st+i/cps, key(rng.choice([1500,1900,2400,1200])))
-put(4.3,whoosh(.7,.3)); put(20.35,whoosh(.8,.35)); put(14.0,whoosh(.6,.2))
-put(10.95,chime(660,.6)); put(17.4,chime(784)); put(17.52,chime(1175,.6)); put(20.9,chime(523,.5))
+for t,v in CUES['whoosh']: put(t,whoosh(.7,v))
+for t,f,v in CUES['chimes']: put(t,chime(f,v))
 sfx=np.tanh(sfx*1.2)*.9
 # music bed: quiet pad
 t=np.arange(len(sfx))/SR

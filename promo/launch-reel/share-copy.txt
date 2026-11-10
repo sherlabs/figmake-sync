@@ -1,1 +1,21 @@
-Figma Make edits only run on Figma's own AI tokens. figmake-sync pulls the project to your Mac or Windows PC, so you describe the change to the Claude or ChatGPT you already pay for, then send it back to Figma. Free: sherlabs.com (unofficial, not affiliated with Figma)
+LINKEDIN
+Figma Make lets you edit a prototype, but only through Figma's own AI tokens. The React code is visible in Figma, yet you can only change it by hand.
+
+We built figmake-sync to get around that. It is a desktop app that pulls the project's code onto your computer, so you can change it with the Claude Code or ChatGPT Codex subscription you already pay for. No Figma AI tokens are spent.
+
+What it does:
+- Sets itself up (its own sandboxed Node and pnpm, nothing installed on your machine)
+- Live preview with a browser bar
+- You describe a change in chat and the agent edits the code
+- See what changed (diffs, ignore files) before anything is sent
+- Sync and merge with Figma, then push back to Figma Make with progress and verification
+
+It is free. The Windows build is made by CI; we have not tested it on Windows yet.
+
+figmake-sync is an unofficial tool by Sherlabs. It is not affiliated with or endorsed by Figma.
+
+Download: sherlabs.com
+
+TIKTOK / INSTAGRAM
+Figma Make eats your AI tokens. figmake-sync pulls the code local so your own Claude or Codex does the editing, then sends it back. Free. Unofficial, not affiliated with Figma. sherlabs.com
+#figma #figmamake #claudecode #buildinpublic

@@ -1,0 +1,443 @@
+{
+  "ok": true,
+  "strict": false,
+  "browserSkipped": false,
+  "lint": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 17,
+    "infoCount": 0,
+    "findings": [
+      {
+        "code": "css_transition_used",
+        "severity": "warning",
+        "message": "CSS declaration `transition: grid-template-columns 0.2s ease` runs on the browser clock and cannot be seeked deterministically across render workers.",
+        "selector": ".app",
+        "dataAttributes": {},
+        "sourceFile": "/Users/nilesh93/Projects/personal/figmake/promo/product-wide/index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Keep the class or attribute swap for state; put the visual change on the paused GSAP timeline."
+      },
+      {
+        "code": "css_transition_used",
+        "severity": "warning",
+        "message": "CSS declaration `transition: visibility 0s 0.2s` runs on the browser clock and cannot be seeked deterministically across render workers.",
+        "selector": ".app.fm-side-off .side",
+        "dataAttributes": {},
+        "sourceFile": "/Users/nilesh93/Projects/personal/figmake/promo/product-wide/index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Keep the class or attribute swap for state; put the visual change on the paused GSAP timeline."
+      },
+      {
+        "code": "css_transition_used",
+        "severity": "warning",
+        "message": "CSS declaration `transition: padding-left 0.2s ease` runs on the browser clock and cannot be seeked deterministically across render workers.",
+        "selector": ".toolbar",
+        "dataAttributes": {},
+        "sourceFile": "/Users/nilesh93/Projects/personal/figmake/promo/product-wide/index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Keep the class or attribute swap for state; put the visual change on the paused GSAP timeline."
+      },
+      {
+        "code": "css_transition_used",
+        "severity": "warning",
+        "message": "CSS declaration `transition: background 0.18s` runs on the browser clock and cannot be seeked deterministically across render workers.",
+        "selector": ".sw",
+        "dataAttributes": {},
+        "sourceFile": "/Users/nilesh93/Projects/personal/figmake/promo/product-wide/index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Keep the class or attribute swap for state; put the visual change on the paused GSAP timeline."
+      },
+      {
+        "code": "css_transition_used",
+        "severity": "warning",
+        "message": "CSS declaration `transition: transform 0.18s cubic-bezier(0.3, 1.3, 0.5, 1)` runs on the browser clock and cannot be seeked deterministically across render workers.",
+        "selector": ".sw::after",
+        "dataAttributes": {},
+        "sourceFile": "/Users/nilesh93/Projects/personal/figmake/promo/product-wide/index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Keep the class or attribute swap for state; put the visual change on the paused GSAP timeline."
+      },
+      {
+        "code": "css_transition_used",
+        "severity": "warning",
+        "message": "CSS declaration `transition: width 0.6s cubic-bezier(0.2, 0.8, 0.2, 1)` runs on the browser clock and cannot be seeked deterministically across render workers.",
+        "selector": ".prog > i",
+        "dataAttributes": {},
+        "sourceFile": "/Users/nilesh93/Projects/personal/figmake/promo/product-wide/index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Keep the class or attribute swap for state; put the visual change on the paused GSAP timeline."
+      },
+      {
+        "code": "css_transition_used",
+        "severity": "warning",
+        "message": "CSS declaration `transition: transform 0.12s, box-shadow 0.12s, border-color 0.12s` runs on the browser clock and cannot be seeked deterministically across render workers.",
+        "selector": ".choice",
+        "dataAttributes": {},
+        "sourceFile": "/Users/nilesh93/Projects/personal/figmake/promo/product-wide/index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Keep the class or attribute swap for state; put the visual change on the paused GSAP timeline."
+      },
+      {
+        "code": "css_transition_used",
+        "severity": "warning",
+        "message": "CSS declaration `transition-duration: 0.001ms` runs on the browser clock and cannot be seeked deterministically across render workers.",
+        "selector": "*, *::before, *::after",
+        "dataAttributes": {},
+        "sourceFile": "/Users/nilesh93/Projects/personal/figmake/promo/product-wide/index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Keep the class or attribute swap for state; put the visual change on the paused GSAP timeline."
+      },
+      {
+        "code": "css_transition_used",
+        "severity": "warning",
+        "message": "CSS declaration `transition: opacity 0.15s` runs on the browser clock and cannot be seeked deterministically across render workers.",
+        "selector": ".resizer::after",
+        "dataAttributes": {},
+        "sourceFile": "/Users/nilesh93/Projects/personal/figmake/promo/product-wide/index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Keep the class or attribute swap for state; put the visual change on the paused GSAP timeline."
+      },
+      {
+        "code": "css_transition_used",
+        "severity": "warning",
+        "message": "CSS declaration `transition: opacity 0.12s` runs on the browser clock and cannot be seeked deterministically across render workers.",
+        "selector": ".mactions",
+        "dataAttributes": {},
+        "sourceFile": "/Users/nilesh93/Projects/personal/figmake/promo/product-wide/index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Keep the class or attribute swap for state; put the visual change on the paused GSAP timeline."
+      },
+      {
+        "code": "css_transition_used",
+        "severity": "warning",
+        "message": "CSS declaration `transition: transform 0.15s` runs on the browser clock and cannot be seeked deterministically across render workers.",
+        "selector": ".acts-t .i",
+        "dataAttributes": {},
+        "sourceFile": "/Users/nilesh93/Projects/personal/figmake/promo/product-wide/index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Keep the class or attribute swap for state; put the visual change on the paused GSAP timeline."
+      },
+      {
+        "code": "css_transition_used",
+        "severity": "warning",
+        "message": "CSS declaration `transition: box-shadow 0.15s, border-color 0.15s` runs on the browser clock and cannot be seeked deterministically across render workers.",
+        "selector": ".cbox",
+        "dataAttributes": {},
+        "sourceFile": "/Users/nilesh93/Projects/personal/figmake/promo/product-wide/index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Keep the class or attribute swap for state; put the visual change on the paused GSAP timeline."
+      },
+      {
+        "code": "css_transition_used",
+        "severity": "warning",
+        "message": "CSS declaration `transition: width 0.3s cubic-bezier(0.2, 0.8, 0.2, 1)` runs on the browser clock and cannot be seeked deterministically across render workers.",
+        "selector": ".pg-fill",
+        "dataAttributes": {},
+        "sourceFile": "/Users/nilesh93/Projects/personal/figmake/promo/product-wide/index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Keep the class or attribute swap for state; put the visual change on the paused GSAP timeline."
+      },
+      {
+        "code": "duplicate_media_discovery_risk",
+        "severity": "warning",
+        "message": "Detected 3 matching img entries with the same source/start/duration.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {},
+        "sourceFile": "/Users/nilesh93/Projects/personal/figmake/promo/product-wide/index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Avoid duplicated media nodes that can be discovered twice during compilation."
+      },
+      {
+        "code": "duplicate_media_discovery_risk",
+        "severity": "warning",
+        "message": "Detected 2 matching img entries with the same source/start/duration.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {},
+        "sourceFile": "/Users/nilesh93/Projects/personal/figmake/promo/product-wide/index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Avoid duplicated media nodes that can be discovered twice during compilation."
+      },
+      {
+        "code": "overlapping_gsap_tweens",
+        "severity": "warning",
+        "message": "GSAP tweens overlap on \"#cur\" for opacity between 23.70s and 23.80s.",
+        "selector": "#cur",
+        "dataAttributes": {},
+        "sourceFile": "/Users/nilesh93/Projects/personal/figmake/promo/product-wide/index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Shorten the earlier tween, move the later tween, or add `overwrite: \"auto\"`."
+      },
+      {
+        "code": "composition_file_too_large",
+        "severity": "warning",
+        "message": "This HTML composition file has 373 lines. Smaller sub-compositions are easier to read, iterate on, and diff.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {},
+        "sourceFile": "/Users/nilesh93/Projects/personal/figmake/promo/product-wide/index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Split coherent scenes or layers into separate .html files under compositions/, then mount them from the parent with data-composition-src so each file stays small enough to inspect, revise, and validate independently."
+      }
+    ],
+    "filesScanned": 1
+  },
+  "runtime": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": []
+  },
+  "layout": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": [],
+    "duration": 32.6,
+    "samples": [
+      1.811,
+      5.433,
+      9.056,
+      12.678,
+      16.3,
+      19.922,
+      23.544,
+      27.167,
+      30.789
+    ],
+    "transitionSamples": [],
+    "transitionSamplesDropped": 0,
+    "tolerance": 2,
+    "totalIssueCount": 0,
+    "truncated": false
+  },
+  "motion": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": [],
+    "enabled": false,
+    "samples": 0
+  },
+  "contrast": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": [],
+    "enabled": true,
+    "samples": [
+      1.811,
+      9.056,
+      16.3,
+      23.544,
+      30.789
+    ],
+    "checked": 14,
+    "passed": 14
+  },
+  "craft": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 4,
+    "infoCount": 0,
+    "findings": [
+      {
+        "code": "dead_stretch",
+        "severity": "warning",
+        "message": "Nothing on screen changes for 5.50 s (4.12–9.62 s): start the next move within 3 s, or put data-hold on the element whose stillness is deliberate; see references/motion.md.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 4.122,
+        "seconds": 5.496,
+        "floorSeconds": 3,
+        "until": 9.618
+      },
+      {
+        "code": "dead_stretch",
+        "severity": "warning",
+        "message": "Nothing on screen changes for 5.12 s (13.74–18.86 s): start the next move within 3 s, or put data-hold on the element whose stillness is deliberate; see references/motion.md.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 13.739,
+        "seconds": 5.122,
+        "floorSeconds": 3,
+        "until": 18.861
+      },
+      {
+        "code": "dead_stretch",
+        "severity": "warning",
+        "message": "Nothing on screen changes for 3.12 s (19.86–22.98 s): start the next move within 3 s, or put data-hold on the element whose stillness is deliberate; see references/motion.md.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 19.86,
+        "seconds": 3.122,
+        "floorSeconds": 3,
+        "until": 22.982
+      },
+      {
+        "code": "dead_stretch",
+        "severity": "warning",
+        "message": "Nothing on screen changes for 3.25 s (23.98–27.23 s): start the next move within 3 s, or put data-hold on the element whose stillness is deliberate; see references/motion.md.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 23.982,
+        "seconds": 3.247,
+        "floorSeconds": 3,
+        "until": 27.229
+      }
+    ],
+    "enabled": true,
+    "step": 0.125,
+    "samples": 261
+  },
+  "audio": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": []
+  },
+  "hdr": {
+    "autoPromotion": null,
+    "inspection": "available"
+  },
+  "snapshots": {
+    "enabled": false,
+    "files": [],
+    "times": [],
+    "findingFiles": []
+  }
+}
