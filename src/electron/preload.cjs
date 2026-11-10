@@ -30,6 +30,8 @@ contextBridge.exposeInMainWorld("figmake", {
   signOutFigma: call("figmake:sign-out"),
   reportIssue: call("figmake:report-issue"),
   onUpdateState: listen("figmake:update-state"),
+  updateState: call("figmake:update-get"),
+  checkForUpdates: call("figmake:update-check"),
   installUpdate: call("figmake:update-install"),
   listFolder: call("figmake:list-folder"),
   readFile: call("figmake:read-file"),

@@ -8,6 +8,8 @@ import type { DesktopAppState } from "./contracts.js";
 const desktopAppStateSchema = z.object({
   lastLink: z.string().nullable().default(null),
   agent: z.enum(["claude", "codex"]).nullable().default(null),
+  /** Absent in states saved by older versions, which therefore count as "not connected yet". */
+  agentConnected: z.boolean().catch(false).default(false),
   workspace: z.string().nullable().default(null),
   /** Figma Make file key -> absolute project folder (existing projects keep their path). */
   projects: z.record(z.string(), z.string()).default({}),

@@ -38,7 +38,7 @@ interface Rig {
   store: DesktopAppStateStore;
 }
 
-async function rig(opts: { agent?: "claude" | "codex" | null; saved?: boolean } = {}): Promise<Rig> {
+async function rig(opts: { agent?: "claude" | "codex" | null; saved?: boolean; connected?: boolean } = {}): Promise<Rig> {
   const base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "session-")));
   dirs.push(base);
   const remote = path.join(base, "remote");
@@ -54,7 +54,7 @@ async function rig(opts: { agent?: "claude" | "codex" | null; saved?: boolean } 
     auth: vi.fn(async () => undefined),
   };
   const store = new DesktopAppStateStore(path.join(base, "app-state.json"));
-  if (opts.agent !== null) await store.update({ agent: opts.agent ?? "claude" });
+  if (opts.agent !== null) await store.update({ agent: opts.agent ?? "claude", agentConnected: opts.connected ?? true });
 
   const edit: Rig["edit"] = {
     fn: async (root) => {
@@ -182,12 +182,77 @@ describe("session: sign-in and AI choice", () => {
 
   it("asks Claude or ChatGPT once, then continues to ready", async () => {
     const r = await rig({ agent: null });
+    expect(r.session.state).toMatchObject({ phase: "needs-ai-choice", agentConnected: false, previewUrl: null });
     await r.session.openProject(LINK);
     expect(r.session.state).toMatchObject({ phase: "needs-ai-choice", previewUrl: "http://localhost:5173/" });
     await r.session.setAgent("codex");
     expect(r.harness.ensureAgentReady).toHaveBeenCalledWith("codex", expect.anything());
     expect(r.session.state).toMatchObject({ phase: "ready", agent: "codex" });
-    expect((await r.store.load()).agent).toBe("codex");
+    expect((await r.store.load())).toMatchObject({ agent: "codex", agentConnected: true });
+  });
+
+  it("first run asks for the AI before anything else, connects it, then shows the start screen", async () => {
+    const r = await rig({ agent: null });
+    expect(r.session.state).toMatchObject({ phase: "needs-ai-choice", agent: null, agentConnected: false });
+    expect(r.harness.ensureAgentReady).not.toHaveBeenCalled();
+    await r.session.setAgent("claude");
+    expect(r.harness.ensureAgentReady).toHaveBeenCalledWith("claude", expect.anything());
+    expect(r.session.state).toMatchObject({ phase: "start", agent: "claude", agentConnected: true });
+    expect(await r.store.load()).toMatchObject({ agent: "claude", agentConnected: true });
+    await r.session.openProject(LINK);
+    expect(r.session.state).toMatchObject({ phase: "ready", previewUrl: "http://localhost:5173/" });
+  });
+
+  it("an AI saved by an older version counts as not connected and is asked about again", async () => {
+    const r = await rig({ agent: "codex", connected: false });
+    expect(r.session.state).toMatchObject({ phase: "needs-ai-choice", agent: "codex", agentConnected: false });
+    expect(r.harness.ensureAgentReady).not.toHaveBeenCalled();
+    await r.session.setAgent("codex");
+    expect(r.harness.ensureAgentReady).toHaveBeenCalledWith("codex", expect.anything());
+    expect(r.session.state).toMatchObject({ phase: "start", agentConnected: true });
+  });
+
+  it("the last project reopens only after the AI is connected", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    await r.store.update({ agentConnected: false });
+    const again = new Session(r.deps);
+    sessions.push(again);
+    await again.start();
+    expect(again.state).toMatchObject({ phase: "needs-ai-choice", previewUrl: null, projectName: null });
+    await again.setAgent("claude");
+    expect(again.state).toMatchObject({ phase: "ready", projectName: "Checkout Flow", agentConnected: true });
+  });
+
+  it("a failed sign-in keeps the AI unconnected and says so plainly", async () => {
+    const r = await rig({ agent: null });
+    r.harness.ensureAgentReady.mockResolvedValueOnce({ ok: false, code: "signin_failed" });
+    await r.session.setAgent("claude");
+    expect(r.session.state).toMatchObject({ phase: "error", message: "Couldn't sign in to Claude. Try again.", agentConnected: false });
+    expect((await r.store.load()).agentConnected).toBe(false);
+    await r.session.retry();
+    expect(r.session.state).toMatchObject({ phase: "start", agentConnected: true });
+  });
+
+  it("cancelling the sign-in goes back to the choice", async () => {
+    const r = await rig({ agent: null });
+    r.harness.ensureAgentReady.mockImplementationOnce((_a: string, signal: AbortSignal) => new Promise((res) => void signal.addEventListener("abort", () => res({ ok: false, code: "cancelled" }))));
+    const pending = r.session.setAgent("claude");
+    await vi.waitFor(() => expect(r.session.state.phase).toBe("preparing"));
+    await r.session.cancel();
+    await pending;
+    expect(r.session.state).toMatchObject({ phase: "needs-ai-choice", agentConnected: false });
+  });
+
+  it("switching the AI from Settings connects the new one; the same one is a no-op", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    r.harness.ensureAgentReady.mockClear();
+    await r.session.setAgent("claude");
+    expect(r.harness.ensureAgentReady).not.toHaveBeenCalled();
+    await r.session.setAgent("codex");
+    expect(r.harness.ensureAgentReady).toHaveBeenCalledWith("codex", expect.anything());
+    expect(r.session.state).toMatchObject({ phase: "ready", agent: "codex", agentConnected: true });
   });
 
   it("shows the AI sign-in state and opens only allowlisted sign-in pages", async () => {

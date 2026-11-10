@@ -1,53 +1,22 @@
 /**
  * Self-update (electron-updater, GitHub releases of sherlabs/figmake-sync).
  *
- * Wiring (to be done by the app shell; nothing here touches src/electron):
+ * Automatic checks run ~10s after start() and every 4h, never while isBusy() (retried every minute
+ * until idle). A manual checkNow() works whether or not automatic checks are on, is never run twice
+ * at once, and is rate-limited to one real check every few seconds. Failures are logged and surface
+ * as a plain `error` sentence in the state. A downloaded update installs on quit; installNow() is the
+ * explicit restart and refuses unless phase is "ready" and the app is idle.
  *
- * main.ts, after the main window is shown:
- *   import { app, BrowserWindow, ipcMain } from "electron";
- *   import { createUpdater, loadAutoUpdater, updatesSupported } from "../updater/index.js";
- *   import { UPDATE_INSTALL_CHANNEL, UPDATE_STATE_CHANNEL } from "../updater/contracts.js";
- *
- *   const enabled = updatesSupported({ isPackaged: app.isPackaged, platform: process.platform,
- *     env: process.env, settingEnabled: settings.updates?.enabled ?? true,
- *     appImage: Boolean(process.env.APPIMAGE) });
- *   if (enabled) {
- *     const updater = createUpdater({
- *       autoUpdater: await loadAutoUpdater(),
- *       currentVersion: app.getVersion(),
- *       isBusy: () => facade.isBusy(),            // sync/agent/pull/push running
- *       logger: { info: log.info, warn: log.warn, error: log.error },
- *       onState: (s) => mainWindow.webContents.send(UPDATE_STATE_CHANNEL, s),
- *     });
- *     ipcMain.handle(UPDATE_INSTALL_CHANNEL, () => updater.installNow());
- *     ipcMain.handle("figmake:update-get", () => updater.getState()); // optional initial read
- *     mainWindow.once("ready-to-show", () => updater.start());       // delays first check ~10s
- *     app.on("before-quit", () => updater.stop());
- *   }
- *
- * preload.cjs (contextBridge.exposeInMainWorld("figmake", { ... })):
- *   onUpdateState: (cb) => { const h = (_e, s) => cb(s); ipcRenderer.on("figmake:update-state", h);
- *                            return () => ipcRenderer.removeListener("figmake:update-state", h); },
- *   installUpdate: () => ipcRenderer.invoke("figmake:update-install"),
- *
- * renderer: one quiet button, top-right beside the existing controls, rendered only when
- * state.phase === "ready", label exactly "Restart to update", onclick -> installUpdate().
- * No other text, no changelog.
- *
- * Settings: `updates.enabled` (boolean, default true) in app settings. Env FIGMAKE_DISABLE_UPDATES=1
- * also disables. Dev (!app.isPackaged) and unsupported platforms never check.
- *
- * Behavior: autoDownload=true, autoInstallOnAppQuit=true, no prerelease, no downgrade. Checks run
- * ~10s after start() and every 6h, never while isBusy() (retried every minute until idle). All
- * failures are logged, never thrown, never shown. A downloaded update installs on quit; installNow()
- * is the explicit restart and refuses unless phase is "ready" and the app is idle.
+ * Settings: `updates.enabled` (boolean, default true) turns the automatic checks off. Env
+ * FIGMAKE_DISABLE_UPDATES=1 disables everything. Dev (!app.isPackaged) never checks.
  */
 import type { UpdateState } from "./contracts.js";
 
 export type { UpdateState, UpdatePhase } from "./contracts.js";
 
 export const FIRST_CHECK_DELAY_MS = 10_000;
-export const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+export const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
+export const MANUAL_COOLDOWN_MS = 5_000;
 export const BUSY_RETRY_MS = 60_000;
 
 export interface AutoUpdaterLike {
@@ -77,6 +46,7 @@ export interface UpdaterDeps {
   isBusy: () => boolean;
   logger?: UpdaterLogger;
   clock?: Clock;
+  now?: () => number;
   onState?: (state: UpdateState) => void;
 }
 
@@ -118,16 +88,22 @@ export interface Updater {
   stop(): void;
   getState(): UpdateState;
   installNow(): boolean;
+  /** Manual "Check for updates". Resolves with the state once the check (not the download) is done. */
+  checkNow(): Promise<UpdateState>;
 }
+
+export const CHECK_FAILED = "Couldn't check. Try again.";
 
 export function createUpdater(deps: UpdaterDeps): Updater {
   const au = deps.autoUpdater;
   const log = deps.logger ?? NOOP_LOGGER;
   const clock = deps.clock ?? SYSTEM_CLOCK;
-  let state: UpdateState = { phase: "idle" };
+  const now = deps.now ?? Date.now;
+  let state: UpdateState = { phase: "idle", currentVersion: deps.currentVersion, supported: true, upToDate: false };
   let timer: unknown;
   let started = false;
-  let checking = false;
+  let inFlight: Promise<UpdateState> | null = null;
+  let lastRunAt = -Infinity;
 
   const safe = <T>(fn: () => T): T | undefined => {
     try {
@@ -151,21 +127,32 @@ export function createUpdater(deps: UpdaterDeps): Updater {
   const on = (event: string, fn: (...args: any[]) => void): void => { // eslint-disable-line @typescript-eslint/no-explicit-any
     safe(() => au.on(event, fn));
   };
+  const stamp = (): string => new Date(now()).toISOString();
+  const withVersion = (next: UpdateState, v: string | undefined): UpdateState => (v ? { ...next, version: v } : next);
+  const clean = (): UpdateState => {
+    const { error: _e, version: _v, ...rest } = state; // eslint-disable-line @typescript-eslint/no-unused-vars
+    return rest;
+  };
+
+  on("checking-for-update", () => {
+    if (state.phase === "idle") setState({ ...clean(), phase: "checking" });
+  });
   on("update-available", (info?: { version?: string }) => {
     if (state.phase === "ready") return;
-    const v = info?.version;
-    setState(v ? { phase: "downloading", version: v } : { phase: "downloading" });
+    setState(withVersion({ ...clean(), phase: "downloading", upToDate: false, lastCheckedAt: stamp() }, info?.version));
   });
   on("update-not-available", () => {
-    if (state.phase === "downloading") setState({ phase: "idle" });
+    if (state.phase === "ready" || state.phase === "downloading") return;
+    setState({ ...clean(), phase: "idle", upToDate: true, lastCheckedAt: stamp() });
   });
   on("update-downloaded", (info?: { version?: string }) => {
-    const v = info?.version;
-    setState(v ? { phase: "ready", version: v } : { phase: "ready" });
+    setState(withVersion({ ...clean(), phase: "ready", upToDate: false }, info?.version ?? state.version));
   });
   on("error", (err: unknown) => {
     log.error(`updater error: ${err instanceof Error ? err.message : String(err)}`);
-    if (state.phase === "downloading") setState({ phase: "idle" });
+    if (state.phase === "checking" || state.phase === "downloading") {
+      setState({ ...clean(), phase: "idle", upToDate: false, error: CHECK_FAILED, lastCheckedAt: stamp() });
+    }
   });
 
   const schedule = (ms: number): void => {
@@ -173,22 +160,38 @@ export function createUpdater(deps: UpdaterDeps): Updater {
     timer = clock.setTimeout(() => void tick(), ms);
   };
 
+  /** One real check, shared by everyone who asks while it runs. */
+  function runCheck(): Promise<UpdateState> {
+    if (inFlight) return inFlight;
+    lastRunAt = now();
+    if (state.phase === "idle") setState({ ...clean(), phase: "checking" });
+    inFlight = (async () => {
+      try {
+        await au.checkForUpdates();
+        // electron-updater reports the outcome through events; this only covers a silent finish.
+        if (state.phase === "checking") setState({ ...clean(), phase: "idle", upToDate: true, lastCheckedAt: stamp() });
+      } catch (err) {
+        log.error(`updater check failed: ${err instanceof Error ? err.message : String(err)}`);
+        if (state.phase === "checking" || state.phase === "idle") {
+          setState({ ...clean(), phase: "idle", upToDate: false, error: CHECK_FAILED, lastCheckedAt: stamp() });
+        }
+      } finally {
+        inFlight = null;
+      }
+      return { ...state };
+    })();
+    return inFlight;
+  }
+
   async function tick(): Promise<void> {
     if (!started) return;
-    if (state.phase === "ready") return; // already have one; installs on quit
-    if (checking) return schedule(CHECK_INTERVAL_MS);
+    if (state.phase === "ready" || state.phase === "downloading") return schedule(CHECK_INTERVAL_MS); // already have one; installs on quit
+    if (inFlight) return schedule(CHECK_INTERVAL_MS);
     if (safe(() => deps.isBusy()) !== false) {
       log.info("updater: busy, deferring check");
       return schedule(BUSY_RETRY_MS);
     }
-    checking = true;
-    try {
-      await au.checkForUpdates();
-    } catch (err) {
-      log.error(`updater check failed: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      checking = false;
-    }
+    await runCheck();
     schedule(CHECK_INTERVAL_MS);
   }
 
@@ -205,6 +208,12 @@ export function createUpdater(deps: UpdaterDeps): Updater {
       timer = undefined;
     },
     getState: () => ({ ...state }),
+    checkNow() {
+      if (state.phase === "ready" || state.phase === "downloading") return Promise.resolve({ ...state });
+      if (inFlight) return inFlight;
+      if (now() - lastRunAt < MANUAL_COOLDOWN_MS) return Promise.resolve({ ...state });
+      return runCheck();
+    },
     installNow() {
       if (state.phase !== "ready") return false;
       if (safe(() => deps.isBusy()) !== false) return false;

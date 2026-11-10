@@ -117,6 +117,7 @@ const START: SessionState = {
   canSend: false,
   canUndo: false,
   agent: null,
+  agentConnected: false,
   workspace: "",
   processes: [],
 };
@@ -130,6 +131,8 @@ export class Session {
   private workspaceDir: string;
   private stack: Entry[] = [];
   private agentReady: AgentChoice | null = null;
+  /** The project to reopen once the AI helper is connected (first run, or an AI that was never confirmed). */
+  private pendingReopen: { link: string; info: NonNullable<ReturnType<typeof parseFigmaLink>> } | null = null;
   private resume: (() => Promise<void>) | null = null;
   private known: Record<string, string> = {};
   private links: Record<string, string> = {};
@@ -153,7 +156,7 @@ export class Session {
   }
 
   private startState(): SessionState {
-    return { ...START, agent: this.s.agent, workspace: this.s.workspace, projects: this.s.projects, ...(this.s.workspaceError ? { workspaceError: this.s.workspaceError } : {}) };
+    return { ...START, phase: this.s.agentConnected ? "start" : "needs-ai-choice", agent: this.s.agent, agentConnected: this.s.agentConnected, workspace: this.s.workspace, projects: this.s.projects, ...(this.s.workspaceError ? { workspaceError: this.s.workspaceError } : {}) };
   }
 
   get state(): SessionState {
@@ -245,14 +248,20 @@ export class Session {
     this.links = { ...saved.links };
     const seed = saved.lastLink ? parseFigmaLink(saved.lastLink) : null;
     if (saved.lastLink && seed && Object.keys(this.links).length === 0) this.links[seed.key] = saved.lastLink;
-    this.set({ agent: saved.agent, updatesEnabled: saved.updates.enabled });
+    const connected = saved.agent !== null && saved.agentConnected;
+    this.set({ agent: saved.agent, agentConnected: connected, updatesEnabled: saved.updates.enabled });
     await this.useWorkspace(saved.workspace);
     await this.refreshProjects();
     const info = seed;
     const root = info ? this.known[info.key] : undefined;
-    if (saved.lastLink && info && root && (await fs.pathExists(root))) {
-      await this.open(saved.lastLink, info, true);
+    const reopen = saved.lastLink && info && root && (await fs.pathExists(root)) ? { link: saved.lastLink, info } : null;
+    if (!connected) {
+      // The AI helper comes first: pick one and sign in, then the last project reopens.
+      this.pendingReopen = reopen;
+      this.set({ phase: "needs-ai-choice", message: undefined });
+      return;
     }
+    if (reopen) await this.open(reopen.link, reopen.info, true);
   }
 
   private async useWorkspace(candidate: string | null): Promise<void> {
@@ -282,6 +291,7 @@ export class Session {
       };
       return;
     }
+    this.pendingReopen = null;
     await this.open(link.trim(), info, false);
   }
 
@@ -483,10 +493,13 @@ export class Session {
 
   async setAgent(agent: AgentChoice): Promise<void> {
     if (agent !== "claude" && agent !== "codex") return;
-    await this.deps.appState.update({ agent });
+    const connected = agent === this.s.agent && this.s.agentConnected;
+    await this.deps.appState.update({ agent, agentConnected: connected });
     if (this.agentReady !== agent) this.agentReady = null;
-    this.set({ agent });
-    if (this.s.phase === "needs-ai-choice" && !this.busy) await this.prepareAgent();
+    this.set({ agent, agentConnected: connected });
+    if (this.busy) return;
+    // Choosing (or switching to) an AI connects it right away: install, then sign in.
+    if (this.s.phase === "needs-ai-choice" || (!connected && (this.s.phase === "ready" || this.s.phase === "start"))) await this.prepareAgent();
   }
 
   async setUpdates(enabled: boolean): Promise<void> {
@@ -783,8 +796,13 @@ export class Session {
     this.set({ projects, syncedAt: (active && this.syncedAtByKey[active]) || null });
   }
 
-  private prepareAgent(): Promise<void> {
-    return this.exclusive((signal) => this.prepareAgentLocked(signal));
+  private async prepareAgent(): Promise<void> {
+    await this.exclusive((signal) => this.prepareAgentLocked(signal));
+    const next = this.pendingReopen;
+    if (next && this.s.agentConnected && this.s.phase === "start" && !this.busy) {
+      this.pendingReopen = null;
+      await this.open(next.link, next.info, true);
+    }
   }
 
   private async prepareAgentLocked(signal: AbortSignal): Promise<void> {
@@ -812,6 +830,10 @@ export class Session {
       return false;
     }
     this.agentReady = agent;
+    if (!this.s.agentConnected) {
+      this.set({ agentConnected: true });
+      await this.deps.appState.update({ agent, agentConnected: true });
+    }
     return true;
   }
 

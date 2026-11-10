@@ -30,7 +30,7 @@ import { createOneShotRunner } from "../harness/oneshot.js";
 import { systemEnv } from "../harness/process.js";
 import { detectRuntime, installManagedRuntime, setManagedRuntimeRoot } from "../runtime/managed.js";
 import { createUpdater, loadAutoUpdater, updatesSupported, type Updater } from "../updater/index.js";
-import { UPDATE_INSTALL_CHANNEL, UPDATE_STATE_CHANNEL } from "../updater/contracts.js";
+import { UPDATE_CHECK_CHANNEL, UPDATE_GET_CHANNEL, UPDATE_INSTALL_CHANNEL, UPDATE_STATE_CHANNEL, type UpdateState } from "../updater/contracts.js";
 import { trackEvent } from "./analytics.js";
 import { DesktopAppStateStore } from "./appState.js";
 import type { MenuCommand, PreviewRect } from "./contracts.js";
@@ -191,12 +191,18 @@ function buildMenu(): void {
     accelerator,
     click: () => send("figmake:command", id),
   });
+  const checkUpdates: MenuItemConstructorOptions = { label: "Check for Updates…", click: () => send("figmake:command", "check-updates" satisfies MenuCommand) };
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
-      { label: "figmake-sync", submenu: [command("Settings…", "CommandOrControl+,", "settings"), { type: "separator" }, { role: "hide" }, { role: "quit" }] },
+      {
+        label: "figmake-sync",
+        submenu: [checkUpdates, command("Settings…", "CommandOrControl+,", "settings"), { type: "separator" }, { role: "hide" }, { role: "quit" }],
+      },
       { label: "File", submenu: [command("Add Project…", "CommandOrControl+N", "add-project"), { role: "close" }] },
       { role: "editMenu" },
       { role: "windowMenu" },
+      // macOS keeps this item in the app menu; elsewhere it lives under Help.
+      ...(process.platform === "darwin" ? [] : [{ label: "Help", submenu: [checkUpdates] }]),
     ]),
   );
 }
@@ -237,8 +243,7 @@ function registerIpc(s: Session): void {
     if (typeof enabled !== "boolean") return;
     await s.setUpdates(enabled);
     if (!enabled) updater?.stop();
-    else if (updater) updater.start();
-    else await startUpdater(s, true);
+    else updater?.start();
   });
   ipcMain.handle("figmake:send", (_e, resolution: unknown) =>
     s.send(resolution === "mine" || resolution === "figma" ? resolution : undefined),
@@ -341,10 +346,14 @@ async function bootstrap(): Promise<void> {
   await startUpdater(live, (await store.load()).updates.enabled);
 }
 
-/** Quiet self-update: checks only when idle, tells the window only when a restart would apply it. */
-async function startUpdater(live: Session, settingEnabled: boolean): Promise<void> {
-  const enabled = updatesSupported({ isPackaged: app.isPackaged, platform: process.platform, env: process.env, settingEnabled, appImage: Boolean(process.env["APPIMAGE"]) });
-  if (!enabled || !mainWindow) return;
+/** Self-update. Automatic checks follow the Settings switch; "Check for updates" always works in a packaged app. */
+async function startUpdater(live: Session, automatic: boolean): Promise<void> {
+  const supported = updatesSupported({ isPackaged: app.isPackaged, platform: process.platform, env: process.env, appImage: Boolean(process.env["APPIMAGE"]) });
+  const unsupported: UpdateState = { phase: "idle", currentVersion: app.getVersion(), supported: false, upToDate: false };
+  ipcMain.handle(UPDATE_GET_CHANNEL, () => updater?.getState() ?? unsupported);
+  ipcMain.handle(UPDATE_CHECK_CHANNEL, () => updater?.checkNow() ?? unsupported);
+  ipcMain.handle(UPDATE_INSTALL_CHANNEL, () => void updater?.installNow());
+  if (!supported) return;
   try {
     const note = (level: "info" | "warn" | "error") => (message: string) => void log(`updater ${level}: ${message}`);
     updater = createUpdater({
@@ -354,7 +363,7 @@ async function startUpdater(live: Session, settingEnabled: boolean): Promise<voi
       logger: { info: note("info"), warn: note("warn"), error: note("error") },
       onState: (state) => send(UPDATE_STATE_CHANNEL, state),
     });
-    ipcMain.handle(UPDATE_INSTALL_CHANNEL, () => void updater?.installNow());
+    if (!automatic || !mainWindow) return;
     const begin = (): void => updater?.start();
     if (mainWindow.isVisible()) begin();
     else mainWindow.once("show", begin);

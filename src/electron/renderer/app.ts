@@ -1,4 +1,5 @@
 import type { AgentChoice, ChatState, Phase, ProjectStatus, SessionState } from "../contracts.js";
+import type { UpdateState } from "../../updater/contracts.js";
 import { createChatPanel } from "./chat.js";
 import { createFilesPanel } from "./files.js";
 import { ago, h, icon, nodes, plural, type Child } from "./dom.js";
@@ -24,6 +25,8 @@ type UserSheet = { kind: "add" } | { kind: "settings" } | { kind: "remove"; key:
 
 let state: SessionState | null = null;
 let updateReady = false;
+let upd: UpdateState = { phase: "idle", currentVersion: "", supported: true, upToDate: false };
+let liveUpdateRow: HTMLElement | null = null;
 let userSheet: UserSheet | null = null;
 let paletteOpen = false;
 let menuOpen = false;
@@ -197,7 +200,7 @@ function renderBanner(s: SessionState): void {
 
 const WORKING_TEXT: Partial<Record<Phase, (s: SessionState) => string>> = {
   connecting: () => "Getting your project…",
-  preparing: (s) => (s.previewUrl ? `Getting ${agentName(s.agent)} ready…` : "Setting things up…"),
+  preparing: (s) => (s.previewUrl || !s.projectName ? `Getting ${agentName(s.agent)} ready…` : "Setting things up…"),
   working: (s) => `${agentName(s.agent)} is making your change…`,
   sending: () => "Sending to Figma…",
 };
@@ -208,6 +211,8 @@ function renderStatus(s: SessionState): void {
   if (working) parts.push(working(s));
   else if (s.phase === "error") parts.push("Something went wrong");
   else if (s.phase === "start") parts.push("Ready");
+  else if (s.phase === "needs-ai-choice" && !s.projectName) parts.push("Pick your AI helper");
+  else if (s.phase === "needs-ai-signin" && !s.projectName) parts.push(`Sign in to ${agentName(s.agent)}`);
   else {
     const when = ago(s.syncedAt);
     parts.push(when ? `Synced ${when}` : "Not synced yet", "Backup saved");
@@ -239,8 +244,10 @@ function progressFill(pct: number): HTMLElement {
 }
 
 function renderStage(s: SessionState): void {
-  const start = s.phase === "start";
-  const preparing = !s.previewUrl && (s.phase === "connecting" || s.phase === "preparing");
+  // Before any project exists the AI helper is connected on top of the start screen.
+  const upFront = !s.projectName && !s.previewUrl && (s.phase === "needs-ai-choice" || s.phase === "needs-ai-signin" || s.phase === "preparing");
+  const start = s.phase === "start" || upFront;
+  const preparing = !upFront && !s.previewUrl && (s.phase === "connecting" || s.phase === "preparing");
   const calmIdle = !start && !preparing && !s.previewUrl;
   welcome.hidden = !start;
   prep.hidden = !preparing;
@@ -275,10 +282,57 @@ function filesList(files: string[]): HTMLElement {
   return h("ul", { class: "files" }, ...files.slice(0, 6).map((f) => h("li", {}, icon("doc", true), f)), files.length > 6 ? h("li", {}, `and ${files.length - 6} more`) : null);
 }
 
+/** What the Updates row says for the current update state. Exported shape kept plain for the layout test. */
+function updateText(u: UpdateState, auto: boolean): { status: string; note: string } {
+  const v = u.currentVersion ? `v${u.currentVersion}` : "";
+  const off = "Automatic updates are off";
+  if (!u.supported) return { status: "Updates aren't available in this version.", note: v ? `Version ${v}` : "" };
+  let status: string;
+  if (u.phase === "ready") status = "A new version is ready";
+  else if (u.phase === "downloading") status = "Downloading update…";
+  else if (u.phase === "checking") status = "Checking…";
+  else if (u.error) status = u.error;
+  else if (u.upToDate) status = `You're up to date (${v})`;
+  else status = auto ? `Version ${v}` : off;
+  return { status, note: !auto && status !== off ? off : "" };
+}
+
+function fillUpdateRow(row: HTMLElement, auto: boolean): void {
+  const { status, note } = updateText(upd, auto);
+  const busy = upd.phase === "checking" || upd.phase === "downloading";
+  const action = upd.phase === "ready"
+    ? btn("Restart to update", () => void api.installUpdate(), "primary")
+    : btn("Check for updates", () => runUpdateCheck(), "", { disabled: busy || !upd.supported });
+  row.replaceChildren(
+    h("div", { class: "l" }, h("b", {}, "Updates"), h("span", { class: upd.error && upd.phase === "idle" ? "bad" : "", role: "status" }, status), note ? h("span", {}, note) : null),
+    h("div", { class: "r" }, upd.supported ? action : null),
+  );
+}
+
+function paintUpdateRow(): void {
+  if (liveUpdateRow?.isConnected && state) fillUpdateRow(liveUpdateRow, state.updatesEnabled);
+}
+
+function runUpdateCheck(): void {
+  if (upd.phase === "idle") {
+    const { error: _e, ...rest } = upd; // eslint-disable-line @typescript-eslint/no-unused-vars
+    upd = { ...rest, phase: "checking" };
+    paintUpdateRow();
+  }
+  void api.checkForUpdates().then((next) => {
+    upd = next;
+    updateReady = next.phase === "ready";
+    paintUpdateRow();
+    if (state) renderToolbar(state);
+  });
+}
+
 function buildSheet(kind: string, s: SessionState): HTMLDialogElement {
   switch (kind) {
     case "ai-choice":
-      return sheetFrame({ label: "Pick your AI helper", glyph: icon("sparkle"), tone: "accent", title: "Pick your AI helper", sub: "It makes the changes you describe. You can switch any time in Settings.", body: [h("div", { class: "choices", role: "group" }, ...AGENTS.map((a) => h("button", { type: "button", class: "choice", onclick: () => void api.setAgent(a.id) }, h("span", { class: `mark ${a.mark}` }, icon(a.glyph)), h("b", {}, a.name), h("span", {}, a.blurb))))], hint: "You'll sign in once, in your browser." });
+      return sheetFrame({ label: "Connect your AI helper", glyph: icon("sparkle"), tone: "accent", title: "Connect your AI helper", sub: "Choose the one you already use. It makes the changes you describe, and you can switch any time in Settings.", body: [h("div", { class: "choices", role: "group" }, ...AGENTS.map((a) => h("button", { type: "button", class: "choice", onclick: () => void api.setAgent(a.id) }, h("span", { class: `mark ${a.mark}` }, icon(a.glyph)), h("b", {}, a.name), h("span", {}, a.blurb))))], hint: "You'll sign in once, in your browser." });
+    case "ai-setup":
+      return sheetFrame({ label: "Getting your AI helper ready", glyph: icon("sparkle"), tone: "accent", title: `Getting ${agentName(s.agent)} ready`, sub: "Setting it up on this Mac. This only takes a moment.", body: [waitRow(`Setting up ${agentName(s.agent)}`)], acts: [btn("Stop", () => void api.cancel())] });
     case "ai-signin":
       return sheetFrame({ label: "Signing in", glyph: icon("person"), tone: "accent", title: `Sign in to ${agentName(s.agent)}`, sub: "A browser window opened for you.", body: [waitRow("Waiting for sign-in in your browser"), h("p", { class: "lead" }, "Finish signing in there and this window carries on by itself.")], acts: [btn("Stop", () => void api.cancel())] });
     case "figma-signin": {
@@ -313,8 +367,16 @@ function buildSheet(kind: string, s: SessionState): HTMLDialogElement {
       return sheetFrame({ label: "Add a project", glyph: icon("plus"), tone: "accent", title: "Add a project", sub: "Paste the link to your Figma Make file.", body: [input, h("p", { class: "help" }, "Copy it from the address bar while the file is open.")], acts: [btn("Cancel", closeSheet), open] });
     }
     case "settings": {
-      const seg = h("div", { class: "seg", role: "group", "aria-label": "AI helper" }, ...AGENTS.map((a) => h("button", { type: "button", "aria-pressed": String(s.agent === a.id), "aria-selected": String(s.agent === a.id), onclick: () => void api.setAgent(a.id) }, a.name)));
+      const other = AGENTS.find((x) => x.id !== s.agent) ?? AGENTS[1];
+      const aiStatus = s.agent ? `${agentName(s.agent)} · ${s.agentConnected ? "Connected" : "Not connected"}` : "Not connected";
+      const aiButtons: Child[] = [];
+      if (s.agent && !s.agentConnected) aiButtons.push(btn("Connect", () => void api.setAgent(s.agent as AgentChoice), "primary"));
+      if (other) aiButtons.push(btn(`Switch to ${other.name}`, () => void api.setAgent(other.id)));
+      if (!s.agent) aiButtons.splice(0, aiButtons.length, ...AGENTS.map((x) => btn(`Connect ${x.name}`, () => void api.setAgent(x.id))));
       const updates = h("button", { type: "button", class: "sw", role: "switch", "aria-checked": String(s.updatesEnabled), "aria-label": "Keep the app up to date", onclick: () => void api.setUpdates(!s.updatesEnabled) });
+      const updateRow = h("div", { class: "row upd" });
+      fillUpdateRow(updateRow, s.updatesEnabled);
+      liveUpdateRow = updateRow;
       return sheetFrame({
         label: "Settings",
         glyph: icon("gear"),
@@ -323,10 +385,11 @@ function buildSheet(kind: string, s: SessionState): HTMLDialogElement {
           h(
             "div",
             { class: "setrows" },
-            h("div", { class: "row" }, h("div", { class: "l" }, h("b", {}, "AI helper"), h("span", {}, "Who makes your changes")), h("div", { class: "r" }, seg)),
+            h("div", { class: "row" }, h("div", { class: "l" }, h("b", {}, "AI helper"), h("span", { class: s.agent && !s.agentConnected ? "bad" : "" }, aiStatus)), h("div", { class: "r" }, ...aiButtons)),
             h("div", { class: "row" }, h("div", { class: "l" }, h("b", {}, "Projects folder"), h("span", { class: s.workspaceError ? "bad" : "" }, s.workspaceError ?? s.workspace)), h("div", { class: "r" }, btn("Change…", () => void api.chooseWorkspace()))),
             h("div", { class: "row" }, h("div", { class: "l" }, h("b", {}, "Figma account"), h("span", {}, "Sign out on this Mac")), h("div", { class: "r" }, btn("Sign out of Figma", () => { void api.signOutFigma(); toast("Signed out of Figma"); }))),
-            h("div", { class: "row" }, h("div", { class: "l" }, h("b", {}, "Updates"), h("span", {}, "Install new versions quietly")), h("div", { class: "r" }, updates)),
+            h("div", { class: "row" }, h("div", { class: "l" }, h("b", {}, "Automatic updates"), h("span", {}, "Install new versions quietly")), h("div", { class: "r" }, updates)),
+            updateRow,
           ),
         ],
         acts: [h("button", { type: "button", class: "plain", onclick: () => { closeSheet(); reportProblem(); } }, "Report a problem"), btn("Done", closeSheet, "primary")],
@@ -363,6 +426,7 @@ function closeSheet(): void {
 function phaseSheet(s: SessionState): string | null {
   if (s.phase === "needs-ai-choice") return "ai-choice";
   if (s.phase === "needs-ai-signin") return "ai-signin";
+  if (s.phase === "preparing" && !s.projectName && !s.previewUrl && s.agent) return "ai-setup";
   if (s.phase === "needs-figma-signin") return "figma-signin";
   if (s.phase === "conflict") return "conflict";
   return null;
@@ -370,7 +434,7 @@ function phaseSheet(s: SessionState): string | null {
 
 function renderSheets(s: SessionState): void {
   const kind = phaseSheet(s) ?? userSheet?.kind ?? null;
-  const sig = kind === null ? "" : [kind, kind === "settings" ? [s.agent, s.workspace, s.workspaceError, s.updatesEnabled].join("|") : "", kind === "figma-signin" ? Boolean(s.message) : "", kind === "conflict" ? (s.conflictFiles ?? []).join(",") : "", kind === "ai-signin" ? s.agent : "", kind === "remove" ? (userSheet as { key: string }).key : "", kind === "undo" ? (userSheet as { index: number }).index : ""].join("#");
+  const sig = kind === null ? "" : [kind, kind === "settings" ? [s.agent, s.agentConnected, s.workspace, s.workspaceError, s.updatesEnabled].join("|") : "", kind === "figma-signin" ? Boolean(s.message) : "", kind === "conflict" ? (s.conflictFiles ?? []).join(",") : "", kind === "ai-signin" || kind === "ai-setup" ? s.agent : "", kind === "remove" ? (userSheet as { key: string }).key : "", kind === "undo" ? (userSheet as { index: number }).index : ""].join("#");
   if (sig === shownSheet) return syncPreview();
   shownSheet = sig;
   const previous = dialog;
@@ -385,7 +449,7 @@ function renderSheets(s: SessionState): void {
     dlg.addEventListener("cancel", (e) => {
       e.preventDefault();
       if (!isPhase) closeSheet();
-      else if (kind === "conflict" || kind === "ai-signin" || (kind === "figma-signin" && s.message)) void api.cancel();
+      else if (kind === "conflict" || kind === "ai-signin" || kind === "ai-setup" || (kind === "figma-signin" && s.message)) void api.cancel();
     });
     sheetHost.append(dlg);
     dlg.showModal();
@@ -628,7 +692,10 @@ document.addEventListener("keydown", (e) => {
     else if (!dialog && !paletteOpen && state && ["working", "sending", "preparing"].includes(state.phase)) void api.cancel();
   }
 });
-api.onCommand((command) => openSheet({ kind: command === "settings" ? "settings" : "add" }));
+api.onCommand((command) => {
+  openSheet({ kind: command === "add-project" ? "add" : "settings" });
+  if (command === "check-updates") runUpdateCheck();
+});
 api.onChat((chat) => {
   chatState = chat;
   chatPanel.setChat(chat);
@@ -640,7 +707,15 @@ function updatePip(): void {
   if (pip) (pip as HTMLElement).hidden = !(chatState.active && !chatOpen);
 }
 api.onUpdateState((u) => {
+  upd = u;
   updateReady = u.phase === "ready";
+  paintUpdateRow();
+  if (state) renderToolbar(state);
+});
+void api.updateState().then((u) => {
+  upd = u;
+  updateReady = u.phase === "ready";
+  paintUpdateRow();
   if (state) renderToolbar(state);
 });
 window.setInterval(() => state && renderStatus(state), 30_000);

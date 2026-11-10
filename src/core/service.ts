@@ -1076,6 +1076,9 @@ export class FigmakeSyncService {
       });
       await context.store.cleanupBackups(context.config.sync.backupRetention);
 
+      // Warm the scan cache while the fresh files are cheap to read, so later status checks do not re-read them.
+      await createManifest(context.rootDir, { ignore: context.config.sync.ignore }).catch(() => undefined);
+
       // Release the browser before the (slow) npm install.
       await session.close().catch(() => undefined);
       session = undefined;

@@ -113,3 +113,35 @@ describe("manifest", () => {
     ).toBe("take-remote");
   });
 });
+
+describe("manifest scan cache", () => {
+  it("does not re-read unchanged files in a project folder, and still notices edits", async () => {
+    const root = await createTempDir("scan-cache");
+    await fs.ensureDir(path.join(root, ".figmake-sync"));
+    await fs.outputFile(path.join(root, "src", "a.ts"), "export const a = 1;\n");
+    await fs.outputFile(path.join(root, "src", "b.ts"), "export const b = 1;\n");
+
+    const first = await createManifest(root, { ignore: [".figmake-sync/**"] });
+    expect(await fs.pathExists(path.join(root, ".figmake-sync", "scan-cache.json"))).toBe(true);
+
+    // Poison the cached hash for a.ts: if the file is not re-read, the poisoned hash comes back.
+    const cachePath = path.join(root, ".figmake-sync", "scan-cache.json");
+    const cache = (await fs.readJson(cachePath)) as { files: { path: string; contentHash: string }[] };
+    cache.files.find((f) => f.path === "src/a.ts")!.contentHash = "cached";
+    await fs.writeJson(cachePath, cache);
+    const second = await createManifest(root, { ignore: [".figmake-sync/**"] });
+    expect(second.files.find((f) => f.path === "src/a.ts")?.contentHash).toBe("cached");
+    expect(second.files.find((f) => f.path === "src/b.ts")?.contentHash).toBe(first.files.find((f) => f.path === "src/b.ts")?.contentHash);
+
+    // A real edit (new size) is always read again.
+    await fs.outputFile(path.join(root, "src", "a.ts"), "export const a = 22;\n");
+    const third = await createManifest(root, { ignore: [".figmake-sync/**"] });
+    expect(third.files.find((f) => f.path === "src/a.ts")?.contentHash).not.toBe("cached");
+
+    // Folders without project state never cache.
+    const plain = await createTempDir("scan-plain");
+    await fs.outputFile(path.join(plain, "x.txt"), "x");
+    await createManifest(plain);
+    expect(await fs.pathExists(path.join(plain, ".figmake-sync"))).toBe(false);
+  });
+});

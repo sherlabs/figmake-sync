@@ -59,13 +59,15 @@ const TREE: Record<string, { name: string; path: string; kind: string }[]> = {
   "src/pages": [{ name: "Cart.tsx", path: "src/pages/Cart.tsx", kind: "file" }, { name: "Checkout.tsx", path: "src/pages/Checkout.tsx", kind: "file" }],
 };
 
-const START = { phase: "start", projectName: null, previewUrl: null, changes: [], changeFiles: [], changeIds: [], projects: [], activeKey: null, syncedAt: null, updatesEnabled: true, canSend: false, canUndo: false, agent: null, workspace: "figmake-sync", processes: [] };
-const READY = { ...START, phase: "ready", projectName: "Checkout Flow", previewUrl: "http://localhost:5173/", agent: "claude", activeKey: "a", projects: [{ key: "a", name: "Checkout Flow", status: "synced", syncedAt: null }], processes: PROCESSES.slice(0, 1) };
+const START = { phase: "start", projectName: null, previewUrl: null, changes: [], changeFiles: [], changeIds: [], projects: [], activeKey: null, syncedAt: null, updatesEnabled: true, canSend: false, canUndo: false, agent: null, agentConnected: false, workspace: "figmake-sync", processes: [] };
+const READY = { ...START, phase: "ready", projectName: "Checkout Flow", previewUrl: "http://localhost:5173/", agent: "claude", agentConnected: true, activeKey: "a", projects: [{ key: "a", name: "Checkout Flow", status: "synced", syncedAt: null }], processes: PROCESSES.slice(0, 1) };
 
-async function open(state: object, size: { width: number; height: number }, scheme: "light" | "dark", tab: "chat" | "files" = "chat"): Promise<Page> {
+const UPDATE_IDLE = { phase: "idle", currentVersion: "0.1.18", supported: true, upToDate: false };
+
+async function open(state: object, size: { width: number; height: number }, scheme: "light" | "dark", tab: "chat" | "files" = "chat", update: object = UPDATE_IDLE): Promise<Page> {
   const ctx = await (browser as Browser).newContext({ viewport: size, colorScheme: scheme, reducedMotion: "reduce" });
   const page = await ctx.newPage();
-  await page.addInitScript((a: { s: object; tree: typeof TREE; cart: string; tab: string }) => {
+  await page.addInitScript((a: { s: object; tree: typeof TREE; cart: string; tab: string; upd: object }) => {
     const s = a.s;
     if (a.tab === "files") window.localStorage.setItem("figmake.rail.tab", "files");
     const noop = () => Promise.resolve();
@@ -77,6 +79,8 @@ async function open(state: object, size: { width: number; height: number }, sche
       onChat: () => () => undefined,
       onCommand: () => () => undefined,
       onUpdateState: () => () => undefined,
+      updateState: () => Promise.resolve(a.upd),
+      checkForUpdates: () => { (window as unknown as { __checks: number }).__checks = ((window as unknown as { __checks?: number }).__checks ?? 0) + 1; return Promise.resolve({ ...a.upd, phase: "idle", upToDate: true }); },
       previewRect: () => undefined,
       describeChange: () => Promise.resolve([]),
       listFolder: (p: string) => Promise.resolve({ path: p, entries: a.tree[p] ?? [], truncated: false }),
@@ -86,7 +90,7 @@ async function open(state: object, size: { width: number; height: number }, sche
       newChat: noop, copyText: noop, openProject: noop, ask: noop, undo: noop, send: noop, cancel: noop, retry: noop, setAgent: noop,
       chooseWorkspace: noop, signOutFigma: noop, setUpdates: noop, switchProject: noop, removeProject: noop, reportIssue: noop, installUpdate: noop,
     };
-  }, { s: state, tree: TREE, cart: CART, tab });
+  }, { s: state, tree: TREE, cart: CART, tab, upd: update });
   await page.goto(base);
   await page.waitForSelector(".app");
   return page;
@@ -134,6 +138,102 @@ describe("renderer layout", () => {
     expect(await overflowX(page)).toBeLessThanOrEqual(0);
     await page.context().close();
   });
+
+  const SHOT_DIR = process.env["FIGMAKE_SHOTS"];
+  const shot = async (page: Page, name: string): Promise<void> => {
+    if (!SHOT_DIR) return;
+    fs.mkdirSync(SHOT_DIR, { recursive: true });
+    await page.waitForTimeout(500); // let the sheet finish sliding in
+    await page.screenshot({ path: path.join(SHOT_DIR, `${name}.png`) });
+  };
+
+  for (const scheme of ["light", "dark"] as const) {
+    it(`first run: Claude or ChatGPT comes first, over the start screen (${scheme})`, async (ctx) => {
+      if (!browser) return ctx.skip();
+      const page = await open({ ...START, phase: "needs-ai-choice" }, { width: 1180, height: 760 }, scheme);
+      await page.waitForSelector("dialog.sheet[open]");
+      expect(await page.locator("dialog.sheet h2").innerText()).toBe("Connect your AI helper");
+      expect(await page.locator("dialog.sheet button.choice").allInnerTexts()).toEqual([expect.stringContaining("Claude"), expect.stringContaining("ChatGPT")]);
+      expect(await page.locator(".welcome").isVisible()).toBe(true);
+      expect(await page.locator(".prep").isVisible()).toBe(false);
+      expect(await page.locator("footer.status").innerText()).toContain("Pick your AI helper");
+      const sheet = await rect(page, "dialog.sheet");
+      expect(sheet && sheet.w).toBeLessThanOrEqual(520);
+      expect(await overflowX(page)).toBeLessThanOrEqual(0);
+      await shot(page, `start-choice-${scheme}`);
+      await page.context().close();
+    });
+
+    it(`first run: setting the AI up shows a calm wait, not the project steps (${scheme})`, async (ctx) => {
+      if (!browser) return ctx.skip();
+      const page = await open({ ...START, phase: "preparing", agent: "codex" }, { width: 1180, height: 760 }, scheme);
+      await page.waitForSelector("dialog.sheet[open]");
+      expect(await page.locator("dialog.sheet h2").innerText()).toBe("Getting ChatGPT ready");
+      expect(await page.locator(".prep").isVisible()).toBe(false);
+      await page.context().close();
+    });
+
+    it(`settings: AI helper status and the Updates row (${scheme})`, async (ctx) => {
+      if (!browser) return ctx.skip();
+      const page = await open(READY, { width: 1180, height: 760 }, scheme);
+      await page.keyboard.press("Control+,");
+      await page.waitForSelector("dialog.sheet[open]");
+      const ai = page.locator("dialog.sheet .row", { hasText: "AI helper" });
+      expect(await ai.innerText()).toMatch(/Claude · Connected[\s\S]*Switch to ChatGPT/u);
+      const row = page.locator("dialog.sheet .row.upd");
+      expect(await row.innerText()).toMatch(/Updates[\s\S]*Version v0\.1\.18[\s\S]*Check for updates/u);
+      await shot(page, `settings-${scheme}`);
+      await row.getByRole("button", { name: "Check for updates" }).click();
+      await page.waitForFunction(() => document.querySelector("dialog.sheet .row.upd")?.textContent?.includes("You're up to date (v0.1.18)"));
+      expect(await page.evaluate(() => (window as unknown as { __checks: number }).__checks)).toBe(1);
+      const sheet = await rect(page, "dialog.sheet");
+      expect(sheet && sheet.w).toBeLessThanOrEqual(520);
+      expect(await overflowX(page)).toBeLessThanOrEqual(0);
+      await page.context().close();
+    });
+  }
+
+  it("settings: an AI that was never connected says so and offers Connect", async (ctx) => {
+    if (!browser) return ctx.skip();
+    const page = await open({ ...READY, agentConnected: false }, { width: 1180, height: 760 }, "light");
+    await page.keyboard.press("Control+,");
+    await page.waitForSelector("dialog.sheet[open]");
+    const ai = page.locator("dialog.sheet .row", { hasText: "AI helper" });
+    expect(await ai.innerText()).toMatch(/Claude · Not connected[\s\S]*Connect[\s\S]*Switch to ChatGPT/u);
+    await page.context().close();
+  });
+
+  it("settings: Updates row wording for each state", async (ctx) => {
+    if (!browser) return ctx.skip();
+    const cases: [object, RegExp, string | null][] = [
+      [{ ...UPDATE_IDLE, phase: "checking" }, /Checking…/u, null],
+      [{ ...UPDATE_IDLE, phase: "downloading", version: "0.1.19" }, /Downloading update…/u, null],
+      [{ ...UPDATE_IDLE, phase: "ready", version: "0.1.19" }, /A new version is ready/u, "Restart to update"],
+      [{ ...UPDATE_IDLE, error: "Couldn't check. Try again." }, /Couldn't check\. Try again\./u, "Check for updates"],
+      [{ ...UPDATE_IDLE, upToDate: true }, /You're up to date \(v0\.1\.18\)/u, "Check for updates"],
+      [{ ...UPDATE_IDLE, supported: false }, /aren't available in this version/u, null],
+    ];
+    for (const [update, text, button] of cases) {
+      const page = await open(READY, { width: 900, height: 640 }, "light", "chat", update);
+      await page.keyboard.press("Control+,");
+      await page.waitForSelector("dialog.sheet[open]");
+      const row = page.locator("dialog.sheet .row.upd");
+      expect(await row.innerText()).toMatch(text);
+      if (button) expect(await row.getByRole("button", { name: button }).count()).toBe(1);
+      else {
+        const check = row.getByRole("button", { name: "Check for updates" });
+        if ((await check.count()) > 0) expect(await check.isEnabled()).toBe(false);
+      }
+      expect(await overflowX(page)).toBeLessThanOrEqual(0);
+      await page.context().close();
+    }
+    const off = await open({ ...READY, updatesEnabled: false }, { width: 900, height: 640 }, "light");
+    await off.keyboard.press("Control+,");
+    await off.waitForSelector("dialog.sheet[open]");
+    expect(await off.locator("dialog.sheet .row.upd").innerText()).toMatch(/Automatic updates are off/u);
+    expect(await off.locator("dialog.sheet .row.upd").getByRole("button", { name: "Check for updates" }).isEnabled()).toBe(true);
+    await off.context().close();
+  }, 30_000);
 
   it("chat panel and preview share the window without overflow, wide and narrow", async (ctx) => {
     if (!browser) return ctx.skip();

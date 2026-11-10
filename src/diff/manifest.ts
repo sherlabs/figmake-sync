@@ -263,11 +263,16 @@ async function createManifestEntry(
   }
 }
 
+interface Candidate {
+  absolutePath: string;
+  relativePath: string;
+}
+
 async function walkDirectory(
   currentDir: string,
   rootDir: string,
   matchers: readonly Minimatch[],
-  files: ManifestEntry[],
+  files: Candidate[],
 ): Promise<void> {
   let directoryEntries;
 
@@ -304,11 +309,42 @@ async function walkDirectory(
       continue;
     }
 
-    const manifestEntry = await createManifestEntry(absolutePath, relativePath);
+    files.push({ absolutePath, relativePath });
+  }
+}
 
-    if (manifestEntry) {
-      files.push(manifestEntry);
+/** Reads file contents with a few in flight at once: some machines add a long wait to every first read. */
+const HASH_CONCURRENCY = 16;
+
+async function mapLimited<T, R>(
+  items: readonly T[],
+  limit: number,
+  run: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+
+  async function worker(): Promise<void> {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await run(items[index] as T);
     }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, () => worker()),
+  );
+
+  return results;
+}
+
+async function readScanCache(cachePath: string): Promise<ManifestEntry[]> {
+  try {
+    const data = (await fs.readJson(cachePath)) as { version?: number; files?: ManifestEntry[] };
+
+    return data.version === 1 && Array.isArray(data.files) ? data.files : [];
+  } catch {
+    return [];
   }
 }
 
@@ -316,15 +352,46 @@ export async function createManifest(
   rootDir: string,
   options: {
     ignore?: readonly string[];
+    /** Set false to read every file even when a local scan cache exists. */
+    useCache?: boolean;
   } = {},
 ): Promise<SnapshotManifest> {
   const ignore = [
     ...new Set([...DEFAULT_IGNORE_PATTERNS, ...(options.ignore ?? [])]),
   ];
-  const files: ManifestEntry[] = [];
+  const candidates: Candidate[] = [];
   const matchers = createMatchers(ignore);
 
-  await walkDirectory(rootDir, rootDir, matchers, files);
+  await walkDirectory(rootDir, rootDir, matchers, candidates);
+
+  // A project folder keeps a small scan cache: a file with the same size and modified time is not read again.
+  const cachePath = path.join(rootDir, ".figmake-sync", "scan-cache.json");
+  const useCache = options.useCache !== false && (await fs.pathExists(path.dirname(cachePath)));
+  const known = new Map<string, ManifestEntry>(
+    useCache ? (await readScanCache(cachePath)).map((entry) => [entry.path, entry]) : [],
+  );
+  const entries = await mapLimited(candidates, HASH_CONCURRENCY, async (candidate) => {
+    const previous = known.get(candidate.relativePath);
+
+    if (previous) {
+      try {
+        const stats = await fs.stat(candidate.absolutePath);
+
+        if (stats.size === previous.size && stats.mtimeMs === previous.modifiedTimeMs) {
+          return previous;
+        }
+      } catch {
+        // Fall through: createManifestEntry decides what a missing or unreadable file means.
+      }
+    }
+
+    return createManifestEntry(candidate.absolutePath, candidate.relativePath);
+  });
+  const files = entries.filter((entry): entry is ManifestEntry => entry !== undefined);
+
+  if (useCache) {
+    await fs.outputJson(cachePath, { version: 1, files }).catch(() => undefined);
+  }
 
   return {
     schemaVersion: 1,

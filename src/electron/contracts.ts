@@ -1,3 +1,5 @@
+import type { UpdateState } from "../updater/contracts.js";
+
 export type AgentChoice = "claude" | "codex";
 
 export const PHASES = [
@@ -132,6 +134,8 @@ export interface SessionState {
   code?: ErrorCode;
   failedIn?: Phase;
   agent: AgentChoice | null;
+  /** True once the chosen AI helper was installed and signed in on this Mac. */
+  agentConnected: boolean;
   /** Folder name (not path) of the workspace new projects are created in. */
   workspace: string;
   workspaceError?: string;
@@ -197,6 +201,8 @@ export interface ChatState {
 export interface DesktopAppState {
   lastLink: string | null;
   agent: AgentChoice | null;
+  /** Set only after the AI helper was installed and signed in. Older saved states count as not connected. */
+  agentConnected: boolean;
   workspace: string | null;
   projects: Record<string, string>;
   /** Figma Make file key -> the link it was added with (names and the project list come from here). */
@@ -211,7 +217,7 @@ export interface PreviewRect {
   height: number;
 }
 
-export type MenuCommand = "settings" | "add-project";
+export type MenuCommand = "settings" | "add-project" | "check-updates";
 
 /** window.figmake, exposed by preload.cjs. */
 export interface FigmakeApi {
@@ -241,7 +247,11 @@ export interface FigmakeApi {
   signOutFigma(): Promise<void>;
   setUpdates(enabled: boolean): Promise<void>;
   reportIssue(request: ReportRequest): Promise<void>;
-  onUpdateState(listener: (state: { phase: "idle" | "downloading" | "ready"; version?: string }) => void): () => void;
+  onUpdateState(listener: (state: UpdateState) => void): () => void;
+  /** Where updating stands right now (the window asks once when it opens). */
+  updateState(): Promise<UpdateState>;
+  /** Looks for a new version now. Resolves with the result of the check. */
+  checkForUpdates(): Promise<UpdateState>;
   installUpdate(): Promise<void>;
   /** Direct children of a project folder ("" = the project itself). Read-only. */
   listFolder(path: string): Promise<FolderListing>;
