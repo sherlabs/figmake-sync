@@ -38,7 +38,7 @@ describe("file explorer: path safety", () => {
   });
 
   it("resolves inside the project only", async () => {
-    expect(await resolveInside(root, "src/App.tsx")).toBe(path.join(root, "src", "App.tsx"));
+    expect(await resolveInside(root, "src/App.tsx")).toBe(await fs.realpath.native(path.join(root, "src", "App.tsx")));
     expect(await resolveInside(root, "../outside.txt")).toBeNull();
     expect(await resolveInside(root, "/etc/passwd")).toBeNull();
     expect(await resolveInside(root, "src/nope.ts")).toBeNull();
