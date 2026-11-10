@@ -1,7 +1,7 @@
 LINKEDIN
-Figma Make lets you edit a prototype, but only through Figma's own AI tokens. The React code is visible in Figma, yet you can only change it by hand.
+Figma Make lets you edit a prototype, but only through Figma's own AI credits. The React code is visible in Figma, yet you can only change it by hand.
 
-We built figmake-sync to get around that. It is a desktop app that pulls the project's code onto your computer, so you can change it with the Claude Code or ChatGPT Codex subscription you already pay for. No Figma AI tokens are spent.
+We built figmake-sync to get around that. It is a desktop app that pulls the project's code onto your computer, so you can change it with the Claude Code or ChatGPT Codex subscription you already pay for. No Figma AI credits are spent.
 
 What it does:
 - Sets itself up (its own sandboxed Node and pnpm, nothing installed on your machine)
@@ -17,5 +17,5 @@ figmake-sync is an unofficial tool by Sherlabs. It is not affiliated with or end
 Download: sherlabs.com
 
 TIKTOK / INSTAGRAM
-Figma Make eats your AI tokens. figmake-sync pulls the code local so your own Claude or Codex does the editing, then sends it back. Free. Unofficial, not affiliated with Figma. sherlabs.com
+Figma Make eats your AI credits. figmake-sync pulls the code local so your own Claude or Codex does the editing, then sends it back. Free. Unofficial, not affiliated with Figma. sherlabs.com
 #figma #figmamake #claudecode #buildinpublic

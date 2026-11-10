@@ -11,7 +11,7 @@ P2 = "Now do the same for the cards"
 OFF = 3.2
 T = dict(
     dur=29.4, winOut=24.5, end=24.8,
-    caps=[["Paste your <b>Figma Make</b> link.", 0.3, 6.7], ["<b>Ask</b> in plain words.", 7.1, 10.0], ["Your own AI. <b>No Figma tokens.</b>", 10.1, 16.0],
+    caps=[["Paste your <b>Figma Make</b> link.", 0.3, 6.7], ["<b>Ask</b> in plain words.", 7.1, 10.0], ["Your own AI. <b>No Figma credits.</b>", 10.1, 16.0],
           ["See <b>what changed</b>.", 16.2, 20.1], ["Send it <b>back</b>.", 20.3, 24.4]],
     cur0=0.7, addClick=1.5, sheetIn=1.65, inpClick=2.6, type1=[2.85, 34], link=LINK, openClick=4.5,
     prep0=4.8, prep1=5.3, prep2=5.85, prep3=6.35, prep4=6.85, ready=6.95,

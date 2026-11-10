@@ -141,6 +141,12 @@ html.is-mac .side-h { padding-top: 4px; }
 .sbtn { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 10px; border-radius: 6px; color: var(--text-2); width: 100%; text-align: left; }
 .sbtn:hover { background: var(--hover); color: var(--text); }
 .sbtn:disabled { opacity: 0.5; }
+.support { display: flex; align-items: center; gap: 9px; width: calc(100% - 16px); margin: 8px; padding: 8px 10px; border-radius: 8px; text-align: left; border: 1px solid var(--sep); background: var(--inset); color: var(--text); }
+.support:hover { background: var(--hover); }
+.support .i { color: #d6336c; flex: none; width: 16px; height: 16px; }
+.support .t { min-width: 0; }
+.support .t b { display: block; font-weight: 600; font-size: 12px; line-height: 1.25; }
+.support .t span { display: block; font-size: 11px; color: var(--text-2); line-height: 1.3; }
 .acct { display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 10px; border-radius: 6px; width: 100%; text-align: left; }
 .acct:hover { background: var(--hover); }
 .acct:disabled { opacity: 0.6; }
@@ -1008,6 +1014,7 @@ body{margin:0;background:var(--bg)}
 </head>
 <body>
 <svg width="0" height="0" class="sprite" aria-hidden="true" focusable="false">
+      <symbol id="i-heart" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" d="M8 13.4S2.4 10.1 2.4 6.2A2.9 2.9 0 0 1 8 5.1a2.9 2.9 0 0 1 5.6 1.1c0 3.9-5.6 7.2-5.6 7.2Z"/></symbol>
       <symbol id="i-folder" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.8c.4 0 .8.17 1.07.46L8.5 4.7h4A1.5 1.5 0 0 1 14 6.2v5.3a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z"/></symbol>
       <symbol id="i-doc" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" d="M4 2.75h5l3 3v7.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-9.5a1 1 0 0 1 1-1z"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" d="M9 2.75v3h3"/></symbol>
       <symbol id="i-up" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M8 13V3.5M4 7.5l4-4 4 4"/></symbol>
@@ -1064,7 +1071,7 @@ body{margin:0;background:var(--bg)}
 </div></div>
 <div id="intro">
   <img class="ico" src="assets/figmake-sync-icon.svg" alt="figmake-sync">
-  <h1>Figma Make spends<br><b>Figma's AI tokens.</b></h1>
+  <h1>Figma Make spends<br><b>Figma's AI credits.</b></h1>
   <div class="sub">Use your own Claude or Codex instead.</div>
 </div>
 <div id="end">
@@ -1079,7 +1086,7 @@ body{margin:0;background:var(--bg)}
 <audio id="bed" src="assets/bed.wav" data-start="0" data-duration="32.6" data-track-index="2" data-volume="0.16"></audio>
 </div>
 <script>
-const T={"dur": 32.6, "winOut": 27.7, "end": 28.0, "caps": [["Paste your <b>Figma Make</b> link.", 3.5, 9.9], ["<b>Ask</b> in plain words.", 10.3, 13.2], ["Your own AI. <b>No Figma tokens.</b>", 13.3, 19.2], ["See <b>what changed</b>.", 19.4, 23.3], ["Send it <b>back</b>.", 23.5, 27.599999999999998]], "cur0": 3.9000000000000004, "addClick": 4.7, "sheetIn": 4.85, "inpClick": 5.800000000000001, "type1": [6.050000000000001, 34], "link": "figma.com/make/Hk3xQp/Oak-and-Ember", "openClick": 7.7, "prep0": 8.0, "prep1": 8.5, "prep2": 9.05, "prep3": 9.55, "prep4": 10.05, "ready": 10.15, "taClick1": 11.100000000000001, "p1": [11.399999999999999, 26], "prompt1": "Make the button blue and rounded", "send1": 12.95, "w1": 13.3, "a1": 13.7, "steps1": [14.3, 15.2, 16.1, 17.0], "pv1": 15.399999999999999, "text1": 17.7, "col1": 19.9, "card1": 19.4, "view0": 20.0, "viewClick": 21.0, "viewClose": 23.2, "sendCam": 23.5, "sendClick": 24.8, "sent": 25.7, "toastOut": 27.5, "win0": 3.2, "two": false};
+const T={"dur": 32.6, "winOut": 27.7, "end": 28.0, "caps": [["Paste your <b>Figma Make</b> link.", 3.5, 9.9], ["<b>Ask</b> in plain words.", 10.3, 13.2], ["Your own AI. <b>No Figma credits.</b>", 13.3, 19.2], ["See <b>what changed</b>.", 19.4, 23.3], ["Send it <b>back</b>.", 23.5, 27.599999999999998]], "cur0": 3.9000000000000004, "addClick": 4.7, "sheetIn": 4.85, "inpClick": 5.800000000000001, "type1": [6.050000000000001, 34], "link": "figma.com/make/Hk3xQp/Oak-and-Ember", "openClick": 7.7, "prep0": 8.0, "prep1": 8.5, "prep2": 9.05, "prep3": 9.55, "prep4": 10.05, "ready": 10.15, "taClick1": 11.100000000000001, "p1": [11.399999999999999, 26], "prompt1": "Make the button blue and rounded", "send1": 12.95, "w1": 13.3, "a1": 13.7, "steps1": [14.3, 15.2, 16.1, 17.0], "pv1": 15.399999999999999, "text1": 17.7, "col1": 19.9, "card1": 19.4, "view0": 20.0, "viewClick": 21.0, "viewClose": 23.2, "sendCam": 23.5, "sendClick": 24.8, "sent": 25.7, "toastOut": 27.5, "win0": 3.2, "two": false};
 const $=s=>document.querySelector(s);
 const tl=gsap.timeline({paused:true});
 const FW=1344,FH=866,S0=FW/1180;

@@ -1,6 +1,6 @@
 # Launch reel
 
-Vertical 9:16 reel for figmake-sync (1080x1920, 30 fps, about 21.4 s), built with HyperFrames. It opens on the hook "Figma Make eats your AI tokens." (captions and cards sit inside the story safe zone, 250px top / 350px bottom), then: it's your code, pull it local, your own subscription (Claude or ChatGPT), describe a change, see it change, send it back. The app moments are live HTML/CSS reproductions of the final native app (add-project sheet, AI helper choice, chat panel with streaming reply, live preview, change card, Send to Figma, Sent toast), built from real renderer DOM snapshots in `../shared/`.
+Vertical 9:16 reel for figmake-sync (1080x1920, 30 fps, about 21.4 s), built with HyperFrames. It opens on the hook "Figma Make eats your AI credits." (captions and cards sit inside the story safe zone, 250px top / 350px bottom), then: it's your code, pull it local, your own subscription (Claude or ChatGPT), describe a change, see it change, send it back. The app moments are live HTML/CSS reproductions of the final native app (add-project sheet, AI helper choice, chat panel with streaming reply, live preview, change card, Send to Figma, Sent toast), built from real renderer DOM snapshots in `../shared/`.
 
 - `index.html` is generated: edit `tools/index.tpl.html` + `tools/scenes.js`, then run `python3 tools/build.py` (needs `../shared/app_ui.py`). `tools/index.orig.html` is the pre-rebuild backup. `fonts/` holds Inter and JetBrains Mono.
 - `index.html` is the composition. `assets/` holds logos and audio.
@@ -8,11 +8,11 @@ Vertical 9:16 reel for figmake-sync (1080x1920, 30 fps, about 21.4 s), built wit
 
 Captions, in order (start time):
 
-1. 0.0 Every tweak costs tokens.
+1. 0.0 Every tweak costs credits.
 2. 2.5 It's your code.
-3. 4.6 Edit it by hand. / Or spend tokens.
+3. 4.6 Edit it by hand. / Or spend credits.
 4. 7.4 Pull it local. (paste link, Open)
-5. 9.3 Your own subscription. / Not Figma's tokens. (Claude, ChatGPT)
+5. 9.3 Your own subscription. / Not Figma's credits. (Claude, ChatGPT)
 6. 12.0 Just ask. / It edits the code. (type "Make the button blue", the agent works: Working dots, activity row opens and lists Looked at Button.tsx, Edited Button.tsx, Added button.css, Checked the app builds; the preview below turns blue and rounded with Before / After tags; the change card lands) - one scene, 12.0 to 16.9
 7. 16.9 Send it back. (Send to Figma, "Sent to Figma")
 8. 19.1 figmake-sync, Free for Mac & Windows, by Sherlabs, sherlabs.com, "Unofficial. Not affiliated with Figma."
