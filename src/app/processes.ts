@@ -14,8 +14,12 @@ export interface ProcessInputs {
   /** The AI helper is answering a message. */
   agentWorking: boolean;
   agentName: string;
+  /** Recent cleaned output of the preview server and of project setup. */
+  devLines?: readonly string[];
+  setupLines?: readonly string[];
 }
 
+const TAIL = 40;
 const BUSY: readonly Phase[] = ["connecting", "preparing", "working", "sending", "conflict"];
 
 export function buildProcesses(i: ProcessInputs): ProcessInfo[] {
@@ -36,9 +40,10 @@ export function buildProcesses(i: ProcessInputs): ProcessInfo[] {
     // Only while nothing else is going on, so a restart never collides with a pull, a send or an AI turn.
     canStop: calm && (state === "running" || state === "starting"),
     canRestart: calm && state !== "starting",
+    output: [...(i.devLines ?? [])].slice(-TAIL),
   });
 
-  if (i.installing) out.push({ id: "install", name: "Setting up project files", state: "running", canStop: true, canRestart: false });
-  if (i.agentWorking) out.push({ id: "agent", name: `${i.agentName} (AI helper)`, state: "running", canStop: true, canRestart: false });
+  if (i.installing) out.push({ id: "install", name: "Setting up project files", state: "running", canStop: true, canRestart: false, output: [...(i.setupLines ?? [])].slice(-TAIL) });
+  if (i.agentWorking) out.push({ id: "agent", name: `${i.agentName} (AI helper)`, state: "running", canStop: true, canRestart: false, output: [] });
   return out;
 }

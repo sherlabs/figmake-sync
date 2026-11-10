@@ -85,7 +85,8 @@ export function sanitizeText(input: string, ctx: SanitizeContext = {}): string {
   t = t.replace(/(["']?)\b([\w-]*(?:token|secret|passw(?:or)?d|api[_-]?key|apikey|credential|session[_-]?id|cookie)[\w-]*)\1(\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^\s,;&}]+)/giu, "$2$3<redacted>");
 
   // Emails.
-  t = t.replace(/[\w.+%-]+@[\w-]+(?:\.[\w-]+)+/gu, "<email>");
+  // The domain must end in a letters-only label, so npm's "name@1.0.0" is not mistaken for an address.
+  t = t.replace(/[\w.+%-]+@[\w-]+(?:\.[\w-]+)*\.[A-Za-z]{2,}(?![\w-])/gu, "<email>");
 
   // Paths. The home directory first (exact, then the generic /Users, /home, C:\Users forms), then any other absolute path.
   const home = ctx.home?.replace(/[\\/]+$/u, "");

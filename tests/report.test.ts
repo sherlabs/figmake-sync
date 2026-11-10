@@ -59,6 +59,11 @@ describe("sanitizer", () => {
     expect(sanitizeText("2024/05/06 and and/or 1/2", {})).toBe("2024/05/06 and and/or 1/2");
   });
 
+  it("keeps npm script banners like name@1.0.0 readable", () => {
+    expect(clean("> figma-make-app@1.0.0 dev")).toBe("> figma-make-app@1.0.0 dev");
+    expect(clean("pkg@2.3.4-beta.1 and a@b.io")).toBe("pkg@2.3.4-beta.1 and <email>");
+  });
+
   it("removes emails", () => {
     expect(clean("signed in as jane.doe+work@example.co.uk, retrying")).toBe("signed in as <email>, retrying");
   });

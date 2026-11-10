@@ -4,7 +4,7 @@ import path from "node:path";
 import fs from "fs-extra";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { DevServer, detectDevScript, isSafeLocalUrl, parseDevUrl } from "../src/harness/devserver.js";
+import { DevServer, detectDevScript, findFreePort, reapStaleDevServer, isSafeLocalUrl, parseDevUrl } from "../src/harness/devserver.js";
 import type { DevStatus } from "../src/harness/types.js";
 import { createFakeKillTree, createFakeSpawn } from "./support/fakeChild.js";
 
@@ -53,6 +53,31 @@ describe("detectDevScript", () => {
     expect(await detectDevScript(await project({ serve: "a", start: "b" }))).toBe("start");
     expect(await detectDevScript(await project({ serve: "a" }))).toBe("serve");
     expect(await detectDevScript(await project({ build: "a" }))).toBeNull();
+  });
+});
+
+describe("dev server port and orphans", () => {
+  it("gives every start its own free PORT bound to loopback", async () => {
+    const root = await project({ dev: "vite" });
+    const { spawn, calls } = createFakeSpawn();
+    const ports = [51111, 51112];
+    const server = new DevServer(root, { spawn, killTree: createFakeKillTree().killTree, pickPort: () => Promise.resolve(ports.shift()!) });
+    await server.start();
+    expect(calls[0]!.options.env?.["PORT"]).toBe("51111");
+    expect(calls[0]!.options.env?.["FIGMA_DEV_SERVER_HOST"]).toBe("127.0.0.1");
+  });
+
+  it("findFreePort returns a usable port", async () => {
+    const port = await findFreePort();
+    expect(port).toBeGreaterThan(1023);
+  });
+
+  it("reapStaleDevServer clears a pid file for a dead process and reports nothing to kill", async () => {
+    const root = await project({ dev: "vite" });
+    await fs.outputFile(path.join(root, ".figmake-sync", "dev.pid"), "2147483000");
+    expect(await reapStaleDevServer(root)).toBe(false);
+    expect(await fs.pathExists(path.join(root, ".figmake-sync", "dev.pid"))).toBe(false);
+    expect(await reapStaleDevServer(root)).toBe(false);
   });
 });
 

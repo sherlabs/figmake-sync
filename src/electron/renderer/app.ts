@@ -2,7 +2,9 @@ import type { AgentChoice, ChatState, Phase, ProjectStatus, SessionState } from 
 import type { UpdateState } from "../../updater/contracts.js";
 import { createChatPanel } from "./chat.js";
 import { createFilesPanel } from "./files.js";
+import { createOutputPanel } from "./outputTab.js";
 import { ago, h, icon, nodes, plural, type Child } from "./dom.js";
+import { copyButton, formatElapsed, logView, slowHints, tailView, type LogView, type TailView } from "./output.js";
 
 /* Renderer: draws SessionState and forwards clicks. No business logic lives here. */
 
@@ -33,6 +35,8 @@ let menuOpen = false;
 let chatState: ChatState = { projectKey: null, messages: [], active: false, fresh: false };
 let prepSince = 0;
 let prepTimer = 0;
+let prepTick = 0;
+let bannerDetails = false;
 
 const busyNow = (s: SessionState): boolean => BUSY.includes(s.phase);
 /** Anything in flight, including a question waiting to be answered: Clean up waits for it. */
@@ -90,12 +94,14 @@ const chatPanel = createChatPanel({
   collapse: () => setChatOpen(false),
   toast: (text) => toast(text),
 });
+const outputPanel = createOutputPanel({ api, mod: MOD, collapse: () => setChatOpen(false) });
 const filesPanel = createFilesPanel({ api, mod: MOD, collapse: () => setChatOpen(false) });
-type RailTab = "chat" | "files";
+type RailTab = "chat" | "files" | "output";
 const tabChat = h("button", { type: "button", role: "tab", id: "tab-chat", "aria-controls": "rail-body", onclick: () => setTab("chat") }, "Chat");
+const tabOutput = h("button", { type: "button", role: "tab", id: "tab-output", "aria-controls": "rail-body", onclick: () => setTab("output") }, "Output");
 const tabFiles = h("button", { type: "button", role: "tab", id: "tab-files", "aria-controls": "rail-body", onclick: () => setTab("files") }, "Files");
-const tabs = h("div", { class: "rail-tabs" }, h("div", { class: "seg", role: "tablist", "aria-label": "Side panel" }, tabChat, tabFiles));
-const rail = h("section", { class: "rail", id: "rail-body", "aria-label": "Side panel" }, tabs, chatPanel.el, filesPanel.el);
+const tabs = h("div", { class: "rail-tabs" }, h("div", { class: "seg", role: "tablist", "aria-label": "Side panel" }, tabChat, tabFiles, tabOutput));
+const rail = h("section", { class: "rail", id: "rail-body", "aria-label": "Side panel" }, tabs, chatPanel.el, filesPanel.el, outputPanel.el);
 const resizer = h("div", { class: "resizer", role: "separator", "aria-orientation": "vertical", "aria-label": "Resize side panel", tabindex: "0" });
 const work = h("div", { class: "work" }, stage, resizer, rail);
 const main = h("div", { class: "main" }, toolbar, banner, work, statusBar);
@@ -134,7 +140,7 @@ function projectRow(p: SessionState["projects"][number], s: SessionState): HTMLE
     { type: "button", class: "prow", role: "option", "aria-selected": selected ? "true" : "false", "aria-label": `${p.name}, ${working ? "working" : STATUS_TEXT[status].toLowerCase()}`, onclick: () => !selected && void api.switchProject(p.key) },
     icon("folder"),
     h("span", { class: "nm" }, p.name),
-    h("span", { class: "tail" }, tail),
+    h("span", { class: "ptail" }, tail),
   );
   const more = h("button", { type: "button", class: `more${selected ? " on-sel" : ""}`, "aria-label": `More options for ${p.name}`, "aria-haspopup": "menu", onclick: (e: MouseEvent) => { e.stopPropagation(); showMenu(p.key, p.name, (e.currentTarget as HTMLElement).getBoundingClientRect().left, (e.currentTarget as HTMLElement).getBoundingClientRect().bottom + 4); } }, icon("more", true));
   return h("li", { class: "prow-wrap", oncontextmenu: (e: MouseEvent) => { e.preventDefault(); showMenu(p.key, p.name, e.clientX, e.clientY); } }, row, more);
@@ -196,8 +202,24 @@ function renderBanner(s: SessionState): void {
   // A failed turn is answered inside the chat; the banner is for everything else.
   const inline = s.phase === "error" && Boolean(s.previewUrl) && chatState.messages.at(-1)?.status === "error";
   banner.hidden = s.phase !== "error" || inline;
-  if (banner.hidden) return banner.replaceChildren();
-  banner.replaceChildren(icon("warn"), h("div", { class: "t" }, s.message ?? "Something went wrong."), h("button", { type: "button", class: "btn primary sm", onclick: () => void api.retry() }, "Try again"), h("button", { type: "button", class: "btn sm", onclick: () => report(s) }, "Report"));
+  if (banner.hidden) {
+    bannerDetails = false;
+    return banner.replaceChildren();
+  }
+  const lines = (s.activity?.lines ?? []).slice(-20);
+  const toggle = lines.length
+    ? h("button", { type: "button", class: "btn sm", "aria-expanded": String(bannerDetails), onclick: () => { bannerDetails = !bannerDetails; if (state) renderBanner(state); } }, bannerDetails ? "Hide details" : "Show details")
+    : null;
+  banner.replaceChildren(
+    ...nodes(
+    icon("warn"),
+    h("div", { class: "t" }, s.message ?? "Something went wrong."),
+    h("button", { type: "button", class: "btn primary sm", onclick: () => void api.retry() }, "Try again"),
+    toggle,
+    h("button", { type: "button", class: "btn sm", onclick: () => report(s) }, "Report"),
+    bannerDetails && lines.length ? h("pre", { class: "errlog", tabindex: "0", "aria-label": "Recent output" }, lines.join("\n")) : null,
+    ),
+  );
 }
 
 const WORKING_TEXT: Partial<Record<Phase, (s: SessionState) => string>> = {
@@ -226,18 +248,90 @@ function renderStatus(s: SessionState): void {
 
 function prepStep(s: SessionState): number {
   if (s.phase === "connecting") return 0;
+  const lines = s.activity?.lines ?? [];
+  if (lines.includes("Starting the preview (npm run dev)")) return 2;
+  if (lines.includes("Installing project files (npm install)")) return 1;
   return Date.now() - prepSince > 3500 ? 2 : 1;
 }
 
-function renderPrep(s: SessionState): void {
-  const cur = prepStep(s);
+interface PrepUi {
+  prog: HTMLElement;
+  steps: HTMLElement;
+  elapsed: HTMLElement;
+  clock: HTMLElement;
+  hints: HTMLElement;
+  tail: TailView;
+  toggle: HTMLButtonElement;
+  full: HTMLElement;
+  log: LogView;
+}
+let prepUi: PrepUi | null = null;
+let prepAll = false;
+let prepLines: readonly string[] = [];
+let prepStepStart = 0;
+
+function buildPrep(): PrepUi {
+  const prog = h("div", { class: "prog", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100" });
+  const steps = h("ul", { class: "steps" });
+  const clock = h("span", { class: "mono" }, "0:00");
+  const elapsed = h("div", { class: "elapsed" }, "On this step for ", clock);
+  const hints = h("div", { class: "slowhint", role: "status" });
+  const tail = tailView(3, "Latest output");
+  const log = logView("All output");
+  const toggle = h("button", { type: "button", class: "plain quiet showall", "aria-expanded": "false", onclick: () => setPrepAll(!prepAll) }, "Show all output");
+  const copy = copyButton(() => prepLines.join("\n"), (t) => api.copyText(t));
+  const open = h("button", { type: "button", class: "plain quiet", onclick: () => { chatOpen = true; store.set("chat.open", "1"); setTab("output"); layoutChat(); } }, "Open in Output tab");
+  const full = h("div", { class: "fulllog", hidden: true }, log.el, h("div", { class: "logbar" }, open, copy));
+  const ui: PrepUi = { prog, steps, elapsed, clock, hints, tail, toggle, full, log };
   prep.replaceChildren(
     h("h2", {}, "Getting your project ready"),
-    h("p", {}, "This only takes a moment. You can keep this window open."),
-    h("div", { class: "prog", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(Math.round(((cur + 0.5) / STEPS.length) * 100)) }, progressFill(((cur + 0.5) / STEPS.length) * 100)),
-    h("ul", { class: "steps" }, ...STEPS.map((label, i) => h("li", { class: i < cur ? "done" : i === cur ? "cur" : "" }, h("span", { class: "mk" }, i < cur ? icon("check-b", true) : i === cur ? h("span", { class: "spin" }) : String(i + 1)), h("span", {}, label)))),
+    h("p", {}, "This can take a few minutes the first time. You can keep this window open."),
+    prog,
+    steps,
+    elapsed,
+    h("div", { class: "outbox" }, tail.el, toggle),
+    full,
+    hints,
     h("div", { class: "foot" }, h("button", { type: "button", class: "plain quiet", onclick: () => void api.cancel() }, "Stop")),
   );
+  return ui;
+}
+
+function setPrepAll(on: boolean): void {
+  prepAll = on;
+  if (!prepUi) return;
+  prepUi.full.hidden = !on;
+  prepUi.toggle.textContent = on ? "Hide output" : "Show all output";
+  prepUi.toggle.setAttribute("aria-expanded", String(on));
+  prepUi.tail.el.hidden = on;
+  if (on) {
+    prepUi.log.set(prepLines);
+    prepUi.log.follow();
+  }
+}
+
+/** The clock and the gentle "taking longer" lines; cheap enough to run every second. */
+function tickPrep(): void {
+  if (!prepUi || prep.hidden) return;
+  const ms = Date.now() - prepStepStart;
+  prepUi.clock.textContent = formatElapsed(ms);
+  const hints = slowHints(ms);
+  if (prepUi.hints.childElementCount !== hints.length) prepUi.hints.replaceChildren(...hints.map((t) => h("p", {}, t)));
+}
+
+function renderPrep(s: SessionState): void {
+  const ui = (prepUi ??= buildPrep());
+  const cur = prepStep(s);
+  const pct = ((cur + 0.5) / STEPS.length) * 100;
+  ui.prog.setAttribute("aria-valuenow", String(Math.round(pct)));
+  ui.prog.replaceChildren(progressFill(pct));
+  ui.steps.replaceChildren(...STEPS.map((label, i) => h("li", { class: i < cur ? "done" : i === cur ? "cur" : "" }, h("span", { class: "mk" }, i < cur ? icon("check-b", true) : i === cur ? h("span", { class: "spin" }) : String(i + 1)), h("span", {}, label))));
+  prepLines = s.activity?.lines ?? [];
+  // The step clock follows the session's own timestamp; a step change restarts it.
+  prepStepStart = s.activity?.stepStartedAt ?? prepSince;
+  ui.tail.set(prepLines);
+  if (prepAll) ui.log.set(prepLines);
+  tickPrep();
 }
 function progressFill(pct: number): HTMLElement {
   const i = document.createElement("i");
@@ -260,7 +354,12 @@ function renderStage(s: SessionState): void {
     renderPrep(s);
     window.clearTimeout(prepTimer);
     prepTimer = window.setTimeout(() => state && renderStage(state), 3600);
-  } else prepSince = 0;
+    if (!prepTick) prepTick = window.setInterval(tickPrep, 1000);
+  } else {
+    prepSince = 0;
+    window.clearInterval(prepTick);
+    prepTick = 0;
+  }
   if (calmIdle) calm.replaceChildren(h("span", { class: "ico" }, icon("laptop")), h("h3", {}, "Your preview shows up here"), h("p", {}, "Once this is sorted out, your project appears in this space."));
 }
 
@@ -591,10 +690,13 @@ function layoutChat(): void {
   syncPreview();
 }
 
-let tab: RailTab = store.get("rail.tab") === "files" ? "files" : "chat";
+const savedTab = store.get("rail.tab");
+let tab: RailTab = savedTab === "files" || savedTab === "output" ? savedTab : "chat";
+const TAB_ORDER: RailTab[] = ["chat", "files", "output"];
+const TAB_BTN = (): Record<RailTab, HTMLButtonElement> => ({ chat: tabChat, files: tabFiles, output: tabOutput });
 
 function drawTabs(): void {
-  for (const [name, btn] of [["chat", tabChat], ["files", tabFiles]] as const) {
+  for (const [name, btn] of [["chat", tabChat], ["files", tabFiles], ["output", tabOutput]] as const) {
     btn.setAttribute("aria-selected", String(tab === name));
     btn.tabIndex = tab === name ? 0 : -1;
   }
@@ -602,6 +704,9 @@ function drawTabs(): void {
   rail.setAttribute("aria-labelledby", `tab-${tab}`);
   chatPanel.el.hidden = tab !== "chat";
   filesPanel.el.hidden = tab !== "files";
+  outputPanel.el.hidden = tab !== "output";
+  if (tab === "output" && !rail.hidden) outputPanel.show();
+  else outputPanel.hide();
   if (tab === "files" && !rail.hidden) filesPanel.show();
 }
 
@@ -609,13 +714,16 @@ function setTab(next: RailTab, focus = false): void {
   tab = next;
   store.set("rail.tab", next);
   drawTabs();
-  if (focus) (next === "chat" ? tabChat : tabFiles).focus();
+  if (focus) TAB_BTN()[next].focus();
   else if (next === "chat" && chatOpen) chatPanel.focusComposer();
 }
 tabs.addEventListener("keydown", (e) => {
   if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
     e.preventDefault();
-    setTab(tab === "chat" ? "files" : "chat", true);
+    {
+    const at = TAB_ORDER.indexOf(tab) + (e.key === "ArrowRight" ? 1 : -1);
+    setTab(TAB_ORDER[(at + TAB_ORDER.length) % TAB_ORDER.length] ?? "chat", true);
+  }
   }
 });
 
@@ -694,6 +802,7 @@ function render(s: SessionState): void {
   renderStage(s);
   chatPanel.setSession(s);
   filesPanel.setSession(s);
+  outputPanel.setSession(s);
   layoutChat();
   drawTabs();
   renderStatus(s);

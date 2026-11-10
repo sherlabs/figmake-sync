@@ -13,6 +13,7 @@ import { applyAgentEvent, baseName, capMessages, dropSummaryRepeat, emptyAssista
 import type { ChatStore } from "./chatStore.js";
 import { describeFolders, listChangedFiles } from "./changes.js";
 import { listFolder, readFileView } from "./fileTree.js";
+import { MAX_ACTIVITY_LINES, MAX_PROCESS_LINES, pushLines } from "./activity.js";
 import { buildProcesses } from "./processes.js";
 import { FIGMA_MAKE_GUIDE } from "./figmaMakeGuide.js";
 import { defaultWorkspaceDir, parseFigmaLink, resolveProjectFolder, validateWorkspace, type FigmaLink, type WorkspaceGuard } from "./workspace.js";
@@ -120,6 +121,7 @@ const START: SessionState = {
   agentConnected: false,
   workspace: "",
   processes: [],
+  activity: { lines: [], stepStartedAt: null, startedAt: null },
 };
 
 export class Session {
@@ -148,6 +150,14 @@ export class Session {
   /** Latest report of the open project's preview server, and whether its files are being installed. */
   private dev: Pick<DevStatus, "state"> | null = null;
   private installing = false;
+  /** Cleaned output for the progress card (all sources), and per source for the Files tab. */
+  private activity: readonly string[] = [];
+  private devLines: readonly string[] = [];
+  private setupLines: readonly string[] = [];
+  private startedAt: number | null = null;
+  private stepStartedAt: number | null = null;
+  private activityTimer: NodeJS.Timeout | null = null;
+  private activityDirty = false;
   /** The person stopped the preview on purpose: the project stays open, just without a picture. */
   private previewStopped = false;
 
@@ -536,15 +546,66 @@ export class Session {
       const existed = edit ? fs.existsSync(path.resolve(this.root, edit.path)) : true;
       this.patchMessage(id, (m) => applyAgentEvent(m, event.event, { existed }));
       this.scheduleChat();
+    } else if (event.kind === "run-phase" || event.kind === "run-done") {
+      if (!this.root || path.resolve(event.rootDir) !== path.resolve(this.root)) return;
+      if (event.kind === "run-phase") this.feed(`AI helper: ${event.message}`);
+      else this.feed(`AI helper: ${event.outcome.cancelled ? "stopped" : event.outcome.success ? "finished" : "couldn't finish"}`);
+    } else if (event.kind === "setup-log" || event.kind === "dev-log") {
+      if (!this.root || path.resolve(event.rootDir) !== path.resolve(this.root)) return;
+      if (event.kind === "setup-log") this.setupLines = pushLines(this.setupLines, event.line, MAX_PROCESS_LINES, this.home());
+      else this.devLines = pushLines(this.devLines, event.line, MAX_PROCESS_LINES, this.home());
+      this.feed(event.line);
     } else if (event.kind === "dev-status" || event.kind === "project-ensure") {
       if (!this.root || path.resolve(event.rootDir) !== path.resolve(this.root)) return;
       if (event.kind === "dev-status") this.dev = { state: event.status.state };
-      else this.installing = event.stage === "installing-node" || event.stage === "installing-deps";
+      else {
+        this.installing = event.stage === "installing-node" || event.stage === "installing-deps";
+        if (event.stage !== "running") this.stepStartedAt = Date.now();
+        if (event.stage === "installing-deps") this.feed("Installing project files (npm install)");
+        else if (event.stage === "starting") this.feed("Starting the preview (npm run dev)");
+        else this.feed(event.message);
+      }
       this.set({});
     } else if (event.kind === "agent-login-url") {
       const url = this.deps.harness.pendingLoginUrl(event.agent);
       if (url && isAllowedLoginUrl(url)) this.deps.openExternal(url);
     }
+  }
+
+  // ---- activity feed ----
+
+  private home(): string | undefined {
+    return this.deps.guard.home;
+  }
+
+  /** Adds cleaned lines to the progress feed. Bursts are coalesced: the window hears at most every 100 ms. */
+  private feed(raw: string): void {
+    const next = pushLines(this.activity, raw, MAX_ACTIVITY_LINES, this.home());
+    if (next === this.activity) return;
+    this.activity = next;
+    if (this.activityTimer) {
+      this.activityDirty = true;
+      return;
+    }
+    this.set({});
+    this.activityTimer = setTimeout(() => {
+      this.activityTimer = null;
+      if (this.activityDirty) {
+        this.activityDirty = false;
+        this.set({});
+      }
+    }, 100);
+    this.activityTimer.unref();
+  }
+
+  /** A new open (or restart): forget the last feed and begin timing. */
+  private beginActivity(lead?: string): void {
+    this.activity = [];
+    this.devLines = [];
+    this.setupLines = [];
+    this.startedAt = Date.now();
+    this.stepStartedAt = this.startedAt;
+    if (lead) this.activity = [lead];
   }
 
   // ---- files + running things ----
@@ -609,6 +670,7 @@ export class Session {
       this.resume = null;
       this.previewStopped = false;
       this.dev = null;
+      this.beginActivity();
       this.set({ phase: "preparing", previewUrl: null, message: undefined });
       try {
         await this.deps.harness.stopDev(root).catch(() => undefined);
@@ -650,13 +712,14 @@ export class Session {
       this.resume = null;
       this.previewStopped = false;
       this.dev = null;
+      this.beginActivity("Getting your project from Figma");
       this.set({ phase: "connecting", previewUrl: null, message: undefined });
       try {
         await this.deps.harness.stopDev(root).catch(() => undefined);
         const store = new ProjectStateStore(root);
         const config = await store.loadProjectConfig();
         await store.createBackup("pre-start-over", config.sync.ignore);
-        await this.deps.withBrowser(() => this.deps.sync.pull({ projectRoot: root, strategy: "backup", confirm: () => Promise.resolve(true), signal }));
+        await this.deps.withBrowser(() => this.deps.sync.pull({ projectRoot: root, strategy: "backup", confirm: () => Promise.resolve(true), signal, progress: (m) => this.feed(m) }));
         if (signal.aborted) return this.cancelled();
         this.stack = [];
         this.settle("undone");
@@ -743,6 +806,7 @@ export class Session {
       this.dev = null;
       this.installing = false;
       this.previewStopped = false;
+      this.beginActivity(restore ? undefined : "Getting your project from Figma");
       this.set({ phase: restore ? "preparing" : "connecting", projectName: info.name, activeKey: info.key, previewUrl: null, changes: [], changeFiles: [], changeIds: [], canSend: false, canUndo: false, message: undefined });
       try {
         const root = await resolveProjectFolder(this.workspaceDir, info, this.known);
@@ -760,9 +824,10 @@ export class Session {
         const status = await this.deps.sync.status({ projectRoot: root });
         // A reopened project is not re-pulled; unsent work is never replaced. Figma is compared at send time.
         if (!status.hasBaseline || (!restore && status.summary.total === 0)) {
+          this.feed("Getting your project from Figma");
           this.set({ phase: "connecting" });
           await this.deps.withBrowser(() =>
-            this.deps.sync.pull({ projectRoot: root, strategy: "backup", confirm: () => Promise.resolve(true), signal }),
+            this.deps.sync.pull({ projectRoot: root, strategy: "backup", confirm: () => Promise.resolve(true), signal, progress: (m) => this.feed(m) }),
           );
         }
         if (signal.aborted) return this.cancelled();
@@ -1003,6 +1068,13 @@ export class Session {
     for (const key of Object.keys(next)) {
       if (next[key] === undefined) delete next[key];
     }
+    const timing = next["phase"] === "connecting" || next["phase"] === "preparing";
+    if (timing && next["phase"] !== this.s.phase) this.stepStartedAt = Date.now();
+    if (!timing) {
+      this.startedAt = null;
+      this.stepStartedAt = null;
+    }
+    next["activity"] = { lines: [...this.activity], stepStartedAt: this.stepStartedAt, startedAt: this.startedAt };
     next["processes"] = buildProcesses({
       hasProject: Boolean(this.root) && next["phase"] !== "start",
       phase: next["phase"] as Phase,
@@ -1011,6 +1083,8 @@ export class Session {
       installing: this.installing,
       agentWorking: this.turnId !== null,
       agentName: AGENT_NAMES[(next["agent"] as AgentChoice | null) ?? "claude"],
+      devLines: this.devLines,
+      setupLines: this.setupLines,
     });
     this.s = next as unknown as SessionState;
     for (const listener of this.listeners) listener(this.s);

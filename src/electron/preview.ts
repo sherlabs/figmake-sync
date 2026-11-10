@@ -45,6 +45,15 @@ export class PreviewView {
     this.window.contentView.addChildView(view);
     this.view = view;
     this.layout();
+    // The dev server can accept connections a moment before it can serve the page: never leave a blank view behind.
+    let retries = 0;
+    wc.on("did-fail-load", (_event, code, _desc, _failedUrl, isMainFrame) => {
+      if (!isMainFrame || code === -3 || retries >= 60) return; // -3 = aborted by a newer navigation
+      retries += 1;
+      setTimeout(() => {
+        if (this.view === view && !wc.isDestroyed()) void wc.loadURL(url).catch(() => undefined);
+      }, 1500);
+    });
     void wc.loadURL(url).catch(() => undefined);
   }
 

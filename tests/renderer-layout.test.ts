@@ -59,7 +59,7 @@ const TREE: Record<string, { name: string; path: string; kind: string }[]> = {
   "src/pages": [{ name: "Cart.tsx", path: "src/pages/Cart.tsx", kind: "file" }, { name: "Checkout.tsx", path: "src/pages/Checkout.tsx", kind: "file" }],
 };
 
-const START = { phase: "start", projectName: null, previewUrl: null, changes: [], changeFiles: [], changeIds: [], projects: [], activeKey: null, syncedAt: null, updatesEnabled: true, canSend: false, canUndo: false, agent: null, agentConnected: false, workspace: "figmake-sync", processes: [] };
+const START = { phase: "start", projectName: null, previewUrl: null, changes: [], changeFiles: [], changeIds: [], projects: [], activeKey: null, syncedAt: null, updatesEnabled: true, canSend: false, canUndo: false, agent: null, agentConnected: false, workspace: "figmake-sync", processes: [], activity: { lines: [], stepStartedAt: null, startedAt: null } };
 const READY = { ...START, phase: "ready", projectName: "Checkout Flow", previewUrl: "http://localhost:5173/", agent: "claude", agentConnected: true, activeKey: "a", projects: [{ key: "a", name: "Checkout Flow", status: "synced", syncedAt: null }], processes: PROCESSES.slice(0, 1) };
 
 const UPDATE_IDLE = { phase: "idle", currentVersion: "0.1.18", supported: true, upToDate: false };
@@ -74,7 +74,7 @@ async function open(state: object, size: { width: number; height: number }, sche
     const w = window as unknown as { figmake: unknown };
     w.figmake = {
       state: () => Promise.resolve(s),
-      onState: () => () => undefined,
+      onState: (cb: (st: object) => void) => { (window as unknown as { __push: unknown }).__push = cb; return () => undefined; },
       chat: () => Promise.resolve({ projectKey: null, messages: [], active: false, fresh: false }),
       onChat: () => () => undefined,
       onCommand: () => () => undefined,
@@ -284,6 +284,11 @@ describe("renderer layout", () => {
     expect(stage && stage.w).toBeGreaterThanOrEqual(340);
     expect(chat && stage && chat.x).toBeGreaterThanOrEqual((stage as { x: number; w: number }).x + (stage as { w: number }).w - 1);
     expect(await overflowX(wide)).toBeLessThanOrEqual(0);
+    // Sidebar project row stays a single slim line: its status dot sits inside the row, not in a box beside it.
+    const prow = await rect(wide, ".prow");
+    const pdot = await rect(wide, ".prow .dot, .prow .spin");
+    expect(prow && prow.h).toBeLessThanOrEqual(32);
+    expect(prow && pdot && pdot.x + pdot.w).toBeLessThanOrEqual((prow as { x: number; w: number }).x + (prow as { w: number }).w);
     // The status bar stays at the bottom edge.
     const status = await rect(wide, "footer.status");
     expect(status && status.y + status.h).toBeCloseTo(760, 0);
@@ -306,7 +311,7 @@ describe("renderer layout", () => {
         if (!browser) return ctx.skip();
         const page = await open({ ...READY, processes: PROCESSES }, size, scheme);
         const tabs = await page.locator(".rail-tabs [role=tab]").allInnerTexts();
-        expect(tabs).toEqual(["Chat", "Files"]);
+        expect(tabs).toEqual(["Chat", "Files", "Output"]);
         expect(await page.locator("#tab-chat").getAttribute("aria-selected")).toBe("true");
         expect(await page.locator(".chat").isVisible()).toBe(true);
         expect(await page.locator(".files").isVisible()).toBe(false);
@@ -384,8 +389,207 @@ describe("renderer layout", () => {
     const page = await open({ ...READY, processes: [{ id: "preview", name: "Preview", state: "failed", note: "The preview stopped unexpectedly.", canStop: false, canRestart: true }] }, { width: 1180, height: 760 }, "dark", "files");
     await page.waitForSelector(".running .rrow");
     expect(await page.locator(".running .rrow").innerText()).toMatch(/Failed[\s\S]*stopped unexpectedly[\s\S]*Restart/u);
-    expect(await page.locator(".running .rrow button").count()).toBe(1);
+    expect(await page.locator(".running .rrow button").allInnerTexts()).toEqual(["Restart", "Output"]);
     expect(await overflowX(page)).toBeLessThanOrEqual(0);
     await page.context().close();
+  });
+
+  describe("progress card: live output", () => {
+    const LOG = [
+      "Getting your project from Figma",
+      "downloading latest code",
+      "applying downloaded snapshot",
+      "Installing project files (npm install)",
+      "npm warn deprecated inflight@1.0.6: This module is not supported",
+      `npm http fetch GET 200 https://registry.npmjs.org/${"a-very-long-package-name-".repeat(8)} 412ms`,
+      "added 312 packages in 41s",
+    ];
+    const prepState = (over: { lines?: string[]; stepAgo?: number } = {}): object => ({
+      ...START,
+      phase: "preparing",
+      projectName: "Checkout Flow",
+      agent: "claude",
+      agentConnected: true,
+      activeKey: "a",
+      activity: { lines: over.lines ?? LOG, stepStartedAt: Date.now() - (over.stepAgo ?? 42_000), startedAt: Date.now() - 60_000 },
+    });
+    const SIZE = { width: 1180, height: 760 };
+
+    for (const scheme of ["light", "dark"] as const) {
+      it(`collapsed: clock, three-line tail, no hints, nothing overflows (${scheme})`, async (ctx) => {
+        if (!browser) return ctx.skip();
+        const page = await open(prepState({ stepAgo: 12_000 }), SIZE, scheme);
+        await page.waitForSelector(".prep .tail .tl");
+        expect(await page.locator(".prep .elapsed").innerText()).toBe("On this step for 0:12");
+        expect(await page.locator(".prep .tail .tl").allInnerTexts()).toEqual(LOG.slice(-3));
+        expect(await page.locator(".prep .slowhint p").count()).toBe(0);
+        expect(await page.locator(".prep .fulllog").isVisible()).toBe(false);
+        const card = await rect(page, ".prep");
+        const tail = await rect(page, ".prep .tail");
+        expect(tail && card && tail.x + tail.w).toBeLessThanOrEqual((card as { x: number; w: number }).x + (card as { w: number }).w);
+        expect(await page.locator(".prep").evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+        expect(await page.locator(".prep .tail").evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+        expect(await overflowX(page)).toBeLessThanOrEqual(0);
+        await shot(page, `card-collapsed-${scheme}`);
+        await page.context().close();
+      });
+
+      it(`expanded: all output in a scrollable log that follows the newest line, with Copy (${scheme})`, async (ctx) => {
+        if (!browser) return ctx.skip();
+        const many = Array.from({ length: 60 }, (_, i) => `step output line ${i + 1}`);
+        const page = await open(prepState({ lines: many }), SIZE, scheme);
+        await page.click("text=Show all output");
+        expect(await page.locator(".prep .fulllog").isVisible()).toBe(true);
+        expect(await page.locator(".prep .showall").innerText()).toBe("Hide output");
+        const log = page.locator(".prep .logfull");
+        expect((await log.innerText()).split("\n")).toHaveLength(60);
+        const info = (): Promise<{ top: number; max: number }> => log.evaluate((el) => ({ top: el.scrollTop, max: el.scrollHeight - el.clientHeight }));
+        const start = await info();
+        expect(start.max).toBeGreaterThan(0);
+        expect(Math.abs(start.top - start.max)).toBeLessThanOrEqual(2);
+        const box = await rect(page, ".prep .logfull");
+        const card = await rect(page, ".prep");
+        expect(box && card && box.x + box.w).toBeLessThanOrEqual((card as { x: number; w: number }).x + (card as { w: number }).w);
+        expect(await overflowX(page)).toBeLessThanOrEqual(0);
+
+        // New lines keep it pinned to the bottom...
+        const push = (lines: string[]): Promise<void> => page.evaluate((a) => { (window as unknown as { __push: (s: object) => void }).__push(a); }, { ...(prepState({ lines })) });
+        await push([...many, "later line 1", "later line 2"]);
+        await page.waitForFunction(() => document.querySelector(".prep .logfull")?.textContent?.includes("later line 2"));
+        let now = await info();
+        expect(Math.abs(now.top - now.max)).toBeLessThanOrEqual(2);
+        // ...until the person scrolls up: then it stays where they are.
+        await log.evaluate((el) => { el.scrollTop = 40; el.dispatchEvent(new Event("scroll")); });
+        await push([...many, "later line 1", "later line 2", "later line 3"]);
+        await page.waitForFunction(() => document.querySelector(".prep .logfull")?.textContent?.includes("later line 3"));
+        now = await info();
+        expect(Math.abs(now.top - 40)).toBeLessThanOrEqual(2);
+
+        await page.evaluate(() => { (window as unknown as { __copied: string[] }).__copied = []; (window.figmake as unknown as { copyText: (t: string) => Promise<void> }).copyText = (t: string) => { (window as unknown as { __copied: string[] }).__copied.push(t); return Promise.resolve(); }; });
+        await page.click(".prep .fulllog button:has-text('Copy')");
+        const copied = await page.evaluate(() => (window as unknown as { __copied: string[] }).__copied);
+        expect(copied).toHaveLength(1);
+        expect(copied[0]?.split("\n")).toHaveLength(63);
+        await shot(page, `card-expanded-${scheme}`);
+        await page.click("text=Hide output");
+        expect(await page.locator(".prep .tail").isVisible()).toBe(true);
+        await page.context().close();
+      });
+    }
+
+    for (const scheme of ["light", "dark"] as const) {
+      it(`Output tab: status header, live log that follows, Copy and Clear (${scheme})`, async (ctx) => {
+        if (!browser) return ctx.skip();
+        const many = Array.from({ length: 80 }, (_, i) => `build output line ${i + 1}`);
+        const st = { ...READY, processes: [{ id: "preview", name: "Preview", state: "running", canStop: true, canRestart: true, output: [] }], activity: { lines: many, stepStartedAt: null, startedAt: null } };
+        const page = await open(st, SIZE, scheme);
+        await page.click("#tab-output");
+        expect(await page.locator("#tab-output").getAttribute("aria-selected")).toBe("true");
+        expect(await page.locator(".chat").isVisible()).toBe(false);
+        expect(await page.locator(".outpanel .ostatus").innerText()).toMatch(/Preview:\s*Running[\s\S]*Stop[\s\S]*Restart/u);
+        const log = page.locator(".outpanel .logfull");
+        expect((await log.innerText()).split("\n")).toHaveLength(80);
+        const info = (): Promise<{ top: number; max: number }> => log.evaluate((el) => ({ top: el.scrollTop, max: el.scrollHeight - el.clientHeight }));
+        const a = await info();
+        expect(a.max).toBeGreaterThan(0);
+        expect(Math.abs(a.top - a.max)).toBeLessThanOrEqual(2);
+        const push = (lines: string[]): Promise<void> => page.evaluate((x) => { (window as unknown as { __push: (v: object) => void }).__push(x); }, { ...st, activity: { lines, stepStartedAt: null, startedAt: null } });
+        await push([...many, "new line A"]);
+        await page.waitForFunction(() => document.querySelector(".outpanel .logfull")?.textContent?.includes("new line A"));
+        const b = await info();
+        expect(Math.abs(b.top - b.max)).toBeLessThanOrEqual(2);
+        await log.evaluate((el) => { el.scrollTop = 30; el.dispatchEvent(new Event("scroll")); });
+        await push([...many, "new line A", "new line B"]);
+        await page.waitForFunction(() => document.querySelector(".outpanel .logfull")?.textContent?.includes("new line B"));
+        expect(Math.abs((await info()).top - 30)).toBeLessThanOrEqual(2);
+        const box = await rect(page, ".outpanel .logfull");
+        const railBox = await rect(page, ".rail");
+        expect(box && railBox && box.x + box.w).toBeLessThanOrEqual((railBox as { x: number; w: number }).x + (railBox as { w: number }).w);
+        expect(await overflowX(page)).toBeLessThanOrEqual(0);
+        await shot(page, `output-tab-${scheme}`);
+        await page.evaluate(() => { (window as unknown as { __copied: string[] }).__copied = []; (window.figmake as unknown as { copyText: (t: string) => Promise<void> }).copyText = (t: string) => { (window as unknown as { __copied: string[] }).__copied.push(t); return Promise.resolve(); }; });
+        await page.click(".outpanel button:has-text('Copy')");
+        expect((await page.evaluate(() => (window as unknown as { __copied: string[] }).__copied))[0]?.split("\n")).toHaveLength(82);
+        await page.click(".outpanel button:has-text('Clear')");
+        expect(await log.innerText()).toMatch(/Nothing has run yet/u);
+        await push([...many, "new line A", "new line B", "after clear"]);
+        await page.waitForFunction(() => document.querySelector(".outpanel .logfull")?.textContent === "after clear");
+        await page.context().close();
+      });
+    }
+
+    it("slow steps get a gentle note at 30 s and a disk hint at 120 s", async (ctx) => {
+      if (!browser) return ctx.skip();
+      const NOTE = "This is taking longer than usual on this computer. It's still working. You can keep this window open.";
+      const quick = await open(prepState({ stepAgo: 29_000 }), SIZE, "light");
+      await quick.waitForSelector(".prep .tail");
+      expect(await quick.locator(".prep .slowhint p").count()).toBe(0);
+      await quick.context().close();
+
+      const slow = await open(prepState({ stepAgo: 31_000 }), SIZE, "light");
+      await slow.waitForSelector(".prep .slowhint p");
+      expect(await slow.locator(".prep .slowhint p").allInnerTexts()).toEqual([NOTE]);
+      await slow.context().close();
+
+      for (const scheme of ["light", "dark"] as const) {
+        const very = await open(prepState({ stepAgo: 125_000 }), SIZE, scheme);
+        await very.waitForSelector(".prep .slowhint p");
+        expect(await very.locator(".prep .slowhint p").allInnerTexts()).toEqual([NOTE, "Slow disk? Freeing space can help."]);
+        expect(await very.locator(".prep .elapsed").innerText()).toBe("On this step for 2:05");
+        expect(await overflowX(very)).toBeLessThanOrEqual(0);
+        const card = await rect(very, ".prep");
+        expect(card && card.y + card.h).toBeLessThanOrEqual(SIZE.height);
+        await shot(very, `card-slow-hint-${scheme}`);
+        await very.context().close();
+      }
+    });
+
+    it("error banner keeps Try again and Report, and Show details reveals the last 20 lines", async (ctx) => {
+      if (!browser) return ctx.skip();
+      const lines = Array.from({ length: 30 }, (_, i) => `output ${i + 1}`);
+      const failed = { ...START, phase: "error", message: "Couldn't start the project. Try again.", code: "preview_failed", failedIn: "preparing", projectName: "Checkout Flow", activity: { lines, stepStartedAt: null, startedAt: null } };
+      for (const scheme of ["light", "dark"] as const) {
+        const page = await open(failed, SIZE, scheme);
+        const names = await page.locator(".errbanner button").allInnerTexts();
+        expect(names).toEqual(["Try again", "Show details", "Report"]);
+        expect(await page.locator(".errbanner .errlog").count()).toBe(0);
+        await page.click(".errbanner >> text=Show details");
+        const shown = (await page.locator(".errbanner .errlog").innerText()).split("\n");
+        expect(shown).toHaveLength(20);
+        expect(shown[0]).toBe("output 11");
+        expect(shown.at(-1)).toBe("output 30");
+        expect(await overflowX(page)).toBeLessThanOrEqual(0);
+        await shot(page, `error-details-${scheme}`);
+        await page.context().close();
+      }
+      const bare = await open({ ...failed, activity: { lines: [], stepStartedAt: null, startedAt: null } }, SIZE, "light");
+      expect(await bare.locator(".errbanner button").allInnerTexts()).toEqual(["Try again", "Report"]);
+      await bare.context().close();
+    });
+
+    it("Files tab: each running row has an Output disclosure with its recent lines", async (ctx) => {
+      if (!browser) return ctx.skip();
+      const procs = [
+        { id: "preview", name: "Preview", state: "running", canStop: true, canRestart: true, output: ["VITE v5 ready in 900 ms", "Local: http://localhost:5173/"] },
+        { id: "install", name: "Setting up project files", state: "running", canStop: true, canRestart: false, output: ["added 312 packages in 41s"] },
+        { id: "agent", name: "Claude (AI helper)", state: "running", canStop: true, canRestart: false, output: [] },
+      ];
+      for (const scheme of ["light", "dark"] as const) {
+        const page = await open({ ...READY, processes: procs }, SIZE, scheme, "files");
+        await page.waitForSelector(".running .rrow");
+        expect(await page.locator(".running .outtoggle").count()).toBe(3);
+        await page.click('.rrow[data-process="preview"] .outtoggle');
+        expect(await page.locator('.rrow[data-process="preview"] .logfull').innerText()).toBe("VITE v5 ready in 900 ms\nLocal: http://localhost:5173/");
+        await page.click('.rrow[data-process="install"] .outtoggle');
+        await page.click('.rrow[data-process="agent"] .outtoggle');
+        expect(await page.locator('.rrow[data-process="agent"] .logfull').innerText()).toBe("Nothing to show yet.");
+        expect(await page.locator(".files").evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+        expect(await overflowX(page)).toBeLessThanOrEqual(0);
+        await shot(page, `files-output-${scheme}`);
+        await page.click('.rrow[data-process="preview"] .outtoggle');
+        expect(await page.locator('.rrow[data-process="preview"] .logfull').count()).toBe(0);
+        await page.context().close();
+      }
+    });
   });
 });

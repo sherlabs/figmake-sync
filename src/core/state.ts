@@ -90,6 +90,10 @@ function hashLikeManifest(buffer: Buffer): string {
   return createHash("sha256").update(buffer).digest("hex");
 }
 
+function throwIfCopyAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw Object.assign(new Error("Cancelled."), { name: "AbortError" });
+}
+
 function createCopyFilter(
   sourceDir: string,
   ignore: readonly string[] | undefined,
@@ -397,6 +401,7 @@ export class ProjectStateStore {
   async createBackup(
     label: string,
     ignore?: readonly string[],
+    signal?: AbortSignal,
   ): Promise<string> {
     const backupDir = path.join(
       this.paths.backupsDir,
@@ -404,11 +409,17 @@ export class ProjectStateStore {
     );
 
     await fs.ensureDir(backupDir);
-    await this.copyWorkspaceLikeTree(
-      this.paths.rootDir,
-      path.join(backupDir, "workspace"),
-      ignore,
-    );
+    try {
+      await this.copyWorkspaceLikeTree(
+        this.paths.rootDir,
+        path.join(backupDir, "workspace"),
+        ignore,
+        signal,
+      );
+    } catch (error) {
+      if (signal?.aborted) await fs.remove(backupDir).catch(() => undefined);
+      throw error;
+    }
 
     return backupDir;
   }
@@ -545,28 +556,50 @@ export class ProjectStateStore {
     );
   }
 
+  /**
+   * Copies the workspace-like tree with a few files in flight, using copy-on-write clones where the disk
+   * supports them (instant, no file content read). Stops early when `signal` aborts.
+   */
   private async copyWorkspaceLikeTree(
     sourceDir: string,
     destinationDir: string,
     ignore?: readonly string[],
+    signal?: AbortSignal,
   ): Promise<void> {
     await fs.ensureDir(destinationDir);
 
     const filter = createCopyFilter(sourceDir, ignore);
+    const files: { from: string; to: string }[] = [];
+    const links: { from: string; to: string }[] = [];
 
-    // Per top-level entry: destination may live inside sourceDir (.figmake-sync).
-    for (const entry of await fs.readdir(sourceDir)) {
-      const entryPath = path.join(sourceDir, entry);
-
-      if (!filter(entryPath)) {
-        continue;
+    async function walk(from: string, to: string): Promise<void> {
+      await fs.ensureDir(to);
+      for (const entry of await fs.readdir(from, { withFileTypes: true })) {
+        const entryFrom = path.join(from, entry.name);
+        // Per entry: the destination may live inside sourceDir (.figmake-sync).
+        if (!filter(entryFrom)) continue;
+        const entryTo = path.join(to, entry.name);
+        if (entry.isSymbolicLink()) links.push({ from: entryFrom, to: entryTo });
+        else if (entry.isDirectory()) await walk(entryFrom, entryTo);
+        else if (entry.isFile()) files.push({ from: entryFrom, to: entryTo });
       }
-
-      await fs.copy(entryPath, path.join(destinationDir, entry), {
-        overwrite: true,
-        errorOnExist: false,
-        filter,
-      });
     }
+
+    await walk(sourceDir, destinationDir);
+
+    for (const link of links) {
+      throwIfCopyAborted(signal);
+      await fs.symlink(await fs.readlink(link.from), link.to).catch(() => undefined);
+    }
+
+    let next = 0;
+    const worker = async (): Promise<void> => {
+      while (next < files.length) {
+        throwIfCopyAborted(signal);
+        const file = files[next++] as { from: string; to: string };
+        await fs.copyFile(file.from, file.to, fs.constants.COPYFILE_FICLONE);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(16, files.length) }, () => worker()));
   }
 }

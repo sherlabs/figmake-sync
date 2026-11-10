@@ -419,8 +419,13 @@ export class HarnessService {
     const config = await store.loadProjectConfig();
     phase("backup", "Saving a backup snapshot");
     try {
-      outcome.backupDir = await store.createBackup("pre-agent", config.sync.ignore);
+      outcome.backupDir = await store.createBackup("pre-agent", config.sync.ignore, signal);
     } catch (error) {
+      if (signal.aborted) {
+        outcome.cancelled = true;
+        outcome.error = "Cancelled.";
+        return outcome;
+      }
       throw new HarnessError(
         "backup_failed",
         `Backup failed, agent was not started: ${error instanceof Error ? error.message : String(error)}`,

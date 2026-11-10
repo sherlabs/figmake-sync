@@ -1090,3 +1090,120 @@ describe("session: clean up", () => {
     await turn;
   });
 });
+
+describe("session: activity feed", () => {
+  const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+  it("collects phase lines, pull progress, setup and dev output while opening", async () => {
+    const r = await rig();
+    r.harness.ensureProjectRunning.mockImplementationOnce(async () => {
+      const root = r.project;
+      r.session.handleHarnessEvent({ kind: "project-ensure", rootDir: root, stage: "installing-deps", message: "Getting the project ready" });
+      r.session.handleHarnessEvent({ kind: "setup-log", rootDir: root, line: "added 312 packages in 41s" });
+      r.session.handleHarnessEvent({ kind: "project-ensure", rootDir: root, stage: "starting", message: "Starting the app" });
+      r.session.handleHarnessEvent({ kind: "dev-log", rootDir: root, line: "  VITE v5 ready in 900 ms" });
+      return { ok: true as const, url: "http://localhost:5173/" };
+    });
+    await r.session.openProject(LINK);
+    await wait(150);
+    const { lines } = r.session.state.activity;
+    expect(lines[0]).toBe("Getting your project from Figma");
+    expect(lines).toEqual(expect.arrayContaining(["Installing project files (npm install)", "added 312 packages in 41s", "Starting the preview (npm run dev)", "VITE v5 ready in 900 ms"]));
+    // Pull progress reaches the feed through the pull options.
+    expect(lines.some((l) => /downloading latest code/iu.test(l))).toBe(true);
+    expect(lines.indexOf("Installing project files (npm install)")).toBeLessThan(lines.indexOf("Starting the preview (npm run dev)"));
+    // Calm again: no running clocks, lines stay for "Show details".
+    expect(r.session.state.activity.stepStartedAt).toBeNull();
+    expect(r.session.state.activity.startedAt).toBeNull();
+    // The Files tab gets the per-process tail.
+    const preview = r.session.state.processes.find((p) => p.id === "preview");
+    expect(preview?.output).toEqual(["VITE v5 ready in 900 ms"]);
+  });
+
+  it("sanitises lines: codes, spinners, home folder, URL queries, tokens, long lines", async () => {
+    const r = await rig();
+    r.harness.ensureProjectRunning.mockImplementationOnce(async () => {
+      const root = r.project;
+      const home = r.deps.guard.home;
+      const send = (line: string): void => r.session.handleHarnessEvent({ kind: "setup-log", rootDir: root, line });
+      send("\u001b[32mgreen\u001b[0m text\u0007");
+      send("⠋ reticulating");
+      send("⠙");
+      send("progress 10%\rprogress 55%\rprogress 100%");
+      send(`reading ${home}/projects/app/node_modules/x`);
+      send("GET https://registry.example.com/pkg?token=abc123&x=1#frag ok");
+      send("Authorization: Bearer abcdef0123456789abcdef");
+      send(`${"long ".repeat(200)}`);
+      send("same");
+      send("same");
+      return { ok: true as const, url: "http://localhost:5173/" };
+    });
+    await r.session.openProject(LINK);
+    await wait(150);
+    const lines = r.session.state.activity.lines;
+    const text = lines.join("\n");
+    expect(lines).toContain("green text");
+    expect(lines).toContain("reticulating");
+    expect(lines).toContain("progress 100%");
+    expect(text).not.toMatch(/progress 10%|progress 55%|\u001b|\u0007|⠋|⠙/u);
+    expect(text).not.toContain(r.deps.guard.home);
+    expect(text).toContain("reading ~");
+    expect(text).toContain("https://registry.example.com/pkg ok");
+    expect(text).not.toMatch(/abc123|abcdef0123456789abcdef|frag/u);
+    expect(lines.every((l) => l.length <= 240)).toBe(true);
+    expect(lines.filter((l) => l === "same")).toHaveLength(1);
+  });
+
+  it("adds AI helper run status to the feed", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    r.session.handleHarnessEvent({ kind: "run-phase", rootDir: r.project, runId: "r", phase: "agent", message: "Asking Claude" });
+    await wait(150);
+    expect(r.session.state.activity.lines.at(-1)).toBe("AI helper: Asking Claude");
+  });
+
+  it("keeps only the newest 300 lines", async () => {
+    const r = await rig();
+    r.harness.ensureProjectRunning.mockImplementationOnce(async () => {
+      for (let i = 0; i < 450; i++) r.session.handleHarnessEvent({ kind: "setup-log", rootDir: r.project, line: `line ${i}` });
+      return { ok: true as const, url: "http://localhost:5173/" };
+    });
+    await r.session.openProject(LINK);
+    await wait(150);
+    const lines = r.session.state.activity.lines;
+    expect(lines).toHaveLength(300);
+    expect(lines.at(-1)).toBe("line 449");
+    expect(lines[0]).toBe("line 150");
+  });
+
+  it("clears on a new open and ignores output from other projects", async () => {
+    const r = await rig();
+    r.harness.ensureProjectRunning.mockImplementationOnce(async () => {
+      r.session.handleHarnessEvent({ kind: "setup-log", rootDir: r.project, line: "first run output" });
+      r.session.handleHarnessEvent({ kind: "setup-log", rootDir: path.join(r.workspace, "elsewhere"), line: "someone else" });
+      return { ok: true as const, url: "http://localhost:5173/" };
+    });
+    await r.session.openProject(LINK);
+    await wait(150);
+    expect(r.session.state.activity.lines).toContain("first run output");
+    expect(r.session.state.activity.lines).not.toContain("someone else");
+    await r.session.openProject(LINK);
+    await wait(150);
+    expect(r.session.state.activity.lines).not.toContain("first run output");
+  });
+
+  it("times the current step while preparing and keeps the lines after a failure", async () => {
+    const r = await rig();
+    let during: SessionState["activity"] | null = null;
+    r.harness.ensureProjectRunning.mockImplementationOnce(async () => {
+      r.session.handleHarnessEvent({ kind: "dev-log", rootDir: r.project, line: "Error: ENOSPC no space left on device" });
+      during = r.session.state.activity;
+      return { ok: false as const, code: "dev_failed" as never, message: "no" };
+    });
+    await r.session.openProject(LINK);
+    await wait(150);
+    expect(during).toMatchObject({ stepStartedAt: expect.any(Number) as number, startedAt: expect.any(Number) as number });
+    expect(r.session.state.phase).toBe("error");
+    expect(r.session.state.activity.lines).toContain("Error: ENOSPC no space left on device");
+  });
+});

@@ -1,5 +1,6 @@
 import type { FileView, FigmakeApi, FolderListing, ProcessInfo, SessionState } from "../contracts.js";
 import { dataImage, h, icon, nodes, splitPath } from "./dom.js";
+import { copyButton, logView } from "./output.js";
 
 /* The Files tab: a read-only explorer of the open project, a viewer, and what is running.
    Draws what main sends; every path it asks for is re-checked by main. Text only ever becomes text nodes. */
@@ -181,6 +182,18 @@ export function createFilesPanel(host: FilesHost): FilesPanel {
   }
 
   // ---- running ----
+  const openOutput = new Set<string>();
+  function outputRow(p: ProcessInfo): HTMLElement {
+    const lines = p.output ?? [];
+    const on = openOutput.has(p.id);
+    const toggle = h("button", { type: "button", class: "plain quiet outtoggle", "aria-expanded": String(on), "aria-label": `Output of ${p.name}`, onclick: () => { if (openOutput.has(p.id)) openOutput.delete(p.id); else openOutput.add(p.id); drawRunning(sess?.processes ?? []); } }, on ? "Hide output" : "Output");
+    if (!on) return toggle;
+    const log = logView(`Output of ${p.name}`);
+    log.set(lines.length > 0 ? lines : ["Nothing to show yet."]);
+    queueMicrotask(() => log.follow());
+    return h("div", { class: "rout" }, toggle, log.el, lines.length > 0 ? copyButton(() => lines.join("\n"), (t) => api.copyText(t)) : null);
+  }
+
   function drawRunning(list: ProcessInfo[]): void {
     running.hidden = list.length === 0;
     if (list.length === 0) return running.replaceChildren();
@@ -195,6 +208,7 @@ export function createFilesPanel(host: FilesHost): FilesPanel {
           ...nodes(
             p.canStop ? h("button", { type: "button", class: "btn sm", "aria-label": `Stop ${p.name}`, onclick: () => void api.stopProcess(p.id) }, "Stop") : null,
             p.canRestart ? h("button", { type: "button", class: "btn sm", "aria-label": `${p.state === "stopped" ? "Start" : "Restart"} ${p.name}`, onclick: () => void api.restartProcess(p.id) }, p.state === "stopped" ? "Start" : "Restart") : null,
+            outputRow(p),
           ),
         ),
       ),

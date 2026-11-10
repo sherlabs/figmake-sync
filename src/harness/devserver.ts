@@ -1,4 +1,6 @@
-import { readFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import net from "node:net";
 import path from "node:path";
 
 import {
@@ -57,7 +59,61 @@ export function isSafeLocalUrl(url: unknown): url is string {
 const LOG_TAIL_LINES = 200;
 const STOP_GRACE_MS = 3000;
 
+/** Ask the OS for a free loopback port so several projects (or a crashed run's orphan) never collide. */
+export function findFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.unref();
+    srv.on("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      const addr = srv.address();
+      const port = typeof addr === "object" && addr ? addr.port : 0;
+      srv.close(() => (port ? resolve(port) : reject(new Error("no free port"))));
+    });
+  });
+}
+
+const PID_FILE = path.join(".figmake-sync", "dev.pid");
+
+/** Look-alike check so a recycled pid (after reboot) never gets another program killed. */
+function looksLikeDevServer(pid: number): boolean {
+  try {
+    if (process.platform === "win32") return true;
+    const cmd = execFileSync("ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8", timeout: 3000 });
+    return /node|npm|vite|pnpm/i.test(cmd);
+  } catch {
+    return false;
+  }
+}
+
+/** Kill a dev server left behind by a crashed/force-quit app run. Returns true if one was found. */
+export async function reapStaleDevServer(rootDir: string): Promise<boolean> {
+  const file = path.join(rootDir, PID_FILE);
+  let pid = 0;
+  try {
+    pid = Number.parseInt((await readFile(file, "utf8")).trim(), 10);
+  } catch {
+    return false;
+  }
+  await rm(file, { force: true });
+  if (!Number.isInteger(pid) || pid <= 1) return false;
+  try {
+    process.kill(pid, 0);
+  } catch {
+    return false;
+  }
+  if (!looksLikeDevServer(pid)) return false;
+  try {
+    if (process.platform === "win32") execFileSync("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore" });
+    else process.kill(-pid, "SIGKILL");
+  } catch {
+    /* already gone */
+  }
+  return true;
+}
+
 export interface DevServerDeps {
+  pickPort?: () => Promise<number>;
   spawn?: SpawnFn;
   killTree?: KillTreeFn;
   env?: NodeJS.ProcessEnv;
@@ -112,6 +168,7 @@ export class DevServer {
     if (!script) {
       throw new Error("No dev script found in package.json (looked for dev, start, serve).");
     }
+    await reapStaleDevServer(this.rootDir).catch(() => false);
     const spawn = this.deps.spawn ?? defaultSpawn;
     this.script = script;
     this.url = null;
@@ -120,8 +177,23 @@ export class DevServer {
     this.stopping = false;
     this.state = "starting";
 
+    // Each project gets its own free port (Figma Make configs default to a fixed 8443 and fail when it is taken).
+    let port: string | undefined;
+    try {
+      port = String(await (this.deps.pickPort ?? findFreePort)());
+    } catch {
+      port = undefined;
+    }
+    if (this.stopRequested) {
+      this.state = "stopped";
+      return this.status();
+    }
     // BROWSER=none stops CRA/vite from opening a tab themselves; the app opens it on request.
-    const env = buildEnv(this.deps.env, { BROWSER: "none", FORCE_COLOR: "0" });
+    const env = buildEnv(this.deps.env, {
+      BROWSER: "none",
+      FORCE_COLOR: "0",
+      ...(port ? { PORT: port, FIGMA_DEV_SERVER_HOST: "127.0.0.1" } : {}),
+    });
     const command = process.platform === "win32" ? "npm.cmd" : "npm";
     let child: ChildLike;
     try {
@@ -137,6 +209,12 @@ export class DevServer {
       return this.status();
     }
     this.child = child;
+    if (child.pid && !this.deps.spawn) {
+      // (tests inject fake children with made-up pids; never record those)
+      void mkdir(path.join(this.rootDir, ".figmake-sync"), { recursive: true })
+        .then(() => writeFile(path.join(this.rootDir, PID_FILE), String(child.pid)))
+        .catch(() => undefined);
+    }
     this.closed = new Promise<void>((resolve) => {
       const out = new LineBuffer();
       const err = new LineBuffer();
@@ -187,6 +265,7 @@ export class DevServer {
 
   private finish(code: number | null, resolve: () => void): void {
     this.child = null;
+    void rm(path.join(this.rootDir, PID_FILE), { force: true }).catch(() => undefined);
     this.exitCode = code;
     this.state = this.stopping ? "stopped" : "crashed";
     this.url = null; // a dead server's URL must not be offered to the user

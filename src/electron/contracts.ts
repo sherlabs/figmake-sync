@@ -84,6 +84,17 @@ export interface ProcessInfo {
   note?: string;
   canStop: boolean;
   canRestart: boolean;
+  /** Recent output of this thing, already cleaned of codes, paths and secrets (newest last). */
+  output?: string[];
+}
+
+/** What is happening while a project is being prepared, in cleaned-up lines. Newest last. */
+export interface ActivityFeed {
+  lines: string[];
+  /** Epoch ms the current step began, or null when nothing is being prepared. */
+  stepStartedAt: number | null;
+  /** Epoch ms the whole open began, or null when nothing is being prepared. */
+  startedAt: number | null;
 }
 
 /** One row of the file explorer. `path` uses "/" and is relative to the project folder. */
@@ -141,6 +152,8 @@ export interface SessionState {
   workspaceError?: string;
   /** What is running for the open project (preview, AI helper, setup), for the Files panel. */
   processes: ProcessInfo[];
+  /** Live output of the project being opened (kept after an error so it can be shown). */
+  activity: ActivityFeed;
 }
 
 export type ActivityKind = "look" | "edit" | "add" | "check" | "other";
