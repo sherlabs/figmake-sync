@@ -36,6 +36,8 @@ export interface SessionDeps {
   openExternal(url: string): void;
   reloadPreview(): void;
   signOutFigma(): Promise<void>;
+  /** Moves a folder to the system Trash (recoverable). */
+  trashFolder(dir: string): Promise<void>;
   /** Runs a Figma browser action, installing the browser first when needed. */
   withBrowser<T>(run: () => Promise<T>): Promise<T>;
   /** Resolves once the person says they are done signing in to Figma. */
@@ -739,13 +741,17 @@ export class Session {
     });
   }
 
-  /** "Reset the app": forgets accounts and the projects list. Project folders and saved chats stay on disk. */
+  /** "Reset the app": a clean slate. Signs out, forgets projects, removes saved chats and moves the project folders to the Trash. */
   async resetApp(): Promise<void> {
     if (this.isBusy()) return;
     await this.exclusive(async () => {
       try {
         await this.deps.harness.stopDevExcept(null, true).catch(() => undefined);
         await this.deps.signOutFigma();
+        for (const key of Object.keys(this.links)) await this.deps.chatStore.remove(key).catch(() => undefined);
+        for (const root of Object.values(this.known)) {
+          if (await this.safeToDelete(root)) await this.deps.trashFolder(root);
+        }
         await this.deps.appState.update({ agent: null, agentConnected: false, projects: {}, links: {}, lastLink: null });
       } catch (error) {
         this.deps.log("reset failed", error);

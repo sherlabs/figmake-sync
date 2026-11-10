@@ -322,6 +322,7 @@ async function bootstrap(): Promise<void> {
     },
     openExternal: (url) => void shell.openExternal(url),
     reloadPreview: () => preview?.reload(),
+    trashFolder: (dir) => shell.trashItem(dir),
     signOutFigma: async () => {
       await fs.remove(profileDir);
       await fs.ensureDir(profileDir);

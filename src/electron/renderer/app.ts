@@ -499,7 +499,7 @@ function buildSheet(kind: string, s: SessionState): HTMLDialogElement {
             { class: "setrows clean" },
             h("div", { class: "row" }, h("div", { class: "l" }, h("b", {}, "Preview not showing?"), h("span", {}, "Sets up the preview again if it won't show")), h("div", { class: "r" }, btn("Fix the preview", () => { closeSheet(); void api.cleanup("fix-preview"); }, "", { disabled: !canClean }))),
             h("div", { class: "row" }, h("div", { class: "l" }, h("b", {}, "Start this project over"), h("span", {}, "Latest from Figma, with a backup first")), h("div", { class: "r" }, btn("Start over…", () => openSheet({ kind: "confirm", action: "start-over" }), "", { disabled: !canClean }))),
-            h("div", { class: "row" }, h("div", { class: "l" }, h("b", {}, "Reset the app"), h("span", {}, "Signs you out and forgets your projects list")), h("div", { class: "r" }, btn("Reset…", () => openSheet({ kind: "confirm", action: "reset-app" }), "danger", { disabled: cleanupBusy(s) }))),
+            h("div", { class: "row" }, h("div", { class: "l" }, h("b", {}, "Reset the app"), h("span", {}, "Signs you out and removes your projects")), h("div", { class: "r" }, btn("Reset…", () => openSheet({ kind: "confirm", action: "reset-app" }), "danger", { disabled: cleanupBusy(s) }))),
           ),
         ],
         acts: [h("button", { type: "button", class: "plain", onclick: () => { closeSheet(); reportProblem(); } }, "Report a problem"), btn("Done", closeSheet, "primary")],
@@ -521,7 +521,7 @@ function buildSheet(kind: string, s: SessionState): HTMLDialogElement {
         glyph: icon(reset ? "trash" : "undo"),
         tone: reset ? "bad" : "warn",
         title: reset ? "Reset the app?" : "Start this project over?",
-        sub: reset ? "Signs you out of Figma and your AI helper, and forgets your projects list. Your project folders stay on your computer." : "This replaces your local copy with the latest from Figma. Your current files are backed up first.",
+        sub: reset ? "Signs you out, forgets your projects and chats, and moves the project folders to the Trash." : "This replaces your local copy with the latest from Figma. Your current files are backed up first.",
         acts: [btn("Cancel", closeSheet), go],
       });
     }

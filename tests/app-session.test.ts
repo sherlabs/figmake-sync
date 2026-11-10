@@ -97,6 +97,7 @@ async function rig(opts: { agent?: "claude" | "codex" | null; saved?: boolean; c
     openExternal: vi.fn(),
     reloadPreview: vi.fn(),
     signOutFigma: vi.fn(async () => undefined),
+    trashFolder: vi.fn(async (dir: string) => { await fs.remove(dir); }),
     withBrowser: (run) => run(),
     waitForFigmaSignin: vi.fn(async () => undefined),
     log: vi.fn(),
@@ -1064,7 +1065,7 @@ describe("session: clean up", () => {
     expect(r.session.state.phase).toBe("ready");
   });
 
-  it("reset the app clears accounts and the projects list, keeps files, chats and the updates setting", async () => {
+  it("reset the app clears accounts, projects, chats and project folders, keeps the updates setting", async () => {
     const r = await rig();
     await r.session.setUpdates(false);
     await r.session.openProject(LINK);
@@ -1074,7 +1075,8 @@ describe("session: clean up", () => {
     const saved = await r.store.load();
     expect(saved).toMatchObject({ agent: null, agentConnected: false, projects: {}, links: {}, lastLink: null, updates: { enabled: false } });
     expect(saved.workspace ?? r.workspace).toBeTruthy();
-    expect(await fs.pathExists(path.join(r.project, "src", "app.ts"))).toBe(true);
+    expect(r.deps.trashFolder).toHaveBeenCalledWith(r.project);
+    expect(await fs.pathExists(r.project)).toBe(false);
     expect(r.session.state).toMatchObject({ phase: "needs-ai-choice", agent: null, agentConnected: false, projects: [], activeKey: null, previewUrl: null });
   });
 

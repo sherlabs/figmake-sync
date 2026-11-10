@@ -189,7 +189,7 @@ describe("renderer layout", () => {
       expect(await page.locator("dialog.sheet .bd").evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
       await clean.getByRole("button", { name: "Reset…" }).click();
       await page.waitForSelector("dialog.sheet h2:has-text('Reset the app?')");
-      expect(await page.locator("dialog.sheet .hd p").innerText()).toBe("Signs you out of Figma and your AI helper, and forgets your projects list. Your project folders stay on your computer.");
+      expect(await page.locator("dialog.sheet .hd p").innerText()).toBe("Signs you out, forgets your projects and chats, and moves the project folders to the Trash.");
       await shot(page, `reset-confirm-${scheme}`);
       expect(await overflowX(page)).toBeLessThanOrEqual(0);
       await page.getByRole("button", { name: "Cancel" }).click();
