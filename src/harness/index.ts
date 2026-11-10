@@ -260,7 +260,7 @@ export class HarnessService {
     }
     const reason = hasModules ? "package.json or lockfile changed." : "node_modules is missing.";
     const onLog = (line: string): void => this.deps.emit({ kind: "setup-log", rootDir, line });
-    onLog(`Running npm install (${reason})`);
+    onLog(`Installing packages (${reason})`);
     const install =
       this.deps.installDeps ?? ((cwd, sig, log) => runNpmInstall(cwd, sig, undefined, log));
     await install(rootDir, signal, onLog);

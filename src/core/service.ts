@@ -23,6 +23,7 @@ import {
   type FigmaMakeProjectSession,
 } from "../figma/adapter.js";
 import { buildEnv } from "../harness/process.js";
+import { getManagedPnpm } from "../runtime/managed.js";
 import { createProjectLogger, flushLogger } from "../logging/logger.js";
 import type {
   CommandRuntimeOptions,
@@ -95,19 +96,42 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
 const NPM_INSTALL_TIMEOUT_MS = 5 * 60 * 1000;
 
 /** Cross-platform `npm install` with timeout, abort support and bounded stderr capture. */
-export function runNpmInstall(
+export async function runNpmInstall(
   cwd: string,
   signal?: AbortSignal,
   timeoutMs = NPM_INSTALL_TIMEOUT_MS,
   onLog?: (line: string) => void,
 ): Promise<void> {
+  const pnpm = getManagedPnpm();
+  if (!pnpm) return spawnInstall("npm", ["install", "--no-audit", "--no-fund"], buildEnv(), cwd, signal, timeoutMs, onLog);
+  // The app's own pnpm: content-addressed store inside the app space (hard links, no per-project copies of every file).
+  // hoisted layout = same node_modules shape npm makes, so projects that import transitive packages keep working.
+  const env = buildEnv(undefined, { XDG_CACHE_HOME: path.join(pnpm.storeDir, "..", "pnpm-cache"), XDG_STATE_HOME: path.join(pnpm.storeDir, "..", "pnpm-state"), XDG_DATA_HOME: path.join(pnpm.storeDir, "..", "pnpm-data") });
+  env["PATH"] = [...pnpm.binDirs, env["PATH"] ?? ""].join(path.delimiter);
+  try {
+    await spawnInstall("pnpm", ["install", "--no-frozen-lockfile", "--store-dir", pnpm.storeDir, "--node-linker=hoisted", "--reporter=append-only"], env, cwd, signal, timeoutMs, onLog);
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    onLog?.("pnpm could not finish; trying npm");
+    await spawnInstall("npm", ["install", "--no-audit", "--no-fund"], buildEnv(), cwd, signal, timeoutMs, onLog);
+  }
+}
+
+function spawnInstall(
+  command: string,
+  args: string[],
+  env: NodeJS.ProcessEnv,
+  cwd: string,
+  signal: AbortSignal | undefined,
+  timeoutMs: number,
+  onLog?: (line: string) => void,
+): Promise<void> {
   return new Promise((resolve, reject) => {
     const isWin = process.platform === "win32";
     // Fixed args only; shell is needed on Windows to resolve npm.cmd safely (no EINVAL).
-    const child = spawn("npm", ["install", "--no-audit", "--no-fund"], {
+    const child = spawn(command, args, {
       cwd,
-      // System PATH first, then the app-managed Node (if installed); process.env itself is untouched.
-      env: buildEnv(),
+      env,
       shell: isWin,
       stdio: ["ignore", onLog ? "pipe" : "ignore", "pipe"],
       windowsHide: true,
@@ -141,11 +165,11 @@ export function runNpmInstall(
     };
     const timer = setTimeout(() => {
       kill();
-      finish(new Error(`npm install timed out after ${timeoutMs}ms`));
+      finish(new Error(`${command} install timed out after ${timeoutMs}ms`));
     }, timeoutMs);
     const onAbort = (): void => {
       kill();
-      finish(new Error("npm install cancelled"));
+      finish(new Error(`${command} install cancelled`));
     };
 
     signal?.addEventListener("abort", onAbort, { once: true });
@@ -166,7 +190,7 @@ export function runNpmInstall(
       finish(
         code === 0
           ? undefined
-          : new Error(`npm install exited with code ${code}: ${stderrTail}`),
+          : new Error(`${command} install exited with code ${code}: ${stderrTail}`),
       );
     });
   });

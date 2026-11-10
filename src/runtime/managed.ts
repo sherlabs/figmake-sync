@@ -299,6 +299,17 @@ export function getManagedBinDirs(runtimeRoot: string | null = managedRoot): str
   return found ? binDirsFor(found.dir) : [];
 }
 
+/** The app's private pnpm (installed beside the managed Node): bin dirs to put FIRST on PATH, plus its content store. */
+export function getManagedPnpm(runtimeRoot: string | null = managedRoot): { binDirs: string[]; storeDir: string } | null {
+  if (!runtimeRoot) return null;
+  const found = findManagedInstall(runtimeRoot);
+  if (!found) return null;
+  const dirs = binDirsFor(found.dir);
+  const win = process.platform === "win32";
+  if (!fsSync.existsSync(path.join(dirs[1]!, win ? "pnpm.cmd" : "pnpm"))) return null;
+  return { binDirs: dirs, storeDir: path.join(runtimeRoot, "pnpm-store") };
+}
+
 /** Private npm prefix holding agent CLIs (Claude Code / Codex); lives inside <userData>/runtime so "remove runtime" deletes it. */
 export function agentToolsDir(runtimeRoot: string): string {
   return path.join(runtimeRoot, "tools-agents");
