@@ -60,6 +60,8 @@ export const projectConfigSchema = z.object({
         .transform((value) => [
           ...new Set([...DEFAULT_IGNORE_PATTERNS, ...value]),
         ]),
+      /** Exact project paths the user chose not to send to Figma. Separate from `ignore`, whose defaults are never touched. */
+      userIgnore: z.array(z.string()).default([]),
       safePullStrategy: z.enum(["backup", "merge", "abort"]).default("backup"),
       backupRetention: z.number().int().min(1).max(100).default(20),
     })

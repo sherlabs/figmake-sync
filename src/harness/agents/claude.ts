@@ -4,6 +4,7 @@ import type {
   AgentEvent,
   AgentInvocation,
   AgentInvocationInput,
+  PlanStep,
 } from "./types.js";
 
 /**
@@ -40,6 +41,22 @@ export const CLAUDE_DISALLOWED_TOOLS = [
 ] as const;
 
 const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
+
+const HELPER_TOOLS = new Set(["Task", "Agent"]);
+
+/** TodoWrite `todos` -> plan steps. */
+function planSteps(todos: unknown): PlanStep[] {
+  if (!Array.isArray(todos)) return [];
+  const steps: PlanStep[] = [];
+  for (const raw of todos.slice(0, 40)) {
+    const todo = (raw ?? {}) as Record<string, unknown>;
+    const status = str(todo["status"]);
+    const text = (status === "in_progress" ? str(todo["activeForm"]) : undefined) ?? str(todo["content"]) ?? str(todo["activeForm"]);
+    if (!text?.trim()) continue;
+    steps.push({ text: text.trim().slice(0, 160), state: status === "completed" ? "done" : status === "in_progress" ? "active" : "pending" });
+  }
+  return steps;
+}
 
 function str(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
@@ -125,8 +142,10 @@ export function createClaudeAdapter(): AgentAdapter {
           } else if (ev["type"] === "content_block_start") {
             const block = (ev["content_block"] ?? {}) as Record<string, unknown>;
             if (block["type"] === "text" && wroteText) breakBeforeText = true;
+            if (block["type"] === "thinking" || block["type"] === "redacted_thinking") events.push({ type: "thinking" });
           } else if (ev["type"] === "content_block_delta") {
             const delta = (ev["delta"] ?? {}) as Record<string, unknown>;
+            if (delta["type"] === "thinking_delta") events.push({ type: "thinking" });
             const text = delta["type"] === "text_delta" ? str(delta["text"]) : undefined;
             if (text) {
               streamed.add(currentMessage);
@@ -149,9 +168,21 @@ export function createClaudeAdapter(): AgentAdapter {
               if (block["type"] === "text" && str(block["text"])) {
                 if (alreadyStreamed) continue;
                 events.push({ type: "text", text: str(block["text"]) as string });
+              } else if (block["type"] === "thinking" || block["type"] === "redacted_thinking") {
+                events.push({ type: "thinking" });
               } else if (block["type"] === "tool_use") {
                 const name = str(block["name"]) ?? "tool";
                 const input = (block["input"] ?? {}) as Record<string, unknown>;
+                if (HELPER_TOOLS.has(name)) {
+                  const description = str(input["description"]) ?? str(input["subagent_type"]) ?? "";
+                  events.push({ type: "helper", description: description.slice(0, 200) });
+                  continue;
+                }
+                if (name === "TodoWrite") {
+                  const steps = planSteps(input["todos"]);
+                  if (steps.length > 0) events.push({ type: "plan", steps });
+                  continue;
+                }
                 events.push({ type: "tool", name, summary: summarizeTool(name, input) });
                 const filePath = str(input["file_path"]) ?? str(input["notebook_path"]);
                 if (EDIT_TOOLS.has(name) && filePath) {

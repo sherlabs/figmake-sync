@@ -65,6 +65,17 @@ async function real(target: string): Promise<string> {
   }
 }
 
+/** True when the folder is likely synced by iCloud Drive / OneDrive / Dropbox / Google Drive (or is a known-synced home folder). Sync makes node_modules crawl. */
+export function isCloudSynced(dir: string, home: string): boolean {
+  const rel = path.relative(home, path.resolve(dir));
+  if (rel.startsWith("..") || path.isAbsolute(rel)) return /onedrive|dropbox|icloud|google ?drive/iu.test(dir);
+  const parts = rel.split(path.sep);
+  const top = parts[0] ?? "";
+  if (/^(documents|desktop)$/iu.test(top)) return true;
+  if (parts.some((p) => /^(onedrive.*|dropbox.*|icloud drive.*|google ?drive.*|mobile documents|cloudstorage)$/iu.test(p))) return true;
+  return false;
+}
+
 export interface WorkspaceGuard {
   home: string;
   /** Folders the workspace may never be inside (the app bundle). */

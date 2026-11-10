@@ -1,4 +1,4 @@
-import { activitySummary } from "../../app/chat.js";
+import { activitySummary } from "../../app/activitySummary.js";
 import { parseMarkdown, type Inline } from "../../app/markdown.js";
 import type { AgentChoice, ChangedFile, ChatChange, ChatMessage, ChatPart, ChatState, FigmakeApi, SessionState } from "../contracts.js";
 import { diffPanel } from "./diff.js";
@@ -193,13 +193,20 @@ export function createChatPanel(host: ChatHost): ChatPanel {
 
   function actGroup(m: ChatMessage, i: number, items: Extract<ChatPart, { type: "activity" }>["items"]): HTMLElement {
     const key = `${m.id}:${i}`;
-    const open = openActs.has(key);
+    // While the AI is still working, its newest group is open and read-only so progress is always visible.
+    const livePart = m.status === "streaming" && m.parts.reduce((last, p, n) => (p.type === "activity" ? n : last), -1) === i;
+    const open = livePart || openActs.has(key);
+    const icn = (kind: string): ReturnType<typeof icon> => icon(kind === "look" ? "search" : kind === "edit" ? "pencil" : kind === "add" ? "plus" : kind === "check" ? "check" : "sparkle", true);
+    if (livePart) {
+      const shown = items.slice(-LIVE_ITEMS);
+      return h("div", { class: "acts open lv-acts" }, h("div", { class: "lv-acts-h" }, activitySummary(items)), h("ul", { class: "acts-list lv-acts-list", "aria-label": "What the AI is doing" }, ...shown.map((it) => h("li", { class: it.kind }, icn(it.kind), it.label))));
+    }
     const toggle = h("button", { type: "button", class: "acts-t", "data-fk": `act-${key}`, "aria-expanded": String(open), onclick: () => {
       if (openActs.has(key)) openActs.delete(key);
       else openActs.add(key);
       draw();
     } }, icon("chev-r", true), h("span", { class: "acts-l" }, activitySummary(items)));
-    const list = open ? h("ul", { class: "acts-list" }, ...items.map((it) => h("li", { class: it.kind }, icon(it.kind === "look" ? "search" : it.kind === "edit" ? "pencil" : it.kind === "add" ? "plus" : it.kind === "check" ? "check" : "sparkle", true), it.label))) : null;
+    const list = open ? h("ul", { class: "acts-list" }, ...items.map((it) => h("li", { class: it.kind }, icn(it.kind), it.label))) : null;
     return h("div", { class: `acts${open ? " open" : ""}` }, toggle, list);
   }
 
@@ -266,14 +273,49 @@ export function createChatPanel(host: ChatHost): ChatPanel {
     const opens = [...openActs].filter((k) => k.startsWith(`${m.id}:`)).join(",");
     const c = m.change;
     const dv = c ? `${openDiffs.has(c.turnId)}|${changeIndex(c)}|${diffs.get(diffKey(c)) === "loading" ? "loading" : Array.isArray(diffs.get(diffKey(c))) ? "d" : "none"}|${sess?.phase === "ready"}|${sess?.changeIds.length ?? 0}` : "";
-    return `${JSON.stringify(m)}#${opens}#${dv}#${isLast && sess?.phase === "error"}`;
+    // The live line, plan and clock are drawn by the working row, so they never redraw the message.
+    const stable = JSON.stringify(m, (k, v: unknown) => (k === "now" || k === "plan" || k === "startedAt" ? undefined : v));
+    return `${stable}#${opens}#${dv}#${isLast && sess?.phase === "error"}`;
   }
 
   // ---- working row, empty state ----
+  const LIVE_ITEMS = 8;
+
+  /** "12s", "1m 05s". */
+  function elapsed(since: number): string {
+    const sec = Math.max(0, Math.floor((Date.now() - since) / 1000));
+    return sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m ${String(sec % 60).padStart(2, "0")}s`;
+  }
+
+  let lvTimer: number | null = null;
+  function syncTimer(): void {
+    const tick = (): void => {
+      for (const t of Array.from(thread.querySelectorAll<HTMLElement>(".lv-time[data-since]"))) t.textContent = elapsed(Number(t.getAttribute("data-since")));
+    };
+    if (chat.active && lvTimer === null) lvTimer = window.setInterval(tick, 1000);
+    else if (!chat.active && lvTimer !== null) {
+      window.clearInterval(lvTimer);
+      lvTimer = null;
+    }
+    tick();
+  }
+
   function workingRow(): HTMLElement {
     const s = sess;
-    const label = s?.phase === "preparing" ? `Getting ${s.agent ? AGENTS[s.agent].name : "your AI helper"} ready` : "Working";
-    return h("div", { class: "msg assistant working", role: "status", "data-id": "working" }, h("span", { class: "av", "aria-hidden": "true" }, icon("mark")), h("div", { class: "mbody wrow" }, h("span", { class: "dots", "aria-hidden": "true" }, h("i"), h("i"), h("i")), h("span", { class: "wl" }, label), h("button", { type: "button", class: "plain quiet sm", onclick: () => void api.cancel() }, icon("stop", true), "Stop")));
+    const last = chat.messages.at(-1);
+    const live = last?.role === "assistant" && last.status === "streaming" ? last : null;
+    const label = s?.phase === "preparing" ? `Getting ${s.agent ? AGENTS[s.agent].name : "your AI helper"} ready` : (live?.now ?? "Working");
+    const plan = live?.plan ?? [];
+    const steps = plan.length
+      ? h("ul", { class: "lv-plan", "aria-label": "Steps" }, ...plan.map((p) => h("li", { class: `lv-step ${p.state}` }, p.state === "done" ? icon("check-b", true) : h("span", { class: "lv-mark", "aria-hidden": "true" }), h("span", { class: "sr-only" }, p.state === "done" ? "Done: " : p.state === "active" ? "In progress: " : "To do: "), h("span", { class: "lv-step-t" }, p.text))))
+      : null;
+    const time = live?.startedAt ? h("span", { class: "lv-time", "data-since": String(live.startedAt) }, elapsed(live.startedAt)) : null;
+    return h(
+      "div",
+      { class: "msg assistant working", role: "status", "data-id": "working" },
+      h("span", { class: "av", "aria-hidden": "true" }, icon("mark")),
+      h("div", { class: "mbody lv-wrap" }, h("div", { class: "lv-main" }, h("span", { class: "dots", "aria-hidden": "true" }, h("i"), h("i"), h("i")), h("span", { class: "lv-now" }, label), time, h("button", { type: "button", class: "plain quiet sm", onclick: () => void api.cancel() }, icon("stop", true), "Stop")), steps),
+    );
   }
 
   function emptyState(): HTMLElement {
@@ -326,6 +368,7 @@ export function createChatPanel(host: ChatHost): ChatPanel {
     lastCount = chat.messages.length;
     scrollToEnd();
     syncComposer();
+    syncTimer();
   }
 
   return {

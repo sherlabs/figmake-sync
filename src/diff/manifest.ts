@@ -503,6 +503,13 @@ function extractRenamePairs(
   };
 }
 
+/** Drops exact paths from a manifest. Used on BOTH the baseline and the local side so an ignored file is never seen as added, changed or deleted. */
+export function excludePaths(manifest: SnapshotManifest, paths: readonly string[]): SnapshotManifest {
+  if (paths.length === 0) return manifest;
+  const skip = new Set(paths.map((p) => pathKey(p)));
+  return { ...manifest, files: manifest.files.filter((entry) => !skip.has(pathKey(entry.path))) };
+}
+
 export function diffManifests(
   base: SnapshotManifest,
   current: SnapshotManifest,

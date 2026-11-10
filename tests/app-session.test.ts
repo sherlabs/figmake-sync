@@ -460,15 +460,16 @@ describe("session: workspace", () => {
     expect(again.state.workspaceError).toBe("That folder can't be used, so the default one is in use.");
   });
 
-  it("changing it affects new projects only", async () => {
+  it("changing it moves existing projects there and new ones are created there", async () => {
     const r = await rig();
     await r.session.openProject(LINK);
     const elsewhere = path.join(path.dirname(r.workspace), "Designs");
     (r.deps.chooseFolder as ReturnType<typeof vi.fn>).mockResolvedValueOnce(elsewhere);
     await r.session.chooseWorkspace();
     expect(r.session.state).toMatchObject({ workspace: "Designs" });
-    await r.session.openProject(LINK);
-    expect(await fs.pathExists(path.join(elsewhere, "checkout-flow"))).toBe(false);
+    expect(await fs.pathExists(path.join(elsewhere, "checkout-flow", ".figmake-sync"))).toBe(true);
+    expect(await fs.pathExists(r.project)).toBe(false);
+    expect((await r.store.load()).projects[Object.keys((await r.store.load()).projects)[0]!]).toBe(path.join(elsewhere, "checkout-flow"));
     await r.session.openProject("https://www.figma.com/make/Zzz999/Brand-Site");
     expect(await fs.pathExists(path.join(elsewhere, "brand-site", ".figmake-sync"))).toBe(true);
   });

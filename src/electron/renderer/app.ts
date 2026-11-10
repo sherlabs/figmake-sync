@@ -1,8 +1,10 @@
 import type { AgentChoice, ChatState, Phase, ProjectStatus, SessionState } from "../contracts.js";
 import type { UpdateState } from "../../updater/contracts.js";
+import { createBrowserBar } from "./browserBar.js";
 import { createChatPanel } from "./chat.js";
 import { createFilesPanel } from "./files.js";
 import { createOutputPanel } from "./outputTab.js";
+import { createIgnoredList, createReview, filesNotSentText } from "./review.js";
 import { ago, h, icon, nodes, plural, type Child } from "./dom.js";
 import { copyButton, formatElapsed, logView, slowHints, tailView, type LogView, type TailView } from "./output.js";
 
@@ -23,7 +25,7 @@ const DOT: Record<ProjectStatus, string> = { synced: "ok", changes: "chg", atten
 const BUSY: readonly Phase[] = ["connecting", "preparing", "working", "sending"];
 const STEPS = ["Getting your project", "Setting up", "Starting preview", "Ready"];
 
-type UserSheet = { kind: "add" } | { kind: "settings" } | { kind: "remove"; key: string } | { kind: "undo"; index: number } | { kind: "confirm"; action: "start-over" | "reset-app" };
+type UserSheet = { kind: "review" } | { kind: "ignored" } | { kind: "add" } | { kind: "settings" } | { kind: "remove"; key: string } | { kind: "undo"; index: number } | { kind: "confirm"; action: "start-over" | "reset-app" };
 
 let state: SessionState | null = null;
 let updateReady = false;
@@ -54,7 +56,7 @@ const side = h("aside", { class: "side", "aria-label": "Projects" }, h("div", { 
 const title = h("h1", {}, "figmake-sync");
 const chip = h("span", { class: "chip status", role: "status" });
 const updateBtn = h("button", { type: "button", class: "plain update", hidden: true, onclick: () => void api.installUpdate() }, icon("refresh", true), "Restart to update");
-const sendBtn = h("button", { type: "button", class: "btn primary send", "aria-keyshortcuts": "", onclick: () => void api.send() });
+const sendBtn = h("button", { type: "button", class: "btn primary send", "aria-keyshortcuts": "", onclick: () => openSheet({ kind: "review" }) });
 const gearBtn = h("button", { type: "button", class: "btn icon gear", "aria-label": "Settings", title: `Settings (${MOD},)`, onclick: () => openSheet({ kind: "settings" }) }, icon("gear"));
 const chatBtn = h("button", { type: "button", class: "btn icon chat-toggle", "aria-label": "Side panel", "aria-pressed": "true", "aria-keyshortcuts": "Meta+J Control+J", title: `Side panel (${MOD}J)`, onclick: () => setChatOpen(!chatOpen) }, icon("panel"), h("span", { class: "pip", hidden: true }));
 const toolbar = h("header", { class: "toolbar" }, h("div", { class: "ttl row-ttl" }, title, chip), h("div", { class: "tright" }, updateBtn, chatBtn, sendBtn, gearBtn));
@@ -80,7 +82,8 @@ welcomeInput.addEventListener("input", () => (welcomeOpen.disabled = !welcomeInp
 const prep = h("div", { class: "card prep", role: "status" });
 const calm = h("div", { class: "calm" });
 const slot = h("div", { class: "slot" });
-const stage = h("main", { class: "stage", id: "pane" }, slot, welcome, prep, calm);
+const browserBar = createBrowserBar(api, slot);
+const stage = h("main", { class: "stage", id: "pane" }, browserBar.shell, welcome, prep, calm);
 
 const statusText = h("span", { role: "status" });
 const statusBar = h("footer", { class: "status" }, statusText, h("span", { class: "sp" }), h("span", {}, h("span", { class: "kbd" }, `${MOD}J`), " Panel"), h("span", {}, h("span", { class: "kbd" }, `${MOD}K`), " Commands"));
@@ -348,7 +351,7 @@ function renderStage(s: SessionState): void {
   welcome.hidden = !start;
   prep.hidden = !preparing;
   calm.hidden = !calmIdle;
-  slot.hidden = !s.previewUrl;
+  browserBar.shell.hidden = !s.previewUrl;
   if (preparing) {
     if (!prepSince) prepSince = Date.now();
     renderPrep(s);
@@ -488,7 +491,8 @@ function buildSheet(kind: string, s: SessionState): HTMLDialogElement {
             "div",
             { class: "setrows" },
             h("div", { class: "row" }, h("div", { class: "l" }, h("b", {}, "AI helper"), h("span", { class: s.agent && !s.agentConnected ? "bad" : "" }, aiStatus)), h("div", { class: "r" }, ...aiButtons)),
-            h("div", { class: "row" }, h("div", { class: "l" }, h("b", {}, "Projects folder"), h("span", { class: s.workspaceError ? "bad" : "" }, s.workspaceError ?? s.workspace)), h("div", { class: "r" }, btn("Change…", () => void api.chooseWorkspace()))),
+            h("div", { class: "row" }, h("div", { class: "l" }, h("b", {}, "Projects folder"), h("span", { class: s.workspaceError ? "bad" : "" }, s.workspaceError ?? (s.workspaceSynced ? `${s.workspacePath ?? s.workspace} – synced by cloud storage, which can make projects slow. Pick a folder outside Documents/Desktop/iCloud/OneDrive.` : s.workspacePath ?? s.workspace))), h("div", { class: "r" }, btn("Move…", () => void api.chooseWorkspace()))),
+            filesNotSentRow(),
             h("div", { class: "row" }, h("div", { class: "l" }, h("b", {}, "Figma account"), h("span", {}, "Sign out on this Mac")), h("div", { class: "r" }, btn("Sign out of Figma", () => { void api.signOutFigma(); toast("Signed out of Figma"); }))),
             h("div", { class: "row" }, h("div", { class: "l" }, h("b", {}, "Automatic updates"), h("span", {}, "Install new versions quietly")), h("div", { class: "r" }, updates)),
             updateRow,
@@ -505,6 +509,17 @@ function buildSheet(kind: string, s: SessionState): HTMLDialogElement {
         acts: [h("button", { type: "button", class: "plain", onclick: () => { closeSheet(); reportProblem(); } }, "Report a problem"), btn("Done", closeSheet, "primary")],
       });
     }
+    case "review": {
+      const view = createReview(api);
+      const go = btn("Send", () => { closeSheet(); void api.send(); }, "primary", { disabled: true });
+      view.onCount((n) => { go.textContent = `Send ${plural(n, "file")}`; go.disabled = n === 0; });
+      sheetCleanup = () => view.dispose();
+      sheetClass = "rv-sheet";
+      return sheetFrame({ label: "Review before sending", glyph: icon("up"), tone: "accent", title: "Send to Figma", sub: "Choose the files to send.", body: [view.body], acts: [btn("Cancel", closeSheet), go] });
+    }
+    case "ignored":
+      sheetClass = "rv-sheet";
+      return sheetFrame({ label: "Files not sent", glyph: icon("doc"), title: "Files not sent", body: [createIgnoredList(api)], acts: [btn("Done", closeSheet, "primary")] });
     case "remove": {
       const p = s.projects.find((x) => x.key === (userSheet as { key: string }).key);
       const key = p?.key ?? "";
@@ -531,6 +546,16 @@ function buildSheet(kind: string, s: SessionState): HTMLDialogElement {
       return sheetFrame({ label: "Undo", glyph: icon("undo"), tone: "warn", title: "Undo this change?", sub: `“${s.changes[index] ?? ""}”`, body: [h("p", { class: "lead" }, later > 0 ? `This also undoes the ${plural(later, "change")} you made after it.` : "Your files go back to how they were.")], acts: [btn("Cancel", closeSheet), btn("Undo", () => { closeSheet(); void api.undo(index); }, "primary")] });
     }
   }
+}
+
+let sheetCleanup: (() => void) | null = null;
+let sheetClass = "";
+
+/** Settings row: how many files are held back, and a way to see them. */
+function filesNotSentRow(): HTMLElement {
+  const count = h("span", {}, "None");
+  void api.ignoredFiles().then((list) => { count.textContent = filesNotSentText(list.length); }).catch(() => undefined);
+  return h("div", { class: "row" }, h("div", { class: "l" }, h("b", {}, "Files not sent"), count), h("div", { class: "r" }, btn("View…", () => openSheet({ kind: "ignored" }))));
 }
 
 let shownSheet = "";
@@ -565,8 +590,12 @@ function renderSheets(s: SessionState): void {
     previous.close();
     previous.remove();
   }
+  sheetCleanup?.();
+  sheetCleanup = null;
   if (kind) {
+    sheetClass = "";
     const dlg = buildSheet(kind, s);
+    if (sheetClass) dlg.classList.add(sheetClass);
     const isPhase = phaseSheet(s) !== null;
     dlg.addEventListener("cancel", (e) => {
       e.preventDefault();
@@ -588,7 +617,7 @@ interface Cmd { label: string; glyph: string; keys?: string[]; off?: boolean; gr
 function commands(s: SessionState): Cmd[] {
   const list: Cmd[] = [
     { group: "Do", label: "Open project…", glyph: "plus", keys: [`${MOD}N`], run: () => openSheet({ kind: "add" }) },
-    { group: "Do", label: "Send to Figma", glyph: "up", off: !(s.phase === "ready" && s.canSend), run: () => void api.send() },
+    { group: "Do", label: "Send to Figma", glyph: "up", off: !(s.phase === "ready" && s.canSend), run: () => openSheet({ kind: "review" }) },
     { group: "Do", label: "New chat", glyph: "compose", off: !(s.phase === "ready" && chatState.messages.length > 0), run: () => void api.newChat() },
     { group: "Do", label: "Toggle side panel", glyph: "panel", keys: [`${MOD}J`], off: !hasChat(s), run: () => setChatOpen(!chatOpen) },
     { group: "Do", label: "Show project files", glyph: "folder", off: !hasChat(s), run: () => { chatOpen = true; store.set("chat.open", "1"); setTab("files", true); layoutChat(); } },

@@ -10,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
    stubbed window.figmake and measures the cards. Skipped when no browser is installed. */
 
 const SRC = path.join(process.cwd(), "src");
-const TYPES: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png" };
+const TYPES: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png", ".ttf": "font/ttf", ".json": "application/json" };
 
 let server: http.Server | null = null;
 let browser: Browser | null = null;
@@ -18,8 +18,9 @@ let base = "";
 
 function serve(req: http.IncomingMessage, res: http.ServerResponse): void {
   const url = decodeURIComponent((req.url ?? "/").split("?")[0] ?? "/");
-  const file = path.resolve(SRC, `.${url}`);
-  if (!file.startsWith(SRC + path.sep)) return void res.writeHead(403).end();
+  const vendor = "/electron/renderer/vendor/monaco/";
+  const file = url.startsWith(vendor) ? path.resolve(process.cwd(), "node_modules", "monaco-editor", "min", url.slice(vendor.length)) : path.resolve(SRC, `.${url}`);
+  if (!file.startsWith(SRC + path.sep) && !(url.startsWith(vendor) && file.startsWith(path.join(process.cwd(), "node_modules", "monaco-editor") + path.sep))) return void res.writeHead(403).end();
   const ts_ = file.replace(/\.js$/u, ".ts");
   if (file.endsWith(".js") && !fs.existsSync(file) && fs.existsSync(ts_)) {
     const out = ts.transpileModule(fs.readFileSync(ts_, "utf8"), { compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 } });
@@ -76,16 +77,29 @@ async function open(state: object, size: { width: number; height: number }, sche
       state: () => Promise.resolve(s),
       onState: (cb: (st: object) => void) => { (window as unknown as { __push: unknown }).__push = cb; return () => undefined; },
       chat: () => Promise.resolve({ projectKey: null, messages: [], active: false, fresh: false }),
-      onChat: () => () => undefined,
+      onChat: (cb: (c: object) => void) => { (window as unknown as { __pushChat: unknown }).__pushChat = cb; return () => undefined; },
       onCommand: () => () => undefined,
       onUpdateState: () => () => undefined,
       updateState: () => Promise.resolve(a.upd),
       checkForUpdates: () => { (window as unknown as { __checks: number }).__checks = ((window as unknown as { __checks?: number }).__checks ?? 0) + 1; return Promise.resolve({ ...a.upd, phase: "idle", upToDate: true }); },
       previewRect: () => undefined,
+      browser: () => Promise.resolve((window as unknown as { __browser?: object }).__browser ?? { tabs: [], activeId: 1 }),
+      onBrowser: (cb: (st: object) => void) => { (window as unknown as { __pushBrowser: unknown }).__pushBrowser = cb; return () => undefined; },
+      browserGo: (addr: string) => { (window as unknown as { __went: string[] }).__went = [...((window as unknown as { __went?: string[] }).__went ?? []), addr]; return Promise.resolve(/^(localhost|\d)/u.test(addr)); },
+      browserDo: (a: string) => { (window as unknown as { __did: string[] }).__did = [...((window as unknown as { __did?: string[] }).__did ?? []), a]; return Promise.resolve(); },
+      browserNewTab: noop, browserSwitch: noop, browserClose: noop,
       describeChange: () => Promise.resolve([]),
       listFolder: (p: string) => Promise.resolve({ path: p, entries: a.tree[p] ?? [], truncated: false }),
       readFile: (p: string) => Promise.resolve({ kind: "text", path: p, text: a.cart, lines: a.cart.split("\n").length - 1 }),
       changedFiles: () => Promise.resolve(["src/pages/Cart.tsx"]),
+      reviewChanges: () => Promise.resolve([
+        { path: "src/components/Banner.tsx", status: "added", added: 12, removed: 0, ignored: false },
+        { path: "src/pages/Cart.tsx", status: "modified", added: 3, removed: 1, ignored: false },
+        { path: "public/old-logo.svg", status: "deleted", added: 0, removed: 4, ignored: true },
+      ]),
+      reviewDiff: (p: string) => Promise.resolve(p.endsWith(".svg") ? { kind: "binary" } : { kind: "text", before: "const a = 1;\nconst b = 2;\n", after: "const a = 1;\nconst b = 3;\nconst c = 4;\n" }),
+      setFileIgnored: (p: string, on: boolean) => { const w = window as unknown as { __ign?: [string, boolean][] }; w.__ign = [...(w.__ign ?? []), [p, on]]; return Promise.resolve(on ? [p] : []); },
+      ignoredFiles: () => Promise.resolve(["public/old-logo.svg"]),
       stopProcess: noop, restartProcess: noop,
       cleanup: (a: string) => { (window as unknown as { __cleanup: string[] }).__cleanup = [...((window as unknown as { __cleanup?: string[] }).__cleanup ?? []), a]; return Promise.resolve(); },
       newChat: noop, copyText: noop, openProject: noop, ask: noop, undo: noop, send: noop, cancel: noop, retry: noop, setAgent: noop,
@@ -330,14 +344,14 @@ describe("renderer layout", () => {
 
         // Read-only viewer with line numbers; long lines scroll inside it.
         await page.click('.trow.file:has-text("Cart.tsx")');
-        await page.waitForSelector(".fview .code .src");
-        expect(await page.locator(".fview .code .ln").innerText()).toMatch(/^1\n2\n3/u);
-        expect(await page.locator(".fview textarea, .fview [contenteditable]").count()).toBe(0);
+        await page.waitForSelector(".fview .mv-host .monaco-editor", { timeout: 15_000 });
+        expect(await page.locator(".fview .mv-host .monaco-editor .line-numbers").first().innerText()).toBe("1");
+        expect(await page.locator(".fview textarea:not([readonly]), .fview [contenteditable=true]").count()).toBe(0);
         expect(await page.locator(".fview .ro").innerText()).toBe("Read-only");
         const rail = await rect(page, ".rail");
-        const code = await rect(page, ".fview .code");
+        const code = await rect(page, ".fview .mv-host");
         expect(code && rail && code.x + code.w).toBeLessThanOrEqual((rail as { x: number; w: number }).x + (rail as { w: number }).w + 1);
-        expect(await page.evaluate(() => { const c = document.querySelector(".fview .code") as HTMLElement; return c.scrollWidth > c.clientWidth; })).toBe(true);
+        expect(code && code.h).toBeGreaterThan(60);
 
         // Running section sits at the bottom of the panel with friendly rows and Stop / Restart.
         const rows = await page.locator(".running .rrow").allInnerTexts();
@@ -383,6 +397,46 @@ describe("renderer layout", () => {
     expect(await page.locator(".rail").isVisible()).toBe(true);
     await page.context().close();
   });
+
+  for (const scheme of ["light", "dark"] as const) {
+    it(`preview browser bar: tabs, address and controls fit, loading and failure states (${scheme})`, async (ctx) => {
+      if (!browser) return ctx.skip();
+      const page = await open(READY, { width: 900, height: 640 }, scheme);
+      const tab = (id: number, over: object = {}) => ({ id, title: "", url: "http://localhost:5173/", loading: false, canGoBack: false, canGoForward: false, failed: false, ...over });
+      await page.evaluate((st) => (window as unknown as { __pushBrowser: (s: object) => void }).__pushBrowser(st), { tabs: [tab(1, { title: "Checkout Flow", canGoBack: true }), tab(2, { url: "http://localhost:3000/a/very/long/path", loading: true })], activeId: 2 });
+      await page.waitForSelector(".pv-tab");
+      expect(await page.locator(".pv-tab").count()).toBe(2);
+      expect(await page.locator(".pv-tab .pv-close").count()).toBe(1);
+      expect(await page.locator(".pv-address").inputValue()).toBe("http://localhost:3000/a/very/long/path");
+      expect(await page.locator(".pv-btn[aria-label='Stop']").count()).toBe(1);
+      expect(await page.locator(".pv-progress.on").count()).toBe(1);
+      const bar = await rect(page, ".pv-bar");
+      const field = await rect(page, ".pv-field");
+      const slot = await rect(page, ".slot");
+      expect(bar && field && field.w).toBeGreaterThan(200);
+      expect(bar && slot && slot.y).toBeGreaterThanOrEqual((bar as { y: number; h: number }).y + (bar as { h: number }).h);
+      expect(await overflowX(page)).toBeLessThanOrEqual(0);
+
+      await page.locator(".pv-address").fill("example.com");
+      await page.keyboard.press("Enter");
+      await page.waitForSelector(".pv-note:not([hidden])");
+      expect(await page.locator(".pv-note").innerText()).toMatch(/this computer/u);
+      await page.locator(".pv-address").fill("localhost:4000");
+      await page.keyboard.press("Enter");
+      expect(await page.evaluate(() => (window as unknown as { __went: string[] }).__went)).toEqual(["example.com", "localhost:4000"]);
+      await page.locator(".pv-btn[aria-label='Stop']").click();
+      expect(await page.evaluate(() => (window as unknown as { __did: string[] }).__did)).toEqual(["stop"]);
+
+      await page.evaluate((st) => (window as unknown as { __pushBrowser: (s: object) => void }).__pushBrowser(st), { tabs: [tab(1, { failed: true })], activeId: 1 });
+      await page.waitForSelector(".pv-fail:not([hidden])");
+      const fail = await rect(page, ".pv-fail");
+      expect(fail && slot && Math.abs(fail.h - (slot as { h: number }).h)).toBeLessThan(2);
+      expect(await page.locator(".pv-fail").innerText()).toMatch(/can't be reached[\s\S]*localhost:5173[\s\S]*Retry/u);
+      await page.getByRole("button", { name: "Retry" }).click();
+      expect(await page.evaluate(() => (window as unknown as { __did: string[] }).__did)).toEqual(["stop", "retry"]);
+      await page.context().close();
+    });
+  }
 
   it("failed and stopped previews offer Restart or Start, and the buttons call the right process", async (ctx) => {
     if (!browser) return ctx.skip();
@@ -591,5 +645,103 @@ describe("renderer layout", () => {
         await page.context().close();
       }
     });
+  });
+  describe("live progress while the AI works", () => {
+    for (const size of [{ width: 1180, height: 760 }, { width: 900, height: 640 }]) {
+      for (const scheme of ["light", "dark"] as const) {
+        it(`working row shows the live line, clock, Stop and plan inside the panel (${size.width}px, ${scheme})`, async (ctx) => {
+          if (!browser) return ctx.skip();
+          const page = await open(READY, size, scheme);
+          const long = "Editing a-really-long-component-file-name-that-keeps-going-and-going-and-going-Header.tsx";
+          const chatState = {
+            projectKey: "a", active: true, fresh: false,
+            messages: [
+              { id: "u1", role: "user", at: "2026-01-01T00:00:00Z", text: "Make the header sticky", parts: [], status: "done" },
+              { id: "a1", role: "assistant", at: "2026-01-01T00:00:01Z", text: "", status: "streaming", now: long, startedAt: Date.now() - 75_000,
+                parts: [{ type: "activity", items: [{ kind: "look", label: "Looked at Button.tsx", file: "Button.tsx" }, { kind: "helper", label: "Helper: check the cart page" }, { kind: "edit", label: "Edited Header.tsx", file: "Header.tsx" }] }],
+                plan: [{ text: "Read the header", state: "done" }, { text: "Make it stick to the top of the page", state: "active" }, { text: "Check the app builds", state: "pending" }] },
+            ],
+          };
+          await page.evaluate((c) => (window as unknown as { __pushChat: (v: object) => void }).__pushChat(c), chatState);
+          await page.waitForSelector(".lv-now");
+          const panel = await rect(page, ".chat");
+          const now = await rect(page, ".lv-now");
+          const time = await rect(page, ".lv-time");
+          const stop = await rect(page, ".lv-main .plain");
+          const plan = await rect(page, ".lv-plan");
+          expect(await page.locator(".lv-time").innerText()).toMatch(/^1m \d\ds$/u);
+          expect(await page.locator(".lv-step").count()).toBe(3);
+          expect(await page.locator(".lv-acts-list li").count()).toBe(3);
+          for (const r of [now, time, stop, plan]) {
+            expect(r).not.toBeNull();
+            expect((r?.x ?? 0) + (r?.w ?? 0)).toBeLessThanOrEqual((panel?.x ?? 0) + (panel?.w ?? 0) + 0.5);
+          }
+          // Stop stays on the same row as the live line and the clock.
+          expect(Math.abs((stop?.y ?? 0) - (now?.y ?? 99))).toBeLessThan(20);
+          expect(await overflowX(page)).toBeLessThanOrEqual(0);
+          // Generic names are not used, and reduced motion stops the shimmer.
+          expect(await page.locator(".lv-now").evaluate((el) => getComputedStyle(el).animationName)).toBe("none");
+          // Done: collapses to the one-line summary with no live pieces.
+          await page.evaluate((c) => (window as unknown as { __pushChat: (v: object) => void }).__pushChat(c), { ...chatState, active: false, messages: chatState.messages.map((m) => (m.id === "a1" ? { ...m, status: "done", now: undefined, startedAt: undefined, plan: undefined } : m)) });
+          await page.waitForSelector(".acts-t");
+          expect(await page.locator(".lv-now, .lv-plan, .lv-time, .lv-acts").count()).toBe(0);
+          await page.context().close();
+        });
+      }
+    }
+  });
+
+  for (const scheme of ["light", "dark"] as const) {
+    it(`review sheet: files, checkboxes, Monaco diff (${scheme})`, async (ctx) => {
+      if (!browser) return ctx.skip();
+      const page = await open({ ...READY, canSend: true, changes: ["x"], changeFiles: [1], changeIds: ["1"] }, { width: 1180, height: 760 }, scheme);
+      const violations: string[] = [];
+      page.on("console", (m) => { if (/Content Security Policy|Refused to/u.test(m.text())) violations.push(m.text()); });
+      page.on("pageerror", (e) => violations.push(String(e)));
+      await page.click("button.send");
+      await page.waitForSelector("dialog.rv-sheet[open] .rv-row");
+      expect(await page.locator(".rv-row").count()).toBe(3);
+      expect(await page.locator(".rv-row .rv-badge").allInnerTexts()).toEqual(["Added", "Changed", "Removed"]);
+      expect(await page.locator(".rv-check:checked").count()).toBe(2);
+      expect(await page.locator("dialog.rv-sheet .acts .btn.primary").innerText()).toBe("Send 2 files");
+      const sheet = await rect(page, "dialog.rv-sheet");
+      expect(sheet && sheet.w).toBeGreaterThan(520);
+      expect(sheet && sheet.x + sheet.w).toBeLessThanOrEqual(1180);
+
+      await page.locator(".rv-check").nth(0).uncheck();
+      expect(await page.locator("dialog.rv-sheet .acts .btn.primary").innerText()).toBe("Send 1 file");
+      expect(await page.evaluate(() => (window as unknown as { __ign: unknown }).__ign)).toEqual([["src/components/Banner.tsx", true]]);
+
+      // Expanding a file draws a real Monaco diff editor, and the theme follows the system.
+      await page.locator(".rv-more").nth(1).click();
+      await page.waitForSelector(".rv-diff .monaco-diff-editor", { timeout: 15_000 });
+      expect(await page.locator(".rv-diff .monaco-editor").count()).toBeGreaterThan(0);
+      expect(await page.locator(".rv-diff .vs-dark").count() > 0).toBe(scheme === "dark");
+      const ed = await rect(page, ".rv-diff:not([hidden]) .rv-editor");
+      expect(ed && ed.h).toBeGreaterThan(200);
+      expect(ed && sheet && ed.x + ed.w <= sheet.x + sheet.w + 1).toBe(true);
+      await page.locator(".rv-mode").nth(1).click();
+      await page.waitForSelector(".rv-diff .monaco-diff-editor.side-by-side");
+
+      // A file that isn't text says so instead of showing an editor.
+      await page.locator(".rv-more").nth(2).click();
+      await page.waitForSelector('.rv-note:has-text("isn\'t text")');
+      expect(violations).toEqual([]);
+      expect(await overflowX(page)).toBeLessThanOrEqual(0);
+      await page.context().close();
+    });
+  }
+
+  it("settings: Files not sent opens a list with Send again", async (ctx) => {
+    if (!browser) return ctx.skip();
+    const page = await open(READY, { width: 1180, height: 760 }, "light");
+    await page.click("button.gear");
+    await page.waitForSelector('dialog.sheet[open] .row:has-text("Files not sent")');
+    await page.waitForSelector('.row:has-text("Files not sent") span:has-text("1 file")');
+    await page.click('.row:has-text("Files not sent") button');
+    await page.waitForSelector('dialog.rv-sheet[open] .rv-row:has-text("old-logo.svg")');
+    await page.click('button[aria-label="Send public/old-logo.svg again"]');
+    expect(await page.evaluate(() => (window as unknown as { __ign: unknown }).__ign)).toEqual([["public/old-logo.svg", false]]);
+    await page.context().close();
   });
 });

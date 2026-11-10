@@ -1,5 +1,6 @@
 import type { FileView, FigmakeApi, FolderListing, ProcessInfo, SessionState } from "../contracts.js";
 import { dataImage, h, icon, nodes, splitPath } from "./dom.js";
+import { createViewer, type EditorHandle } from "./monaco.js";
 import { copyButton, logView } from "./output.js";
 
 /* The Files tab: a read-only explorer of the open project, a viewer, and what is running.
@@ -38,6 +39,7 @@ export function createFilesPanel(host: FilesHost): FilesPanel {
   let changedDirs = new Set<string>();
   let current: string | null = null;
   let view: FileView | "loading" | null = null;
+  let editor: EditorHandle | null = null;
 
   const hideBtn = h("button", { type: "button", class: "btn icon quiet-icon", "aria-label": "Hide panel", title: `Hide panel (${host.mod}J)`, onclick: () => host.collapse() }, icon("panel"));
   const head = h("header", { class: "files-h" }, hideBtn);
@@ -165,6 +167,8 @@ export function createFilesPanel(host: FilesHost): FilesPanel {
   // ---- viewer ----
   function drawViewer(): void {
     viewer.hidden = current === null;
+    editor?.dispose();
+    editor = null;
     if (current === null) return viewer.replaceChildren();
     const { dir, name } = splitPath(current);
     const close = h("button", { type: "button", class: "btn icon quiet-icon", "aria-label": "Close file", title: "Close file", onclick: () => { current = null; view = null; drawViewer(); drawTree(); } }, icon("x"));
@@ -172,8 +176,8 @@ export function createFilesPanel(host: FilesHost): FilesPanel {
     let body: HTMLElement;
     if (view === "loading" || view === null) body = h("p", { class: "fempty" }, "Loading…");
     else if (view.kind === "text") {
-      const numbers = Array.from({ length: Math.max(1, view.lines) }, (_, i) => String(i + 1)).join("\n");
-      body = h("div", { class: "code", tabindex: "0", role: "region", "aria-label": `Contents of ${name}` }, h("pre", { class: "ln", "aria-hidden": "true" }, numbers), h("pre", { class: "src" }, h("code", {}, view.text)));
+      body = h("div", { class: "mv-host", role: "region", "aria-label": `Contents of ${name}` });
+      editor = createViewer(body, { path: view.path, text: view.text });
     } else if (view.kind === "image") body = h("div", { class: "imgview" }, dataImage(view.dataUrl, `Preview of ${name}`));
     else if (view.kind === "large") body = h("p", { class: "fempty" }, `This file is too large to show here (${sizeText(view.size)}).`);
     else if (view.kind === "binary") body = h("p", { class: "fempty" }, "This kind of file can't be shown here.");

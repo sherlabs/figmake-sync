@@ -9,7 +9,7 @@ import { capMessages } from "./chat.js";
 import { redactSecrets } from "./report.js";
 
 const activity = z.object({
-  kind: z.enum(["look", "edit", "add", "check", "other"]),
+  kind: z.enum(["look", "edit", "add", "check", "helper", "other"]),
   label: z.string().max(300),
   file: z.string().max(300).optional(),
 });

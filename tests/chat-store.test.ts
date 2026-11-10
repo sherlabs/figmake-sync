@@ -4,7 +4,7 @@ import path from "node:path";
 import fs from "fs-extra";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { MAX_MESSAGES, emptyAssistant, userMessage } from "../src/app/chat.js";
+import { MAX_MESSAGES, emptyAssistant, finishLive, userMessage } from "../src/app/chat.js";
 import { ChatStore, chatFileName } from "../src/app/chatStore.js";
 import type { ChatMessage } from "../src/electron/contracts.js";
 
@@ -17,7 +17,7 @@ async function tmp(): Promise<{ store: ChatStore; dir: string }> {
   dirs.push(dir);
   return { store: new ChatStore(dir), dir };
 }
-const done = (text: string): ChatMessage => ({ ...emptyAssistant(), parts: [{ type: "text", text }], status: "done" });
+const done = (text: string): ChatMessage => finishLive({ ...emptyAssistant(), parts: [{ type: "text", text }], status: "done" });
 
 describe("chat store", () => {
   it("persists and restores a transcript", async () => {

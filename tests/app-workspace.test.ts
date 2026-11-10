@@ -101,3 +101,17 @@ describe("validateWorkspace", () => {
     await fs.chmod(locked, 0o700);
   });
 });
+
+describe("isCloudSynced", () => {
+  it("flags Documents, Desktop and cloud folders but not a plain home folder", async () => {
+    const { isCloudSynced } = await import("../src/app/workspace.js");
+    const home = "/Users/a";
+    expect(isCloudSynced("/Users/a/Documents/figmake-sync", home)).toBe(true);
+    expect(isCloudSynced("/Users/a/Desktop/x", home)).toBe(true);
+    expect(isCloudSynced("/Users/a/Library/Mobile Documents/com~apple~CloudDocs/x", home)).toBe(true);
+    expect(isCloudSynced("/Users/a/OneDrive - Corp/x", home)).toBe(true);
+    expect(isCloudSynced("/Users/a/Dropbox/x", home)).toBe(true);
+    expect(isCloudSynced("/Users/a/figmake-sync", home)).toBe(false);
+    expect(isCloudSynced("/Volumes/Work/figmake-sync", home)).toBe(false);
+  });
+});

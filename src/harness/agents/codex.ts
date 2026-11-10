@@ -4,6 +4,7 @@ import type {
   AgentEvent,
   AgentInvocation,
   AgentInvocationInput,
+  PlanStep,
 } from "./types.js";
 
 /**
@@ -15,6 +16,23 @@ import type {
  * stdin; `codex exec resume <id>`) and event parsing follows the documented
  * JSONL item events. Verify against a real install before relying on it.
  */
+/** `todo_list` item -> plan steps. The first unfinished step is the active one. */
+function todoSteps(items: unknown): PlanStep[] {
+  if (!Array.isArray(items)) return [];
+  const steps: PlanStep[] = [];
+  let activeSet = false;
+  for (const raw of items.slice(0, 40)) {
+    const entry = (raw ?? {}) as Record<string, unknown>;
+    const text = typeof entry["text"] === "string" ? entry["text"].trim() : "";
+    if (!text) continue;
+    const done = entry["completed"] === true;
+    const state = done ? "done" : activeSet ? "pending" : "active";
+    if (!done) activeSet = true;
+    steps.push({ text: text.slice(0, 160), state });
+  }
+  return steps;
+}
+
 export function createCodexAdapter(): AgentAdapter {
   return {
     id: "codex",
@@ -68,10 +86,24 @@ export function createCodexAdapter(): AgentAdapter {
         if (type === "thread.started" && typeof msg["thread_id"] === "string") {
           sessionId = msg["thread_id"];
           events.push({ type: "session", sessionId });
-        } else if (type === "item.completed" || type === "item.started") {
+        } else if (type === "turn.started") {
+          events.push({ type: "thinking" });
+        } else if (type === "item.completed" || type === "item.started" || type === "item.updated") {
           const item = (msg["item"] ?? {}) as Record<string, unknown>;
           const itemType = item["type"];
-          if (type === "item.completed" && itemType === "agent_message" && typeof item["text"] === "string") {
+          if (itemType === "todo_list") {
+            const steps = todoSteps(item["items"]);
+            if (steps.length > 0) events.push({ type: "plan", steps });
+          } else if (itemType === "reasoning") {
+            events.push({ type: "thinking" });
+          } else if (type === "item.started" && itemType === "mcp_tool_call") {
+            const server = typeof item["server"] === "string" ? item["server"] : "server";
+            const name = typeof item["tool"] === "string" ? item["tool"] : "tool";
+            events.push({ type: "tool", name: `mcp__${server}__${name}`, summary: `mcp ${server} ${name}`.slice(0, 200) });
+          } else if (type === "item.started" && itemType === "web_search") {
+            const query = typeof item["query"] === "string" ? item["query"] : "";
+            events.push({ type: "tool", name: "WebSearch", summary: `WebSearch ${query}`.slice(0, 200) });
+          } else if (type === "item.completed" && itemType === "agent_message" && typeof item["text"] === "string") {
             lastMessage = item["text"];
             events.push({ type: "text", text: item["text"] });
           } else if (type === "item.started" && itemType === "command_execution") {

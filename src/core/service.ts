@@ -1,5 +1,6 @@
 import path from "node:path";
 
+import { diffLines } from "diff";
 import fs from "fs-extra";
 import { spawn } from "node:child_process";
 
@@ -10,6 +11,7 @@ import {
   buildThreeWayMergeFoundation,
   createManifest,
   diffManifests,
+  excludePaths,
   hasManifestChanges,
   summarizeManifestDiff,
   type ManifestDiff,
@@ -46,6 +48,29 @@ export interface InitResult {
   configPath: string;
   stateDir: string;
 }
+
+const MAX_DIFF_BYTES = 512 * 1024;
+
+export interface ReviewFile {
+  path: string;
+  /** Old name, for a rename. */
+  from?: string;
+  status: "added" | "modified" | "deleted" | "renamed";
+  added: number;
+  removed: number;
+  /** The user chose not to send this file. */
+  ignored: boolean;
+}
+
+export interface ReviewResult {
+  files: ReviewFile[];
+}
+
+export type FileDiffResult =
+  | { kind: "text"; before: string; after: string }
+  | { kind: "binary" }
+  | { kind: "large" }
+  | { kind: "missing" };
 
 export interface StatusResult {
   hasBaseline: boolean;
@@ -355,7 +380,10 @@ export class FigmakeSyncService {
     const localManifest = await createManifest(resolvedRootDir, {
       ignore: config.sync.ignore,
     });
-    const diff = diffManifests(baselineManifest, localManifest);
+    const diff = diffManifests(
+      excludePaths(baselineManifest, config.sync.userIgnore),
+      excludePaths(localManifest, config.sync.userIgnore),
+    );
 
     return {
       rootDir: resolvedRootDir,
@@ -389,7 +417,10 @@ export class FigmakeSyncService {
       const localManifest = await createManifest(context.rootDir, {
         ignore: context.config.sync.ignore,
       });
-      const diff = diffManifests(baselineManifest, localManifest);
+      const diff = diffManifests(
+        excludePaths(baselineManifest, context.config.sync.userIgnore),
+        excludePaths(localManifest, context.config.sync.userIgnore),
+      );
 
       return {
         hasBaseline: true,
@@ -457,10 +488,19 @@ export class FigmakeSyncService {
     try {
       throwIfAborted(signal);
 
-      const localManifest = await createManifest(context.rootDir, {
-        ignore: context.config.sync.ignore,
-      });
-      const diff = diffManifests(baselineManifest, localManifest);
+      // User-ignored files leave BOTH sides, so they are never sent and never look deleted.
+      // `baselineManifest` stays whole: advanceBaseline keeps their baseline entries.
+      const userIgnore = context.config.sync.userIgnore;
+      const localManifest = excludePaths(
+        await createManifest(context.rootDir, {
+          ignore: context.config.sync.ignore,
+        }),
+        userIgnore,
+      );
+      const diff = diffManifests(
+        excludePaths(baselineManifest, userIgnore),
+        localManifest,
+      );
       const summary = summarizeManifestDiff(diff);
 
       if (summary.total === 0) {
@@ -854,6 +894,161 @@ export class FigmakeSyncService {
       await this.cleanupTransient(context, remoteTempDir);
       await flushLogger(context.logger);
     }
+  }
+
+  /** Everything a push would look at: what would be sent, plus changed files the user chose not to send. */
+  async reviewChanges(options: CommandRuntimeOptions = {}): Promise<ReviewResult> {
+    const context = await this.loadProjectContext("review", options);
+
+    try {
+      const { files } = await this.reviewDiff(context);
+
+      return { files: files.map((file) => file.item) };
+    } finally {
+      await flushLogger(context.logger);
+    }
+  }
+
+  /** Before (last pull) and after (now) text of one changed file. Text only, size-capped. */
+  async fileDiff(options: CommandRuntimeOptions & { path: string }): Promise<FileDiffResult> {
+    const context = await this.loadProjectContext("file-diff", options);
+
+    try {
+      const found = (await this.reviewDiff(context)).files.find((file) => file.item.path === options.path);
+
+      if (!found) {
+        return { kind: "missing" };
+      }
+
+      if (found.binary) {
+        return { kind: "binary" };
+      }
+
+      const read = async (base: string, relativePath: string | undefined): Promise<{ text: string } | "large"> => {
+        if (relativePath === undefined) return { text: "" };
+        const absolute = resolveRelativePath(base, relativePath);
+        const stat = await fs.stat(absolute).catch(() => null);
+        if (!stat) return { text: "" };
+        if (stat.size > MAX_DIFF_BYTES) return "large";
+        return { text: await fs.readFile(absolute, "utf8") };
+      };
+      const before = await read(context.store.paths.lastPullSnapshotDir, found.item.status === "added" ? undefined : (found.item.from ?? found.item.path));
+      const after = await read(context.rootDir, found.item.status === "deleted" ? undefined : found.item.path);
+
+      if (before === "large" || after === "large") {
+        return { kind: "large" };
+      }
+
+      return { kind: "text", before: before.text, after: after.text };
+    } finally {
+      await flushLogger(context.logger);
+    }
+  }
+
+  /** Saves the choice in the project's own config. Renames move together (old and new name). */
+  async setIgnored(options: CommandRuntimeOptions & { path: string; ignored: boolean }): Promise<string[]> {
+    const context = await this.loadProjectContext("set-ignored", options);
+
+    try {
+      const { renames } = await this.reviewDiff(context);
+      const group = new Set<string>([options.path]);
+
+      for (const rename of renames) {
+        if (rename.from === options.path || rename.to === options.path) {
+          group.add(rename.from);
+          group.add(rename.to);
+        }
+      }
+
+      const current = new Set(context.config.sync.userIgnore);
+
+      for (const entry of group) {
+        if (options.ignored) current.add(entry);
+        else current.delete(entry);
+      }
+
+      const next = [...current].sort();
+
+      await context.store.saveProjectConfig({
+        ...context.config,
+        sync: { ...context.config.sync, userIgnore: next },
+      });
+
+      return next;
+    } finally {
+      await flushLogger(context.logger);
+    }
+  }
+
+  async listIgnored(options: CommandRuntimeOptions = {}): Promise<string[]> {
+    const context = await this.loadProjectContext("list-ignored", options);
+
+    try {
+      return [...context.config.sync.userIgnore].sort();
+    } finally {
+      await flushLogger(context.logger);
+    }
+  }
+
+  private async reviewDiff(context: LoadedProjectContext): Promise<{
+    files: Array<{ item: ReviewFile; binary: boolean }>;
+    renames: ManifestDiff["renamed"];
+  }> {
+    const baseline = await context.store.readLastPullManifest();
+
+    if (!baseline) {
+      return { files: [], renames: [] };
+    }
+
+    const local = await createManifest(context.rootDir, {
+      ignore: context.config.sync.ignore,
+    });
+    const diff = diffManifests(baseline, local);
+    const userIgnore = new Set(context.config.sync.userIgnore);
+    const snapshot = context.store.paths.lastPullSnapshotDir;
+    const countLines = async (
+      beforePath: string | undefined,
+      afterPath: string | undefined,
+      binary: boolean,
+    ): Promise<{ added: number; removed: number }> => {
+      if (binary) return { added: 0, removed: 0 };
+      const load = async (base: string, rel: string | undefined): Promise<string> => {
+        if (rel === undefined) return "";
+        const absolute = resolveRelativePath(base, rel);
+        const stat = await fs.stat(absolute).catch(() => null);
+        if (!stat || stat.size > MAX_DIFF_BYTES) return "";
+        return fs.readFile(absolute, "utf8");
+      };
+      const parts = diffLines(await load(snapshot, beforePath), await load(context.rootDir, afterPath));
+      let added = 0;
+      let removed = 0;
+      for (const part of parts) {
+        if (part.added) added += part.count ?? 0;
+        else if (part.removed) removed += part.count ?? 0;
+      }
+      return { added, removed };
+    };
+    const files: Array<{ item: ReviewFile; binary: boolean }> = [];
+
+    for (const entry of diff.added) {
+      files.push({ binary: entry.isBinary, item: { path: entry.path, status: "added", ignored: userIgnore.has(entry.path), ...(await countLines(undefined, entry.path, entry.isBinary)) } });
+    }
+    for (const entry of diff.modified) {
+      const binary = entry.current.isBinary || entry.previous.isBinary;
+      files.push({ binary, item: { path: entry.current.path, status: "modified", ignored: userIgnore.has(entry.current.path), ...(await countLines(entry.current.path, entry.current.path, binary)) } });
+    }
+    for (const entry of diff.deleted) {
+      files.push({ binary: entry.isBinary, item: { path: entry.path, status: "deleted", ignored: userIgnore.has(entry.path), ...(await countLines(entry.path, undefined, entry.isBinary)) } });
+    }
+    const localByPath = new Map(local.files.map((entry) => [entry.path, entry]));
+    for (const entry of diff.renamed) {
+      const binary = localByPath.get(entry.to)?.isBinary ?? false;
+      files.push({ binary, item: { path: entry.to, from: entry.from, status: "renamed", ignored: userIgnore.has(entry.to) || userIgnore.has(entry.from), ...(await countLines(entry.from, entry.to, binary)) } });
+    }
+
+    files.sort((left, right) => left.item.path.localeCompare(right.item.path));
+
+    return { files, renames: diff.renamed };
   }
 
   private async cleanupTransient(

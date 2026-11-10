@@ -34,12 +34,11 @@ import { UPDATE_CHECK_CHANNEL, UPDATE_GET_CHANNEL, UPDATE_INSTALL_CHANNEL, UPDAT
 import { trackEvent } from "./analytics.js";
 import { DesktopAppStateStore } from "./appState.js";
 import type { MenuCommand, PreviewRect } from "./contracts.js";
-import { cleanupActionArg, processIdArg, projectPathArg } from "./ipc.js";
+import { APP_CSP } from "./csp.js";
+import { browserAddressArg, browserCommandArg, browserTabIdArg, cleanupActionArg, ignoreFileArgs, processIdArg, projectPathArg } from "./ipc.js";
 import { PreviewView } from "./preview.js";
 
 const APP_ID = "com.figmake.sync";
-const APP_CSP =
-  "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'";
 
 let mainWindow: BrowserWindow | null = null;
 let preview: PreviewView | null = null;
@@ -257,6 +256,16 @@ function registerIpc(s: Session): void {
     return parsed.success ? s.readFile(parsed.data) : { kind: "missing", path: "" };
   });
   ipcMain.handle("figmake:changed-files", () => s.changedPaths());
+  ipcMain.handle("figmake:review-changes", () => s.reviewChanges());
+  ipcMain.handle("figmake:review-diff", (_e, rel: unknown) => {
+    const parsed = projectPathArg.safeParse(rel);
+    return parsed.success ? s.reviewDiff(parsed.data) : { kind: "missing" };
+  });
+  ipcMain.handle("figmake:set-file-ignored", (_e, rel: unknown, ignored: unknown) => {
+    const parsed = ignoreFileArgs.safeParse([rel, ignored]);
+    return parsed.success ? s.setFileIgnored(parsed.data[0], parsed.data[1]) : [];
+  });
+  ipcMain.handle("figmake:ignored-files", () => s.ignoredFiles());
   ipcMain.handle("figmake:stop-process", (_e, id: unknown) => {
     const parsed = processIdArg.safeParse(id);
     return parsed.success ? s.stopProcess(parsed.data) : undefined;
@@ -275,6 +284,24 @@ function registerIpc(s: Session): void {
   ipcMain.handle("figmake:set-agent", (_e, agent: unknown) => (agent === "claude" || agent === "codex" ? s.setAgent(agent) : undefined));
   ipcMain.handle("figmake:choose-workspace", () => s.chooseWorkspace());
   ipcMain.handle("figmake:sign-out", () => s.signOutFigma());
+  ipcMain.handle("figmake:browser", () => preview?.getState() ?? { tabs: [], activeId: 1 });
+  ipcMain.handle("figmake:browser-go", (_e, address: unknown) => {
+    const parsed = browserAddressArg.safeParse(address);
+    return parsed.success ? (preview?.go(parsed.data) ?? false) : false;
+  });
+  ipcMain.handle("figmake:browser-do", (_e, action: unknown) => {
+    const parsed = browserCommandArg.safeParse(action);
+    if (parsed.success) preview?.command(parsed.data);
+  });
+  ipcMain.handle("figmake:browser-new-tab", () => preview?.newTab());
+  ipcMain.handle("figmake:browser-switch", (_e, id: unknown) => {
+    const parsed = browserTabIdArg.safeParse(id);
+    if (parsed.success) preview?.switchTo(parsed.data);
+  });
+  ipcMain.handle("figmake:browser-close", (_e, id: unknown) => {
+    const parsed = browserTabIdArg.safeParse(id);
+    if (parsed.success) preview?.close(parsed.data);
+  });
   ipcMain.on("figmake:preview-rect", (_e, rect: unknown) => {
     const r = rect as Partial<PreviewRect> | null;
     const ok = r && [r.x, r.y, r.width, r.height].every((n) => typeof n === "number" && Number.isFinite(n));
@@ -340,7 +367,7 @@ async function bootstrap(): Promise<void> {
   registerIpc(live);
   registerUpdateIpc();
   mainWindow = await createWindow();
-  preview = new PreviewView(mainWindow);
+  preview = new PreviewView(mainWindow, (st) => send("figmake:browser", st));
   let lastUrl: string | null = null;
   live.onState((state) => {
     if (state.previewUrl !== lastUrl) {
@@ -392,7 +419,7 @@ app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     void createWindow().then((window) => {
       mainWindow = window;
-      preview = new PreviewView(window);
+      preview = new PreviewView(window, (st) => send("figmake:browser", st));
       if (appSession) preview.setUrl(appSession.state.previewUrl);
     });
   }

@@ -37,6 +37,7 @@
     "electron-updater": "^6.8.11",
     "fs-extra": "^11.2.0",
     "minimatch": "^9.0.5",
+    "monaco-editor": "^0.52.2",
     "pino": "^9.3.2",
     "pino-pretty": "^11.2.2",
     "playwright": "^1.46.1",

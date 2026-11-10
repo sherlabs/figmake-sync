@@ -1,3 +1,4 @@
+import type { BrowserState } from "../app/browser.js";
 import type { UpdateState } from "../updater/contracts.js";
 
 export type AgentChoice = "claude" | "codex";
@@ -118,6 +119,22 @@ export type FileView =
   | { kind: "binary" | "large"; path: string; size: number }
   | { kind: "missing"; path: string };
 
+/* ---- Review before sending ---- */
+export interface ReviewItem {
+  path: string;
+  /** Old name, for a renamed file. */
+  from?: string;
+  status: "added" | "modified" | "deleted" | "renamed";
+  added: number;
+  removed: number;
+  /** Chosen not to be sent. */
+  ignored: boolean;
+}
+/** Before (Figma, as of the last pull) and after (now) for the diff viewer. Text only. */
+export type ReviewDiff =
+  | { kind: "text"; before: string; after: string }
+  | { kind: "binary" | "large" | "missing" };
+
 /** The one thing the renderer ever sees. Every sentence in it is already plain language. */
 export interface SessionState {
   phase: Phase;
@@ -150,13 +167,17 @@ export interface SessionState {
   /** Folder name (not path) of the workspace new projects are created in. */
   workspace: string;
   workspaceError?: string;
+  /** Full workspace path with the home folder shown as "~". */
+  workspacePath?: string;
+  /** The workspace sits in a folder that cloud sync (iCloud/OneDrive/Dropbox) may slow down. */
+  workspaceSynced?: boolean;
   /** What is running for the open project (preview, AI helper, setup), for the Files panel. */
   processes: ProcessInfo[];
   /** Live output of the project being opened (kept after an error so it can be shown). */
   activity: ActivityFeed;
 }
 
-export type ActivityKind = "look" | "edit" | "add" | "check" | "other";
+export type ActivityKind = "look" | "edit" | "add" | "check" | "helper" | "other";
 
 /** One friendly line of what the AI did: "Looked at Button.tsx". Never a command or a full path. */
 export interface ChatActivity {
@@ -184,6 +205,12 @@ export interface ChatChange {
   fate: "active" | "undone" | "sent";
 }
 
+/** One step of the AI's own checklist, shown live while it works. */
+export interface ChatPlanStep {
+  text: string;
+  state: "pending" | "active" | "done";
+}
+
 export type ChatStatus = "done" | "streaming" | "stopped" | "error";
 
 export interface ChatMessage {
@@ -196,6 +223,12 @@ export interface ChatMessage {
   /** What the AI said and did, in order (assistant messages only). */
   parts: ChatPart[];
   status: ChatStatus;
+  /** Live only (cleared when the turn ends): one short plain sentence of what is happening right now. */
+  now?: string;
+  /** Live only: epoch ms when the turn began, for the elapsed timer. */
+  startedAt?: number;
+  /** Live only: the AI's checklist. */
+  plan?: ChatPlanStep[];
   change?: ChatChange;
   /** Present on a failed turn: one plain sentence and a stable code. */
   error?: { message: string; code: ErrorCode };
@@ -229,6 +262,8 @@ export interface PreviewRect {
   width: number;
   height: number;
 }
+
+export type BrowserCommand = "back" | "forward" | "reload" | "stop" | "retry" | "external";
 
 export type MenuCommand = "settings" | "add-project" | "check-updates";
 
@@ -270,6 +305,12 @@ export interface FigmakeApi {
   listFolder(path: string): Promise<FolderListing>;
   /** Contents of one project file for the read-only viewer. */
   readFile(path: string): Promise<FileView>;
+  /** Files a send would include (plus changed files the user chose not to send). */
+  reviewChanges(): Promise<ReviewItem[]>;
+  reviewDiff(path: string): Promise<ReviewDiff>;
+  /** Marks a file as not sent (true) or sent again (false). Resolves with the files now not sent. */
+  setFileIgnored(path: string, ignored: boolean): Promise<string[]>;
+  ignoredFiles(): Promise<string[]>;
   /** Project files (not folders) the AI changed since the last pull. */
   changedFiles(): Promise<string[]>;
   stopProcess(id: ProcessId): Promise<void>;
@@ -278,6 +319,15 @@ export interface FigmakeApi {
   cleanup(action: "fix-preview" | "start-over" | "reset-app"): Promise<void>;
   /** Where the preview sits in the window (null hides it). */
   previewRect(rect: PreviewRect | null): void;
+  /** The preview's tabs and page state, for the browser bar. */
+  browser(): Promise<BrowserState>;
+  onBrowser(listener: (state: BrowserState) => void): () => void;
+  /** Goes to a typed address in the current tab. False when it is not a local page. */
+  browserGo(address: string): Promise<boolean>;
+  browserDo(action: BrowserCommand): Promise<void>;
+  browserNewTab(): Promise<void>;
+  browserSwitch(id: number): Promise<void>;
+  browserClose(id: number): Promise<void>;
 }
 
 declare global {

@@ -7,16 +7,16 @@ import { ProjectStateStore, STATE_DIRECTORY_NAME } from "../core/state.js";
 import { REMOTE_DIVERGED_PROMPT, isAllowedLoginUrl } from "../harness/index.js";
 import type { HarnessEvent, HarnessService } from "../harness/index.js";
 import type { DevStatus } from "../harness/types.js";
-import type { AgentChoice, ChangedFile, ChatFile, ChatMessage, ChatState, DesktopAppState, ErrorCode, FileView, FolderListing, Phase, ProcessId, ProjectSummary, SessionState } from "../electron/contracts.js";
+import type { AgentChoice, ChangedFile, ChatFile, ChatMessage, ChatState, DesktopAppState, ErrorCode, FileView, FolderListing, Phase, ProcessId, ProjectSummary, ReviewDiff, ReviewItem, SessionState } from "../electron/contracts.js";
 import { isAuthRequiredError } from "../electron/authState.js";
-import { applyAgentEvent, baseName, capMessages, dropSummaryRepeat, emptyAssistant, newId, userMessage } from "./chat.js";
+import { applyAgentEvent, baseName, capMessages, dropSummaryRepeat, emptyAssistant, finishLive, newId, userMessage } from "./chat.js";
 import type { ChatStore } from "./chatStore.js";
 import { describeFolders, listChangedFiles } from "./changes.js";
 import { listFolder, readFileView } from "./fileTree.js";
 import { MAX_ACTIVITY_LINES, MAX_PROCESS_LINES, pushLines } from "./activity.js";
 import { buildProcesses } from "./processes.js";
 import { FIGMA_MAKE_GUIDE } from "./figmaMakeGuide.js";
-import { defaultWorkspaceDir, parseFigmaLink, resolveProjectFolder, validateWorkspace, type FigmaLink, type WorkspaceGuard } from "./workspace.js";
+import { defaultWorkspaceDir, isCloudSynced, parseFigmaLink, resolveProjectFolder, validateWorkspace, type FigmaLink, type WorkspaceGuard } from "./workspace.js";
 
 /** Short fixed context for every prompt: nothing is ever written into the project to carry it. */
 export const PROMPT_PREFACE =
@@ -25,7 +25,8 @@ export const PROMPT_PREFACE =
 export const AGENT_NAMES: Record<AgentChoice, string> = { claude: "Claude", codex: "ChatGPT" };
 
 export interface SessionDeps {
-  sync: Pick<FigmakeSyncService, "init" | "pull" | "push" | "status" | "auth">;
+  sync: Pick<FigmakeSyncService, "init" | "pull" | "push" | "status" | "auth"> &
+    Partial<Pick<FigmakeSyncService, "reviewChanges" | "fileDiff" | "setIgnored" | "listIgnored">>;
   harness: Pick<HarnessService, "ensureProjectRunning" | "ensureAgentReady" | "startRun" | "pendingLoginUrl" | "stopDevExcept" | "stopDev" | "updateSettings">;
   appState: { load(): Promise<DesktopAppState>; update(patch: Partial<DesktopAppState>): Promise<DesktopAppState> };
   /** Per-project transcripts (userData/chats). */
@@ -168,7 +169,7 @@ export class Session {
   }
 
   private startState(): SessionState {
-    return { ...START, phase: this.s.agentConnected ? "start" : "needs-ai-choice", agent: this.s.agent, agentConnected: this.s.agentConnected, workspace: this.s.workspace, projects: this.s.projects, ...(this.s.workspaceError ? { workspaceError: this.s.workspaceError } : {}) };
+    return { ...START, phase: this.s.agentConnected ? "start" : "needs-ai-choice", agent: this.s.agent, agentConnected: this.s.agentConnected, workspace: this.s.workspace, ...(this.s.workspacePath ? { workspacePath: this.s.workspacePath } : {}), ...(this.s.workspaceSynced ? { workspaceSynced: true } : {}), projects: this.s.projects, ...(this.s.workspaceError ? { workspaceError: this.s.workspaceError } : {}) };
   }
 
   get state(): SessionState {
@@ -286,7 +287,7 @@ export class Session {
       if (!(await validateWorkspace(dir, this.deps.guard))) error = "Couldn't create the figmake-sync folder.";
     }
     this.workspaceDir = dir;
-    this.set({ workspace: path.basename(dir), ...(error ? { workspaceError: error } : {}) });
+    this.set({ ...this.workspaceView(dir), ...(error ? { workspaceError: error } : {}) });
     if (!error) this.set({ workspaceError: undefined });
   }
 
@@ -395,7 +396,7 @@ export class Session {
       // Nothing streamed (a quiet CLI): show the closing reply once.
       if (status === "done" && !parts.some((p) => p.type === "text") && resultText?.trim()) parts = [...parts, { type: "text" as const, text: resultText.trim() }];
       if (rest.change) parts = dropSummaryRepeat(parts, rest.change.summary);
-      return { ...m, ...rest, parts, status };
+      return finishLive({ ...m, ...rest, parts, status });
     });
     this.turnId = null;
     this.emitChat();
@@ -520,16 +521,53 @@ export class Session {
     this.set({ updatesEnabled: enabled });
   }
 
+  private workspaceView(dir: string): Pick<SessionState, "workspace" | "workspacePath" | "workspaceSynced"> {
+    const home = this.deps.guard.home;
+    const shown = dir === home || dir.startsWith(home + path.sep) ? `~${dir.slice(home.length)}` : dir;
+    return { workspace: path.basename(dir), workspacePath: shown, workspaceSynced: isCloudSynced(dir, home) };
+  }
+
+  /** Picks a new projects folder and moves the projects this app keeps in the old one into it. */
   async chooseWorkspace(): Promise<void> {
+    if (this.isBusy()) return;
     const dir = await this.deps.chooseFolder();
     if (!dir) return;
     if (!(await validateWorkspace(dir, this.deps.guard))) {
       this.set({ workspaceError: "That folder can't be used." });
       return;
     }
-    await this.deps.appState.update({ workspace: dir });
-    this.workspaceDir = dir;
-    this.set({ workspace: path.basename(dir), workspaceError: undefined });
+    const target = await fs.realpath(dir).catch(() => path.resolve(dir));
+    if (target === (await fs.realpath(this.workspaceDir).catch(() => path.resolve(this.workspaceDir)))) return;
+    await this.exclusive(async () => {
+      try {
+        const old = this.workspaceDir;
+        const moves = Object.entries(this.known).filter(([, root]) => path.dirname(path.resolve(root)) === path.resolve(old));
+        if (moves.length > 0) await this.deps.harness.stopDevExcept(null, true).catch(() => undefined);
+        const known = { ...this.known };
+        for (const [key, root] of moves) {
+          const dest = path.join(target, path.basename(root));
+          if (await fs.pathExists(dest)) continue; // never merge into something that is already there
+          await fs.move(root, dest);
+          known[key] = dest;
+        }
+        this.known = known;
+        await this.deps.appState.update({ workspace: dir, projects: known });
+        this.workspaceDir = dir;
+        const active = this.activeKey ? known[this.activeKey] : undefined;
+        if (active && this.root && active !== this.root) {
+          this.root = active;
+          this.dev = null;
+          this.previewStopped = false;
+          this.set({ previewUrl: null });
+        }
+        this.set({ ...this.workspaceView(dir), workspaceError: undefined });
+      } catch (error) {
+        this.deps.log("move workspace failed", error);
+        this.set({ workspaceError: "Couldn't move your projects. They are still where they were." });
+      }
+    });
+    await this.refreshProjects();
+    if (this.root && this.s.phase === "ready" && !this.previewStopped && this.s.previewUrl === null) await this.restartProcess("preview").catch(() => undefined);
   }
 
   async signOutFigma(): Promise<void> {
@@ -618,6 +656,48 @@ export class Session {
 
   async readFile(rel: string): Promise<FileView> {
     return this.root ? readFileView(this.root, rel) : { kind: "missing", path: "" };
+  }
+
+  // ---- review before sending ----
+
+  async reviewChanges(): Promise<ReviewItem[]> {
+    if (!this.root || !this.deps.sync.reviewChanges) return [];
+    try {
+      return (await this.deps.sync.reviewChanges({ projectRoot: this.root })).files;
+    } catch (error) {
+      this.deps.log("review failed", error);
+      return [];
+    }
+  }
+
+  async reviewDiff(rel: string): Promise<ReviewDiff> {
+    if (!this.root || !this.deps.sync.fileDiff) return { kind: "missing" };
+    try {
+      return await this.deps.sync.fileDiff({ projectRoot: this.root, path: rel });
+    } catch (error) {
+      this.deps.log("file diff failed", error);
+      return { kind: "missing" };
+    }
+  }
+
+  async setFileIgnored(rel: string, ignored: boolean): Promise<string[]> {
+    const root = this.root;
+    if (!root || !this.deps.sync.setIgnored) return [];
+    try {
+      const list = await this.deps.sync.setIgnored({ projectRoot: root, path: rel, ignored });
+      // Only Send's availability follows; the undo history is left alone.
+      const status = await this.deps.sync.status({ projectRoot: root });
+      if (this.s.phase === "ready") this.set({ canSend: status.hasBaseline && status.summary.total > 0 });
+      return list;
+    } catch (error) {
+      this.deps.log("ignore failed", error);
+      return this.ignoredFiles();
+    }
+  }
+
+  async ignoredFiles(): Promise<string[]> {
+    if (!this.root || !this.deps.sync.listIgnored) return [];
+    return this.deps.sync.listIgnored({ projectRoot: this.root }).catch(() => []);
   }
 
   /** Files added or edited since the last pull (the same comparison that decides "Send to Figma"). Never throws. */

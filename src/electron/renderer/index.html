@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; worker-src blob:; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
@@ -42,6 +42,8 @@
       <symbol id="i-key" viewBox="0 0 16 16"><circle cx="5.5" cy="10.5" r="2.75" fill="none" stroke="currentColor" stroke-width="1.5"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="m7.5 8.5 5.5-5.5M11 5l1.75 1.75M9.25 6.75 11 8.5"/></symbol>
       <symbol id="i-refresh" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M13 8A5 5 0 1 1 11.2 4.15"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M12.8 2.5v2.4h-2.4"/></symbol>
       <symbol id="i-trash" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M3 4.5h10M6.5 4.5V3h3v1.5M4.25 4.5l.6 8.1a1 1 0 0 0 1 .9h4.3a1 1 0 0 0 1-.9l.6-8.1"/></symbol>
+      <symbol id="i-back" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M13 8H3.5M7.5 4 3.5 8l4 4"/></symbol>
+      <symbol id="i-fwd" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M3 8h9.5M8.5 4l4 4-4 4"/></symbol>
       <symbol id="i-mark" viewBox="64 72 534 508"><path d="M242 72H189a125 125 0 0 0 0 250h53z" fill="#ee7a45"/><path d="M258 72H473a125 125 0 0 1 0 250H258z" fill="#8b5cf0"/><path d="M396 347H233.5a116.5 116.5 0 0 0 0 233H396z" fill="#4c9fe0"/><circle cx="505" cy="463" r="93" fill="#58b788"/></symbol>
       <symbol id="i-undo" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M5.5 3 3 5.5 5.5 8M3.5 5.5H10a3 3 0 0 1 0 6H6.5"/></symbol>
       <symbol id="i-sparkle" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" d="M7 2.5 8.3 6 12 7.3 8.3 8.6 7 12.2 5.7 8.6 2 7.3 5.7 6zM12.5 10.5l.5 1.3 1.3.5-1.3.5-.5 1.3-.5-1.3-1.3-.5 1.3-.5z"/></symbol>

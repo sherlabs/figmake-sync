@@ -2,12 +2,23 @@
 
 export type AgentId = "claude" | "codex";
 
+export interface PlanStep {
+  text: string;
+  state: "pending" | "active" | "done";
+}
+
 /** Normalized event streamed from an agent run (CLI-specific formats are parsed by adapters). */
 export type AgentEvent =
   | { type: "session"; sessionId: string }
   /** `delta: true` continues the previous text; otherwise it is a whole new block of text. */
   | { type: "text"; text: string; delta?: boolean }
   | { type: "tool"; name: string; summary: string }
+  /** The AI is reasoning. Carries no text on purpose: only the fact that it is thinking is shown. */
+  | { type: "thinking" }
+  /** The AI started a helper (sub-agent); `description` is the short task it was given. */
+  | { type: "helper"; description: string }
+  /** The AI's checklist; every update replaces the previous one. */
+  | { type: "plan"; steps: PlanStep[] }
   | { type: "file_edit"; path: string; tool: string }
   | {
       type: "result";
