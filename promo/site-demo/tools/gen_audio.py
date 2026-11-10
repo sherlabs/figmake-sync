@@ -1,5 +1,5 @@
 import numpy as np, wave, sys
-SR=44100; DUR=41.5
+SR=44100; DUR=25.5
 rng=np.random.default_rng(7)
 def env(n,a,d): 
     t=np.arange(n)/SR; return np.minimum(t/a,1)*np.exp(-t/d)
@@ -28,13 +28,13 @@ def chime(f=880,vol=.5):
 sfx=np.zeros(int(DUR*SR))
 def put(t,s):
     i=int(t*SR); sfx[i:i+len(s)]+=s[:len(sfx)-i]
-for t in [6.15,8.95,15.6,17.1,19.95,23.45,32.4,33.95]: put(t,click())
-text="Make the cart total include the promo discount and respect quantity"
-for i,c in enumerate(text):
-    if c==' ': continue
-    put(20.3+i/26, key(rng.choice([1500,1900,2400,1200])))
-put(4.35,whoosh(.7,.35)); put(35.95,whoosh(.8,.35))
-put(34.3,chime(784)); put(34.42,chime(1175,.6))
+for t in [4.15,7.1,15.6]: put(t,click())
+for st,txt,cps in [(1.95,"figma.com/make/Hk3xQp/Oak-and-Ember",24),(7.5,"Make the button blue",13)]:
+    for i,c in enumerate(txt):
+        if c==' ': continue
+        put(st+i/cps, key(rng.choice([1500,1900,2400,1200])))
+put(4.3,whoosh(.7,.3)); put(20.35,whoosh(.8,.35)); put(14.0,whoosh(.6,.2))
+put(10.95,chime(660,.6)); put(17.4,chime(784)); put(17.52,chime(1175,.6)); put(20.9,chime(523,.5))
 sfx=np.tanh(sfx*1.2)*.9
 # music bed: quiet pad
 t=np.arange(len(sfx))/SR

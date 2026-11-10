@@ -1,22 +1,26 @@
-/* eslint-disable @typescript-eslint/require-await, @typescript-eslint/unbound-method -- mock rig */
+/* eslint-disable @typescript-eslint/require-await, @typescript-eslint/unbound-method, @typescript-eslint/no-misused-promises -- mock rig */
 import os from "node:os";
 import path from "node:path";
 
 import fs from "fs-extra";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { PROMPT_PREFACE, Session, errorCode, parseChange, plainError, type SessionDeps } from "../src/app/session.js";
+import { ChatStore } from "../src/app/chatStore.js";
+import { PROMPT_PREFACE, Session, conflictFiles, errorCode, parseChange, plainError, type SessionDeps } from "../src/app/session.js";
 import { AuthRequiredError } from "../src/browser/session.js";
 import { FigmakeSyncService } from "../src/core/service.js";
 import { ProjectStateStore } from "../src/core/state.js";
 import { DesktopAppStateStore } from "../src/electron/appState.js";
-import type { SessionState } from "../src/electron/contracts.js";
+import type { ChatState, SessionState } from "../src/electron/contracts.js";
+import type { AgentEvent } from "../src/harness/agents/types.js";
 import type { RunOutcome } from "../src/harness/index.js";
 import { LocalFixtureAdapter } from "./support/localFixtureAdapter.js";
 
 const LINK = "https://www.figma.com/make/AbC123/Checkout-Flow";
 const dirs: string[] = [];
+const sessions: Session[] = [];
 afterEach(async () => {
+  await Promise.all(sessions.splice(0).map((s) => s.flush()));
   await Promise.all(dirs.splice(0).map((d) => fs.remove(d)));
 });
 
@@ -28,9 +32,9 @@ interface Rig {
   workspace: string;
   project: string;
   deps: SessionDeps;
-  harness: { startRun: ReturnType<typeof vi.fn>; ensureAgentReady: ReturnType<typeof vi.fn>; ensureProjectRunning: ReturnType<typeof vi.fn> };
+  harness: { startRun: ReturnType<typeof vi.fn>; ensureAgentReady: ReturnType<typeof vi.fn>; ensureProjectRunning: ReturnType<typeof vi.fn>; stopDevExcept: ReturnType<typeof vi.fn> };
   sync: { pull: ReturnType<typeof vi.fn>; push: ReturnType<typeof vi.fn>; auth: ReturnType<typeof vi.fn> };
-  edit: { fn: (root: string) => Promise<void>; outcome: Partial<RunOutcome>; hold?: Promise<void> };
+  edit: { fn: (root: string) => Promise<void>; outcome: Partial<RunOutcome>; hold?: Promise<void>; events?: AgentEvent[] };
   store: DesktopAppStateStore;
 }
 
@@ -59,6 +63,7 @@ async function rig(opts: { agent?: "claude" | "codex" | null; saved?: boolean } 
     },
     outcome: { resultText: "Made the button blue.", success: true, cancelled: false, error: null },
   };
+  const ref: { session?: Session } = {};
   const harness = {
     ensureProjectRunning: vi.fn(async () => ({ ok: true as const, url: "http://localhost:5173/" })),
     ensureAgentReady: vi.fn(async () => ({ ok: true as const, agent: {} as never })),
@@ -70,6 +75,7 @@ async function rig(opts: { agent?: "claude" | "codex" | null; saved?: boolean } 
       const config = await projectStore.loadProjectConfig();
       const backupDir = await projectStore.createBackup("pre-agent", config.sync.ignore);
       const done = (async (): Promise<RunOutcome> => {
+        for (const event of edit.events ?? []) ref.session?.handleHarnessEvent({ kind: "run-agent", rootDir: input.rootDir, runId: "r", event });
         if (edit.hold && !signal?.aborted) {
           await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }));
         }
@@ -83,6 +89,7 @@ async function rig(opts: { agent?: "claude" | "codex" | null; saved?: boolean } 
     sync: sync as unknown as SessionDeps["sync"],
     harness: harness as unknown as SessionDeps["harness"],
     appState: store,
+    chatStore: new ChatStore(path.join(base, "chats")),
     documentsDir: documents,
     guard: { home: path.join(base, "home"), forbidden: [] },
     chooseFolder: vi.fn(async () => null),
@@ -94,6 +101,8 @@ async function rig(opts: { agent?: "claude" | "codex" | null; saved?: boolean } 
     log: vi.fn(),
   };
   const session = new Session(deps);
+  ref.session = session;
+  sessions.push(session);
   const states: SessionState[] = [];
   session.onState((s) => states.push(s));
   await session.start();
@@ -202,6 +211,7 @@ describe("session: conflict", () => {
     await fs.outputFile(path.join(r.remote, "src", "app.ts"), "export const v = 'figma';\n");
     await r.session.send();
     expect(r.session.state).toMatchObject({ phase: "conflict", message: "Figma has newer changes." });
+    expect(r.session.state.conflictFiles).toEqual(["src/app.ts"]);
     expect(await read(path.join(r.remote, "src", "app.ts"))).toContain("figma");
     return r;
   }
@@ -213,6 +223,7 @@ describe("session: conflict", () => {
     expect(await read(path.join(r.remote, "src", "app.ts"))).toContain("v = 2");
     expect((await backups(r)).some((n) => n.endsWith("pre-resolve"))).toBe(true);
     expect(r.session.state).toMatchObject({ phase: "ready", canSend: false });
+    expect(r.session.state.conflictFiles).toBeUndefined();
   });
 
   it("Use Figma's replaces local work, after a backup", async () => {
@@ -376,6 +387,7 @@ describe("session: workspace", () => {
     const r = await rig();
     await r.store.update({ workspace: "/" });
     const again = new Session(r.deps);
+    sessions.push(again);
     await again.start();
     expect(again.state.workspace).toBe("figmake-sync");
     expect(again.state.workspaceError).toBe("That folder can't be used, so the default one is in use.");
@@ -420,5 +432,404 @@ describe("plain language", () => {
     }
     expect(plainError(new Error("x"), "agent", "codex")).toBe("Couldn't reach ChatGPT. Try again.");
     expect(plainError(new Error("Backup failed, agent was not started"), "agent")).toBe("Couldn't make a backup, so nothing was changed.");
+  });
+});
+
+const LINK2 = "https://www.figma.com/make/Zed999/Other-App";
+
+describe("session: multiple projects", () => {
+  it("lists projects with statuses and keeps one active", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    await r.session.openProject(LINK2);
+    expect(r.session.state.activeKey).toBe("Zed999");
+    expect(r.session.state.projects.map((p) => [p.key, p.name, p.status])).toEqual([
+      ["AbC123", "Checkout Flow", "synced"],
+      ["Zed999", "Other App", "synced"],
+    ]);
+    expect(r.session.state.syncedAt).not.toBeNull();
+    await r.session.ask("x");
+    expect(r.session.state.projects.map((p) => p.status)).toEqual(["synced", "changes"]);
+    expect(r.session.state.changeFiles).toEqual([2]);
+    await r.session.undo();
+    expect(r.session.state.projects.map((p) => p.status)).toEqual(["synced", "synced"]);
+  });
+
+  it("switching stops the other dev server, skips the pull, and keeps each change list", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    await r.session.ask("x");
+    await r.session.openProject(LINK2);
+    expect(r.session.state.changes).toEqual([]);
+    expect(r.session.state.projects[0]?.status).toBe("changes");
+    r.sync.pull.mockClear();
+    r.harness.stopDevExcept.mockClear();
+    await r.session.switchProject("AbC123");
+    expect(r.sync.pull).not.toHaveBeenCalled();
+    expect(r.harness.stopDevExcept).toHaveBeenCalledWith(r.project);
+    expect(r.session.state).toMatchObject({ activeKey: "AbC123", phase: "ready", changes: ["Made the button blue"], canSend: true });
+    await r.session.switchProject("AbC123");
+    await r.session.switchProject("nope");
+    expect(r.session.state.activeKey).toBe("AbC123");
+  });
+
+  it("restores the project list and links after a restart", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    await r.session.openProject(LINK2);
+    expect(Object.keys((await r.store.load()).links)).toEqual(["AbC123", "Zed999"]);
+    const again = new Session(r.deps);
+    sessions.push(again);
+    await again.start();
+    expect(again.state.projects.map((p) => p.key)).toEqual(["AbC123", "Zed999"]);
+    expect(again.state.activeKey).toBe("Zed999");
+  });
+
+  it("seeds links from the last link of an older saved state", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    await r.store.update({ links: {} });
+    const again = new Session(r.deps);
+    sessions.push(again);
+    await again.start();
+    expect(again.state.projects.map((p) => p.key)).toEqual(["AbC123"]);
+  });
+
+  it("marks a project with a missing folder as needing attention", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    await r.session.openProject(LINK2);
+    await fs.remove(r.project);
+    await r.session.ask("noop");
+    expect(r.session.state.projects.find((p) => p.key === "AbC123")?.status).toBe("attention");
+  });
+
+  it("remove keeps the files by default", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    await r.session.removeProject("AbC123");
+    expect(r.session.state).toMatchObject({ phase: "start", projects: [], activeKey: null, projectName: null });
+    expect(r.harness.stopDevExcept).toHaveBeenCalledWith(null, true);
+    expect(await fs.pathExists(r.project)).toBe(true);
+    const saved = await r.store.load();
+    expect(saved).toMatchObject({ lastLink: null, links: {}, projects: {} });
+  });
+
+  it("remove deletes the folder only on request and only inside the workspace", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    await r.session.openProject(LINK2);
+    await r.session.removeProject("AbC123", true);
+    expect(await fs.pathExists(r.project)).toBe(false);
+    expect(r.session.state.activeKey).toBe("Zed999");
+
+    // A folder outside the workspace is never deleted.
+    const outside = path.join(path.dirname(r.workspace), "elsewhere");
+    await fs.outputFile(path.join(outside, ".figmake-sync", "x"), "x");
+    await r.store.update({ projects: { ...(await r.store.load()).projects, Out1: outside }, links: { ...(await r.store.load()).links, Out1: "https://www.figma.com/make/Out1/Out" } });
+    const again = new Session(r.deps);
+    sessions.push(again);
+    await again.start();
+    await again.removeProject("Out1", true);
+    expect(await fs.pathExists(outside)).toBe(true);
+  });
+
+  it("undo(index) restores that change's backup and drops later ones", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    r.edit.fn = (root) => fs.outputFile(path.join(root, "src", "app.ts"), "export const v = 5;\n");
+    await r.session.ask("one");
+    r.edit.fn = (root) => fs.outputFile(path.join(root, "src", "app.ts"), "export const v = 6;\n");
+    r.edit.outcome = { ...r.edit.outcome, resultText: "Second." };
+    await r.session.ask("two");
+    expect(r.session.state.changes).toHaveLength(2);
+    await r.session.undo(1);
+    expect(await read(path.join(r.project, "src", "app.ts"))).toContain("v = 5");
+    expect(r.session.state.changes).toHaveLength(1);
+    await r.session.ask("three");
+    await r.session.undo(0);
+    expect(await read(path.join(r.project, "src", "app.ts"))).toContain("v = 1");
+    expect(r.session.state).toMatchObject({ changes: [], canSend: false });
+  });
+
+  it("describeChange shows edited, added and binary files, and never throws", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    r.edit.fn = async (root) => {
+      await fs.outputFile(path.join(root, "src", "app.ts"), "export const v = 2;\n");
+      await fs.outputFile(path.join(root, "src", "new.ts"), "export {};\n");
+      await fs.outputFile(path.join(root, "src", "pic.bin"), Buffer.from([0, 1, 2]));
+    };
+    await r.session.ask("x");
+    const files = await r.session.describeChange(0);
+    expect(files.map((f) => [f.path, f.status, f.binary])).toEqual([
+      ["src/app.ts", "edited", false],
+      ["src/new.ts", "added", false],
+      ["src/pic.bin", "added", true],
+    ]);
+    expect(files[0]?.rows.map((x) => x.left?.mark ?? null)).toEqual(["del", ]);
+    expect(await r.session.describeChange(9)).toEqual([]);
+    expect(await r.session.describeChange(Number.NaN)).toEqual([]);
+  });
+});
+
+describe("session: sign-in wait and updates", () => {
+  it("waits for the browser to detect the sign-in, and cancel returns to the button", async () => {
+    const r = await rig();
+    r.sync.pull.mockRejectedValueOnce(new AuthRequiredError());
+    await r.session.openProject(LINK);
+    r.sync.auth.mockImplementationOnce((o: { waitForManualAction: () => Promise<void> }) => o.waitForManualAction());
+    const wait = r.deps.waitForFigmaSignin as ReturnType<typeof vi.fn>;
+    wait.mockImplementationOnce((signal: AbortSignal) => new Promise<void>((_res, rej) => void signal.addEventListener("abort", () => rej(new Error("aborted")))));
+    const pending = r.session.retry();
+    await vi.waitFor(() => expect(r.session.state.message).toBe("Waiting for sign-in in your browser"));
+    expect(r.session.state.phase).toBe("needs-figma-signin");
+    expect(r.sync.auth).toHaveBeenCalledWith(expect.objectContaining({ autoDetectLogin: true }));
+    await r.session.cancel();
+    await pending;
+    expect(r.session.state).toMatchObject({ phase: "needs-figma-signin" });
+    expect(r.session.state.message).toBeUndefined();
+    await r.session.retry();
+    expect(r.session.state.phase).toBe("ready");
+  });
+
+  it("persists the updates switch", async () => {
+    const r = await rig();
+    expect(r.session.state.updatesEnabled).toBe(true);
+    await r.session.setUpdates(false);
+    expect(r.session.state.updatesEnabled).toBe(false);
+    expect((await r.store.load()).updates.enabled).toBe(false);
+    const again = new Session(r.deps);
+    sessions.push(again);
+    await again.start();
+    expect(again.state.updatesEnabled).toBe(false);
+  });
+
+  it("parses diverged file lists", () => {
+    expect(conflictFiles("7 file(s) changed in Figma Make since the last pull (a.ts, b/c.ts, ...). Overwrite them with local content?")).toEqual(["a.ts", "b/c.ts"]);
+    expect(conflictFiles("nothing")).toEqual([]);
+  });
+});
+
+
+describe("session: chat", () => {
+  const SAY: AgentEvent[] = [
+    { type: "text", text: "Looking at the button", delta: true },
+    { type: "tool", name: "Read", summary: "Read /secret/home/proj/src/app.ts" },
+    { type: "file_edit", path: "/secret/home/proj/src/app.ts", tool: "Edit" },
+    { type: "text", text: "Made the button blue." },
+  ];
+  const last = (c: ChatState) => c.messages.at(-1);
+
+  it("a turn becomes a user message plus an assistant message with friendly activity and a change card", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    r.edit.events = SAY;
+    r.edit.outcome = { resultText: "Made the button blue.", success: true, cancelled: false, error: null, sessionId: "sess-12345678" };
+    await r.session.ask("make the button blue");
+    const chat = r.session.chat;
+    expect(chat.active).toBe(false);
+    expect(chat.messages.map((m) => m.role)).toEqual(["user", "assistant"]);
+    expect(chat.messages[0]?.text).toBe("make the button blue");
+    const a = last(chat);
+    expect(a?.status).toBe("done");
+    expect(a?.parts.map((p) => p.type)).toEqual(["text", "activity"]);
+    expect(JSON.stringify(a)).not.toMatch(/secret|Read \/|home/u);
+    expect(a?.parts[1]).toMatchObject({ items: [{ label: "Looked at app.ts" }, { label: "Edited app.ts" }] });
+    expect(a?.change).toMatchObject({ summary: "Made the button blue", fate: "active", previewUpdated: true });
+    expect(a?.change?.files.map((f) => f.name).sort()).toEqual(["app.ts", "new.ts"]);
+    expect(r.session.state.changeIds).toEqual([a?.change?.turnId]);
+    expect(r.session.state.changes).toEqual(["Made the button blue"]);
+  });
+
+  it("streams: partial text lands in the live message before the run finishes", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    r.edit.events = [{ type: "text", text: "Partial thou", delta: true }];
+    let release = (): void => undefined;
+    r.edit.hold = new Promise<void>((resolve) => (release = resolve));
+    const snapshots: ChatState[] = [];
+    r.session.onChat((c) => snapshots.push(c));
+    const run = r.session.ask("go");
+    await vi.waitFor(() => expect(r.session.chat.active).toBe(true));
+    await vi.waitFor(() => expect(last(r.session.chat)?.parts).toEqual([{ type: "text", text: "Partial thou" }]));
+    expect(last(r.session.chat)?.status).toBe("streaming");
+    // Cancel mid-stream: partial text stays, status is "stopped", no card, nothing changed.
+    await r.session.cancel();
+    release();
+    await run;
+    expect(last(r.session.chat)).toMatchObject({ status: "stopped", parts: [{ type: "text", text: "Partial thou" }] });
+    expect(last(r.session.chat)?.change).toBeUndefined();
+    expect(r.session.chat.active).toBe(false);
+    expect(await read(path.join(r.project, "src", "app.ts"))).toContain("v = 1");
+    expect(r.session.state.phase).toBe("ready");
+    expect(snapshots.length).toBeGreaterThan(1);
+  });
+
+  it("events from another project never reach this chat", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    r.edit.events = [];
+    let release = (): void => undefined;
+    r.edit.hold = new Promise<void>((resolve) => (release = resolve));
+    const run = r.session.ask("go");
+    await vi.waitFor(() => expect(r.session.chat.active).toBe(true));
+    r.session.handleHarnessEvent({ kind: "run-agent", rootDir: path.join(r.workspace, "elsewhere"), runId: "x", event: { type: "text", text: "LEAK" } });
+    r.session.handleHarnessEvent({ kind: "run-agent", rootDir: r.project, runId: "x", event: { type: "text", text: "mine" } });
+    expect(JSON.stringify(r.session.chat)).not.toContain("LEAK");
+    expect(JSON.stringify(r.session.chat)).toContain("mine");
+    await r.session.cancel();
+    release();
+    await run;
+  });
+
+  it("a failed run leaves a calm error message; Try again re-asks without a second user message", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    r.edit.outcome = { success: false, cancelled: false, error: "spawn /usr/bin/claude ENOENT at node:internal", resultText: "" };
+    await r.session.ask("make it blue");
+    expect(last(r.session.chat)).toMatchObject({ status: "error", error: { message: "Couldn't reach Claude. Try again.", code: "agent_failed" } });
+    expect(JSON.stringify(r.session.chat)).not.toMatch(/ENOENT|node:internal|usr\/bin/u);
+    expect(r.session.state.phase).toBe("error");
+    r.edit.outcome = { success: true, cancelled: false, error: null, resultText: "Made it blue." };
+    await r.session.retry();
+    const roles = r.session.chat.messages.map((m) => `${m.role}:${m.status}`);
+    expect(roles).toEqual(["user:done", "assistant:done"]);
+    expect(r.session.state.phase).toBe("ready");
+  });
+
+  it("typing again after an error simply carries on", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    r.edit.outcome = { success: false, cancelled: false, error: "x", resultText: "" };
+    await r.session.ask("first");
+    r.edit.outcome = { success: true, cancelled: false, error: null, resultText: "Did it." };
+    await r.session.ask("second");
+    expect(r.session.state.phase).toBe("ready");
+    expect(r.session.chat.messages.map((m) => `${m.role}:${m.status}`)).toEqual(["user:done", "assistant:error", "user:done", "assistant:done"]);
+  });
+
+  it("a question that changes nothing is a plain answer: no card, no change to send", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    r.edit.fn = async () => undefined;
+    r.edit.events = [{ type: "text", text: "The cart reads once on load, so it never updates." }];
+    r.edit.outcome = { resultText: "The cart reads once on load, so it never updates.", success: true, cancelled: false, error: null };
+    await r.session.ask("why does the cart not update?");
+    const a = last(r.session.chat);
+    expect(a?.change).toBeUndefined();
+    expect(a?.parts).toEqual([{ type: "text", text: "The cart reads once on load, so it never updates." }]);
+    expect(r.session.state).toMatchObject({ changes: [], changeIds: [], canSend: false });
+  });
+
+  it("follow-ups resume the same AI conversation; New chat starts a fresh one and archives the old", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    r.edit.outcome = { resultText: "Done one.", success: true, cancelled: false, error: null, sessionId: "sess-aaaaaaaa" };
+    await r.session.ask("one");
+    await r.session.ask("two");
+    const arg = (n: number) => r.harness.startRun.mock.calls[n]?.[0] as { newSession?: boolean };
+    expect(arg(0).newSession).toBeUndefined();
+    expect(arg(1).newSession).toBeUndefined();
+    expect(r.session.chat.messages).toHaveLength(4);
+
+    await r.session.newChat();
+    expect(r.session.chat).toMatchObject({ messages: [], fresh: true, active: false });
+    const archive = path.join(path.dirname(path.dirname(r.workspace)), "chats");
+    expect((await fs.readdir(archive)).some((f) => f.endsWith(".archive.json"))).toBe(true);
+    await r.session.ask("three");
+    expect(arg(2).newSession).toBe(true);
+    expect(r.session.chat.fresh).toBe(false);
+    await r.session.ask("four");
+    expect(arg(3).newSession).toBeUndefined();
+    expect(r.session.chat.messages.map((m) => m.text).filter(Boolean)).toEqual(["three", "four"]);
+  });
+
+  it("a New chat that never got to start keeps asking for a fresh session", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    await r.session.ask("one");
+    await r.session.newChat();
+    r.edit.outcome = { success: false, cancelled: false, error: "x", resultText: "", sessionId: null };
+    await r.session.ask("two");
+    expect(r.session.chat.fresh).toBe(true);
+    await r.session.retry().catch(() => undefined);
+    expect((r.harness.startRun.mock.calls.at(-1)?.[0] as { newSession?: boolean }).newSession).toBe(true);
+  });
+
+  it("restores the transcript when the project reopens, including after a restart", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    r.edit.events = SAY;
+    await r.session.ask("make the button blue");
+    const before = r.session.chat.messages;
+    // Same saved files, brand new session object (an app restart).
+    const again = new Session(r.deps);
+    sessions.push(again);
+    await again.start();
+    expect(again.chat.projectKey).toBe("AbC123");
+    expect(again.chat.messages.map((m) => [m.role, m.text, m.parts.length])).toEqual(before.map((m) => [m.role, m.text, m.parts.length]));
+    // Cards from before the restart can't be undone any more (their backups' order is gone) but still read fine.
+    expect(again.state.changeIds).toEqual([]);
+    expect(last(again.chat)?.change?.fate).toBe("active");
+  });
+
+  it("per-turn undo: restores that turn's backup, marks later cards undone, keeps earlier ones", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    r.edit.fn = async (root) => fs.outputFile(path.join(root, "src", "app.ts"), "export const v = 2;\n");
+    r.edit.outcome = { resultText: "First change.", success: true, cancelled: false, error: null };
+    await r.session.ask("one");
+    r.edit.fn = async (root) => fs.outputFile(path.join(root, "src", "app.ts"), "export const v = 3;\n");
+    r.edit.outcome = { resultText: "Second change.", success: true, cancelled: false, error: null };
+    await r.session.ask("two");
+    const [c1, c2] = r.session.chat.messages.flatMap((m) => (m.change ? [m.change] : []));
+    expect(r.session.state.changeIds).toEqual([c1?.turnId, c2?.turnId]);
+
+    // Undo the newest turn only.
+    await r.session.undo(1);
+    expect(await read(path.join(r.project, "src", "app.ts"))).toContain("v = 2");
+    expect(r.session.chat.messages.flatMap((m) => (m.change ? [m.change.fate] : []))).toEqual(["active", "undone"]);
+    expect(r.session.state.changeIds).toEqual([c1?.turnId]);
+
+    // Ids are stable: a new turn after the undo never takes over the old card's slot.
+    r.edit.fn = async (root) => fs.outputFile(path.join(root, "src", "app.ts"), "export const v = 4;\n");
+    r.edit.outcome = { resultText: "Third change.", success: true, cancelled: false, error: null };
+    await r.session.ask("three");
+    const ids = r.session.state.changeIds;
+    expect(ids).toHaveLength(2);
+    expect(ids).not.toContain(c2?.turnId);
+
+    // Undoing the older turn also undoes the one after it.
+    await r.session.undo(0);
+    expect(await read(path.join(r.project, "src", "app.ts"))).toContain("v = 1");
+    expect(r.session.chat.messages.flatMap((m) => (m.change ? [m.change.fate] : []))).toEqual(["undone", "undone", "undone"]);
+    expect(r.session.state.changeIds).toEqual([]);
+  });
+
+  it("sending to Figma marks live cards as sent", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    await r.session.ask("one");
+    await r.session.send();
+    expect(r.session.chat.messages.flatMap((m) => (m.change ? [m.change.fate] : []))).toEqual(["sent"]);
+  });
+
+  it("the prompt asks for plain talk and keeps the safety rules", () => {
+    expect(PROMPT_PREFACE).toMatch(/designer/u);
+    expect(PROMPT_PREFACE).toMatch(/one plain sentence/u);
+    expect(PROMPT_PREFACE).toMatch(/src/u);
+    expect(PROMPT_PREFACE).toMatch(/lockfiles/u);
+  });
+
+  it("each project keeps its own conversation", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    await r.session.ask("in the first project");
+    await r.session.openProject("https://www.figma.com/make/XyZ987/Landing-Page");
+    expect(r.session.state.activeKey).toBe("XyZ987");
+    expect(r.session.chat.messages).toEqual([]);
+    await r.session.switchProject("AbC123");
+    expect(r.session.chat.messages.map((m) => m.text).filter(Boolean)).toEqual(["in the first project"]);
   });
 });

@@ -11,6 +11,8 @@ const desktopAppStateSchema = z.object({
   workspace: z.string().nullable().default(null),
   /** Figma Make file key -> absolute project folder (existing projects keep their path). */
   projects: z.record(z.string(), z.string()).default({}),
+  /** Figma Make file key -> the link it was added with. A malformed value is dropped alone. */
+  links: z.record(z.string(), z.string()).catch({}).default({}),
   /** A malformed value falls back to "on" instead of discarding the rest of the saved state. */
   updates: z.object({ enabled: z.boolean().catch(true) }).catch({ enabled: true }).default({ enabled: true }),
 });

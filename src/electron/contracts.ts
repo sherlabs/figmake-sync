@@ -38,6 +38,38 @@ export interface ReportRequest {
   phase: Phase;
 }
 
+export type ProjectStatus = "synced" | "changes" | "attention";
+
+/** One row of the sidebar. `syncedAt` is an ISO time or null when never synced. */
+export interface ProjectSummary {
+  key: string;
+  name: string;
+  status: ProjectStatus;
+  syncedAt: string | null;
+}
+
+/** One cell of the side-by-side before/after view. */
+export interface DiffCell {
+  n: number;
+  text: string;
+  mark: "same" | "del" | "add";
+}
+
+/** A row of the before/after view: left is "before", right is "after"; a hunk row carries only a label. */
+export interface DiffRow {
+  left: DiffCell | null;
+  right: DiffCell | null;
+  hunk?: string;
+}
+
+export interface ChangedFile {
+  path: string;
+  status: "edited" | "added" | "removed";
+  binary: boolean;
+  truncated: boolean;
+  rows: DiffRow[];
+}
+
 /** The one thing the renderer ever sees. Every sentence in it is already plain language. */
 export interface SessionState {
   phase: Phase;
@@ -45,9 +77,22 @@ export interface SessionState {
   previewUrl: string | null;
   /** Plain sentences the AI wrote about what it changed, oldest first. */
   changes: string[];
+  /** How many files each entry of `changes` touched (same order). */
+  changeFiles: number[];
+  /** Stable id of each entry of `changes` (same order); chat cards point at these, never at positions. */
+  changeIds: string[];
+  /** Every project in the list, in the order they were added. */
+  projects: ProjectSummary[];
+  activeKey: string | null;
+  /** ISO time the open project was last synced with Figma, or null. */
+  syncedAt: string | null;
+  /** Whether quiet self-updates are on (Settings). */
+  updatesEnabled: boolean;
   canSend: boolean;
   canUndo: boolean;
   message?: string;
+  /** Present only in the "conflict" phase: files changed in Figma since the last pull (may be a partial list). */
+  conflictFiles?: string[];
   /** Present only in the "error" phase: stable code of the failure, and the phase it happened in. */
   code?: ErrorCode;
   failedIn?: Phase;
@@ -57,11 +102,68 @@ export interface SessionState {
   workspaceError?: string;
 }
 
+export type ActivityKind = "look" | "edit" | "add" | "check" | "other";
+
+/** One friendly line of what the AI did: "Looked at Button.tsx". Never a command or a full path. */
+export interface ChatActivity {
+  kind: ActivityKind;
+  label: string;
+  /** File name only (no folders), when the line is about one file. */
+  file?: string;
+}
+
+/** An assistant message is an ordered run of text and activity groups, like Claude's own chat. */
+export type ChatPart = { type: "text"; text: string } | { type: "activity"; items: ChatActivity[] };
+
+export interface ChatFile {
+  name: string;
+  status: "edited" | "added" | "removed";
+}
+
+/** The card shown at the end of a turn that changed files. */
+export interface ChatChange {
+  /** Matches an entry of `SessionState.changeIds` while the change can still be viewed or undone. */
+  turnId: string;
+  summary: string;
+  files: ChatFile[];
+  previewUpdated: boolean;
+  fate: "active" | "undone" | "sent";
+}
+
+export type ChatStatus = "done" | "streaming" | "stopped" | "error";
+
+export interface ChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  /** ISO time. */
+  at: string;
+  /** What the person typed (user messages only). */
+  text: string;
+  /** What the AI said and did, in order (assistant messages only). */
+  parts: ChatPart[];
+  status: ChatStatus;
+  change?: ChatChange;
+  /** Present on a failed turn: one plain sentence and a stable code. */
+  error?: { message: string; code: ErrorCode };
+}
+
+/** The conversation of the open project. */
+export interface ChatState {
+  projectKey: string | null;
+  messages: ChatMessage[];
+  /** True while the AI is answering the latest message. */
+  active: boolean;
+  /** True when the next message starts a brand new AI conversation. */
+  fresh: boolean;
+}
+
 export interface DesktopAppState {
   lastLink: string | null;
   agent: AgentChoice | null;
   workspace: string | null;
   projects: Record<string, string>;
+  /** Figma Make file key -> the link it was added with (names and the project list come from here). */
+  links: Record<string, string>;
   updates: { enabled: boolean };
 }
 
@@ -72,7 +174,7 @@ export interface PreviewRect {
   height: number;
 }
 
-export type MenuCommand = "settings" | "start";
+export type MenuCommand = "settings" | "add-project";
 
 /** window.figmake, exposed by preload.cjs. */
 export interface FigmakeApi {
@@ -81,13 +183,26 @@ export interface FigmakeApi {
   onCommand(listener: (command: MenuCommand) => void): () => void;
   openProject(link: string): Promise<void>;
   ask(prompt: string): Promise<void>;
-  undo(): Promise<void>;
+  chat(): Promise<ChatState>;
+  onChat(listener: (chat: ChatState) => void): () => void;
+  /** Starts a fresh AI conversation; the old one is archived. */
+  newChat(): Promise<void>;
+  /** Copies plain text to the system clipboard. */
+  copyText(text: string): Promise<void>;
+  /** Undoes the newest change, or (with an index) that change and every later one. */
+  undo(index?: number): Promise<void>;
+  switchProject(key: string): Promise<void>;
+  /** Takes the project off the list; files are deleted only when `deleteFiles` is true. */
+  removeProject(key: string, deleteFiles: boolean): Promise<void>;
+  /** Before/after of the files one change touched. */
+  describeChange(index: number): Promise<ChangedFile[]>;
   send(resolution?: "mine" | "figma"): Promise<void>;
   cancel(): Promise<void>;
   retry(): Promise<void>;
   setAgent(agent: AgentChoice): Promise<void>;
   chooseWorkspace(): Promise<void>;
   signOutFigma(): Promise<void>;
+  setUpdates(enabled: boolean): Promise<void>;
   reportIssue(request: ReportRequest): Promise<void>;
   onUpdateState(listener: (state: { phase: "idle" | "downloading" | "ready"; version?: string }) => void): () => void;
   installUpdate(): Promise<void>;

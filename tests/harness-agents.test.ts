@@ -184,3 +184,45 @@ describe("process helpers", () => {
     expect(agentEnv({ PATH: "/x", ANTHROPIC_API_KEY: "k", OPENAI_API_KEY: "k", GITHUB_TOKEN: "t", HOME: "/h" })).toEqual({ PATH: "/x", HOME: "/h" });
   });
 });
+
+describe("claude adapter: partial messages", () => {
+  const line = (o: unknown): string => JSON.stringify(o);
+  const feed = (lines: unknown[]): AgentEvent[] => {
+    const parse = createClaudeAdapter().createLineParser();
+    return lines.flatMap((l) => parse(line(l)));
+  };
+
+  it("asks the CLI for partial messages", () => {
+    expect(createClaudeAdapter().buildInvocation({ prompt: "x", cwd: "/p" }).args).toContain("--include-partial-messages");
+  });
+
+  it("emits text deltas and does not repeat the full message text", () => {
+    const events = feed([
+      { type: "stream_event", event: { type: "message_start", message: { id: "m1" } } },
+      { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hel" } } },
+      { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "lo" } } },
+      { type: "assistant", message: { id: "m1", content: [{ type: "text", text: "Hello" }, { type: "tool_use", name: "Read", input: { file_path: "/p/a.ts" } }] } },
+    ]);
+    expect(events).toEqual([
+      { type: "text", text: "Hel", delta: true },
+      { type: "text", text: "lo", delta: true },
+      { type: "tool", name: "Read", summary: "Read /p/a.ts" },
+    ]);
+  });
+
+  it("separates a later message from earlier streamed text", () => {
+    const events = feed([
+      { type: "stream_event", event: { type: "message_start", message: { id: "m1" } } },
+      { type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "One." } } },
+      { type: "stream_event", event: { type: "message_start", message: { id: "m2" } } },
+      { type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "Two." } } },
+    ]);
+    expect(events.map((e) => (e.type === "text" ? e.text : ""))).toEqual(["One.", "\n\nTwo."]);
+  });
+
+  it("still shows whole messages when no deltas arrive", () => {
+    const events = feed([{ type: "assistant", message: { id: "m9", content: [{ type: "text", text: "Whole." }] } }]);
+    expect(events).toEqual([{ type: "text", text: "Whole." }]);
+  });
+});
+

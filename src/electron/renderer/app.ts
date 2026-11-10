@@ -1,194 +1,610 @@
-import type { AgentChoice, Phase, SessionState } from "../contracts.js";
+import type { AgentChoice, ChatState, Phase, ProjectStatus, SessionState } from "../contracts.js";
+import { createChatPanel } from "./chat.js";
+import { ago, h, icon, nodes, plural, type Child } from "./dom.js";
 
-type Child = Node | string | false | null | undefined;
-
-function h<K extends keyof HTMLElementTagNameMap>(tag: K, props: Record<string, unknown> = {}, ...kids: Child[]): HTMLElementTagNameMap[K] {
-  const el = document.createElement(tag);
-  for (const [key, value] of Object.entries(props)) {
-    if (value == null || value === false) continue;
-    if (key.startsWith("on")) el.addEventListener(key.slice(2), value as EventListener);
-    else if (key === "class") el.className = String(value as string);
-    else el.setAttribute(key, value === true ? "" : String(value as string));
-  }
-  el.append(...kids.filter((kid): kid is Node | string => Boolean(kid)));
-  return el;
-}
+/* Renderer: draws SessionState and forwards clicks. No business logic lives here. */
 
 const api = window.figmake;
-const WORKING: Partial<Record<Phase, string>> = { connecting: "Connecting", preparing: "Preparing", working: "Working", sending: "Sending" };
-const AGENTS: [AgentChoice, string][] = [["claude", "Claude"], ["codex", "ChatGPT"]];
+const IS_MAC = /Mac/i.test(navigator.platform || navigator.userAgent);
+const MOD = IS_MAC ? "⌘" : "Ctrl+";
+document.documentElement.classList.add(IS_MAC ? "is-mac" : "is-win");
+
+const AGENTS: { id: AgentChoice; name: string; blurb: string; mark: string; glyph: string }[] = [
+  { id: "claude", name: "Claude", blurb: "Sign in with your Claude account.", mark: "claude", glyph: "claude" },
+  { id: "codex", name: "ChatGPT", blurb: "Sign in with your ChatGPT account.", mark: "gpt", glyph: "gpt" },
+];
+const agentName = (id: AgentChoice | null): string => AGENTS.find((a) => a.id === id)?.name ?? "Your AI helper";
+const STATUS_TEXT: Record<ProjectStatus, string> = { synced: "Up to date", changes: "Changes waiting", attention: "Needs attention" };
+const DOT: Record<ProjectStatus, string> = { synced: "ok", changes: "chg", attention: "bad" };
+const BUSY: readonly Phase[] = ["connecting", "preparing", "working", "sending"];
+const STEPS = ["Getting your project", "Setting up", "Starting preview", "Ready"];
+
+type UserSheet = { kind: "add" } | { kind: "settings" } | { kind: "remove"; key: string } | { kind: "undo"; index: number };
 
 let state: SessionState | null = null;
-let view: "main" | "settings" | "start" = "main";
-let expanded = false;
+let updateReady = false;
+let userSheet: UserSheet | null = null;
+let paletteOpen = false;
+let menuOpen = false;
+let chatState: ChatState = { projectKey: null, messages: [], active: false, fresh: false };
+let prepSince = 0;
+let prepTimer = 0;
 
-function gearIcon(): SVGElement {
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("viewBox", "0 0 16 16");
-  svg.setAttribute("aria-hidden", "true");
-  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  path.setAttribute("d", "M8 5.6a2.4 2.4 0 1 0 0 4.8 2.4 2.4 0 0 0 0-4.8zM6.8 1.5h2.4l.4 1.7 1.2.5 1.5-.9 1.7 1.7-.9 1.5.5 1.2 1.7.4v2.4l-1.7.4-.5 1.2.9 1.5-1.7 1.7-1.5-.9-1.2.5-.4 1.7H6.8l-.4-1.7-1.2-.5-1.5.9-1.7-1.7.9-1.5-.5-1.2-1.7-.4V6.8l1.7-.4.5-1.2-.9-1.5 1.7-1.7 1.5.9 1.2-.5z");
-  path.setAttribute("fill", "none");
-  path.setAttribute("stroke", "currentColor");
-  path.setAttribute("stroke-width", "1.2");
-  path.setAttribute("stroke-linejoin", "round");
-  svg.append(path);
-  return svg;
-}
+const busyNow = (s: SessionState): boolean => BUSY.includes(s.phase);
+const report = (s: SessionState): void => void api.reportIssue({ errorCode: s.code ?? "unknown", message: s.message ?? "", phase: s.failedIn ?? s.phase });
+const reportProblem = (): void => void api.reportIssue({ errorCode: "unknown", message: "Reported from the app", phase: state?.phase ?? "start" });
 
-const show = (v: "main" | "settings" | "start"): void => {
-  view = v;
-  if (state) render(state);
-};
+// ================= skeleton (built once) =================
 
-// ---- Start ----
-const link = h("input", { type: "text", placeholder: "Figma Make link", "aria-label": "Figma Make link", spellcheck: "false", autocomplete: "off" });
-const open = h("button", { class: "primary", disabled: true, onclick: () => submitLink() }, "Open");
-const startScreen = h("main", { class: "screen start" }, h("div", { class: "drag" }), h("div", { class: "row" }, h("div", { class: "field" }, link), open));
-link.addEventListener("input", () => (open.disabled = !link.value.trim()));
-link.addEventListener("keydown", (e) => e.key === "Enter" && submitLink());
-function submitLink(): void {
-  const value = link.value.trim();
+const plist = h("ul", { class: "plist", role: "listbox", "aria-labelledby": "projects-h" });
+const sideEmpty = h("p", { class: "side-empty" }, "No projects yet. Paste a Figma Make link to start.");
+const addBtn = h("button", { type: "button", class: "sbtn", onclick: () => openSheet({ kind: "add" }) }, icon("plus"), "Add project");
+const side = h("aside", { class: "side", "aria-label": "Projects" }, h("div", { class: "side-top", "aria-hidden": "true" }), h("h2", { id: "projects-h", class: "side-h" }, "Projects"), plist, sideEmpty, addBtn, h("div", { class: "spacer" }));
+
+const title = h("h1", {}, "figmake-sync");
+const chip = h("span", { class: "chip status", role: "status" });
+const updateBtn = h("button", { type: "button", class: "plain update", hidden: true, onclick: () => void api.installUpdate() }, icon("refresh", true), "Restart to update");
+const sendBtn = h("button", { type: "button", class: "btn primary send", "aria-keyshortcuts": "", onclick: () => void api.send() });
+const gearBtn = h("button", { type: "button", class: "btn icon gear", "aria-label": "Settings", title: `Settings (${MOD},)`, onclick: () => openSheet({ kind: "settings" }) }, icon("gear"));
+const chatBtn = h("button", { type: "button", class: "btn icon chat-toggle", "aria-label": "Chat", "aria-pressed": "true", "aria-keyshortcuts": "Meta+J Control+J", title: `Chat (${MOD}J)`, onclick: () => setChatOpen(!chatOpen) }, icon("panel"), h("span", { class: "pip", hidden: true }));
+const toolbar = h("header", { class: "toolbar" }, h("div", { class: "ttl row-ttl" }, title, chip), h("div", { class: "tright" }, updateBtn, chatBtn, sendBtn, gearBtn));
+
+const banner = h("div", { class: "errbanner", role: "alert", hidden: true });
+
+const welcomeInput = h("input", { class: "field", type: "text", placeholder: "https://www.figma.com/make/…", "aria-label": "Figma Make link", spellcheck: "false", autocomplete: "off" });
+const welcomeOpen = h("button", { type: "submit", class: "btn primary", disabled: true }, "Open");
+const welcome = h(
+  "div",
+  { class: "card welcome" },
+  h("div", { class: "art" }, h("span", { class: "ghost g1" }, icon("doc")), h("img", { src: "./assets/icon-256.png", alt: "" }), h("span", { class: "ghost g2" }, icon("figma"))),
+  h(
+    "div",
+    { class: "body" },
+    h("h2", {}, "Paste your Figma Make link"),
+    h("p", { class: "lead" }, "Your project opens here so you can describe changes and send them back to Figma."),
+    h("form", { onsubmit: (e: Event) => { e.preventDefault(); submitLink(welcomeInput, welcomeOpen); } }, welcomeInput, welcomeOpen),
+    h("p", { class: "help" }, icon("info"), "Copy it from the address bar while your Figma Make file is open."),
+  ),
+);
+welcomeInput.addEventListener("input", () => (welcomeOpen.disabled = !welcomeInput.value.trim()));
+const prep = h("div", { class: "card prep", role: "status" });
+const calm = h("div", { class: "calm" });
+const slot = h("div", { class: "slot" });
+const stage = h("main", { class: "stage", id: "pane" }, slot, welcome, prep, calm);
+
+const statusText = h("span", { role: "status" });
+const statusBar = h("footer", { class: "status" }, statusText, h("span", { class: "sp" }), h("span", {}, h("span", { class: "kbd" }, `${MOD}J`), " Chat"), h("span", {}, h("span", { class: "kbd" }, `${MOD}K`), " Commands"));
+
+const chatPanel = createChatPanel({
+  api,
+  mod: MOD,
+  confirmUndo: (index) => openSheet({ kind: "undo", index }),
+  openSettings: () => openSheet({ kind: "settings" }),
+  report: () => state && report(state),
+  collapse: () => setChatOpen(false),
+  toast: (text) => toast(text),
+});
+const resizer = h("div", { class: "resizer", role: "separator", "aria-orientation": "vertical", "aria-label": "Resize chat", tabindex: "0" });
+const body = h("div", { class: "body" }, stage, resizer, chatPanel.el);
+const main = h("div", { class: "main" }, toolbar, banner, body, statusBar);
+
+const sheetHost = h("div", { class: "sheet-host" });
+const menuHost = h("div", { class: "menu-host" });
+const toasts = h("div", { class: "toasts", "aria-live": "polite" });
+document.getElementById("app")?.append(h("div", { class: "app" }, side, main), sheetHost, menuHost, toasts);
+
+// ================= actions =================
+
+function submitLink(input: HTMLInputElement, button: HTMLButtonElement): void {
+  const value = input.value.trim();
   if (!value) return;
-  link.value = "";
-  open.disabled = true;
-  view = "main";
+  input.value = "";
+  button.disabled = true;
+  closeSheet();
   void api.openProject(value);
 }
 
-// ---- Project ----
-const name = h("span", { class: "name" });
-const undo = h("button", { class: "link", onclick: () => api.undo() }, "Undo");
-const send = h("button", { class: "primary", onclick: () => api.send() }, "Send to Figma");
-const update = h("button", { class: "link", hidden: true, onclick: () => api.installUpdate() }, "Restart to update");
-const gear = h("button", { class: "icon", "aria-label": "Settings", onclick: () => show("settings") }, gearIcon());
-const slot = h("div", { class: "slot" });
-const center = h("div", { class: "center" });
-const stage = h("div", { class: "stage" }, slot, center);
+function toast(text: string): void {
+  const t = h("div", { class: "toast", role: "status" }, icon("check"), text);
+  toasts.append(t);
+  setTimeout(() => t.remove(), 3200);
+}
 
-const changesBtn = h("button", { "aria-expanded": "false", onclick: () => ((expanded = !expanded), render(state as SessionState)) });
-const changesList = h("ul");
-const changes = h("div", { class: "changes" }, changesBtn, changesList);
-const prompt = h("input", { type: "text", placeholder: "Describe a change", "aria-label": "Describe a change", spellcheck: "true", autocomplete: "off" });
-prompt.addEventListener("keydown", (e) => {
-  const text = prompt.value.trim();
-  if (e.key !== "Enter" || e.isComposing || !text) return;
-  prompt.value = "";
-  void api.ask(text);
-});
-const stateText = h("span", { class: "state", role: "status" });
-const stop = h("button", { class: "link", onclick: () => api.cancel() }, "Stop");
-const choice = h("div", { class: "choice" }, ...AGENTS.map(([id, label]) => h("button", { onclick: () => api.setAgent(id) }, label)));
-const retry = h("button", { class: "link", onclick: () => api.retry() }, "Try again");
-const report = (): HTMLButtonElement => h("button", { class: "link", onclick: () => state && void api.reportIssue({ errorCode: state.code ?? "unknown", message: state.message ?? "", phase: state.failedIn ?? "error" }) }, "Report");
-const reportBar = report();
-const bar = h("div", { class: "field" }, prompt, stateText, choice, stop, retry, reportBar);
+// ================= sidebar =================
 
-const dock = h("footer", { class: "dock" }, changes, bar);
+function projectRow(p: SessionState["projects"][number], s: SessionState): HTMLElement {
+  const selected = p.key === s.activeKey;
+  const working = selected && busyNow(s);
+  const status: ProjectStatus = p.status;
+  const tail = working ? h("span", { class: "spin s", "aria-hidden": "true" }) : h("span", { class: `dot ${DOT[status]}`, title: STATUS_TEXT[status], "aria-hidden": "true" });
+  const row = h(
+    "button",
+    { type: "button", class: "prow", role: "option", "aria-selected": selected ? "true" : "false", "aria-label": `${p.name}, ${working ? "working" : STATUS_TEXT[status].toLowerCase()}`, onclick: () => !selected && void api.switchProject(p.key) },
+    icon("folder"),
+    h("span", { class: "nm" }, p.name),
+    h("span", { class: "tail" }, tail),
+  );
+  const more = h("button", { type: "button", class: `more${selected ? " on-sel" : ""}`, "aria-label": `More options for ${p.name}`, "aria-haspopup": "menu", onclick: (e: MouseEvent) => { e.stopPropagation(); showMenu(p.key, p.name, (e.currentTarget as HTMLElement).getBoundingClientRect().left, (e.currentTarget as HTMLElement).getBoundingClientRect().bottom + 4); } }, icon("more", true));
+  return h("li", { class: "prow-wrap", oncontextmenu: (e: MouseEvent) => { e.preventDefault(); showMenu(p.key, p.name, e.clientX, e.clientY); } }, row, more);
+}
 
-const sheet = h(
-  "div",
-  { class: "scrim", role: "dialog", "aria-modal": "true", "aria-label": "Figma has newer changes." },
-  h(
-    "div",
-    { class: "sheet" },
-    h("p", {}, "Figma has newer changes."),
-    h("div", { class: "buttons" }, h("button", { class: "plain", onclick: () => api.send("mine") }, "Keep mine"), h("button", { class: "plain", onclick: () => api.send("figma") }, "Use Figma's")),
-  ),
-);
-const projectScreen = h("main", { class: "screen project" }, h("header", { class: "bar" }, name, undo, h("span", { class: "grow" }), update, send, gear), stage, dock);
+function renderSidebar(s: SessionState): void {
+  plist.replaceChildren(...s.projects.map((p) => projectRow(p, s)));
+  sideEmpty.hidden = s.projects.length > 0;
+  plist.hidden = s.projects.length === 0;
+}
 
-// ---- Settings ----
-const agentButtons = AGENTS.map(([id, label]) => h("button", { "aria-pressed": "false", onclick: () => api.setAgent(id) }, label));
-const workspaceName = h("span");
-const workspaceError = h("span", { class: "bad", role: "alert" });
-const settingsScreen = h(
-  "main",
-  { class: "screen settings" },
-  h("header", { class: "bar" }, h("span", { class: "title" }, "Settings"), h("button", { class: "link", onclick: () => show("main") }, "Done")),
-  h(
-    "div",
-    { class: "rows" },
-    h("div", { class: "row" }, h("span", {}, "AI"), h("div", { class: "seg" }, ...agentButtons)),
-    h("div", { class: "row" }, h("span", {}, "Workspace"), h("div", { class: "value" }, workspaceError, workspaceName, h("button", { class: "plain", onclick: () => api.chooseWorkspace() }, "Change"))),
-    h("div", { class: "row" }, h("button", { class: "link", onclick: () => api.signOutFigma() }, "Sign out of Figma")),
-  ),
-);
-
-document.getElementById("app")?.append(startScreen, projectScreen, settingsScreen, sheet);
-let updateReady = false;
-api.onUpdateState((u) => {
-  updateReady = u.phase === "ready";
-  if (state) render(state);
+function showMenu(key: string, name: string, x: number, y: number): void {
+  closeMenu();
+  menuOpen = true;
+  const item = h("button", { type: "button", class: "danger", role: "menuitem", onclick: () => { closeMenu(); openSheet({ kind: "remove", key }); } }, icon("trash"), "Remove from list…");
+  const menu = h("div", { class: "menu", role: "menu", "aria-label": name }, item);
+  menu.style.left = `${Math.min(x, window.innerWidth - 220)}px`;
+  menu.style.top = `${Math.min(y, window.innerHeight - 60)}px`;
+  menuHost.replaceChildren(menu);
+  item.focus();
+  syncPreview();
+}
+function closeMenu(): void {
+  if (!menuOpen) return;
+  menuOpen = false;
+  menuHost.replaceChildren();
+  syncPreview();
+}
+document.addEventListener("pointerdown", (e) => {
+  if (menuOpen && !(e.target as Element).closest(".menu")) closeMenu();
 });
 
-function reportPreview(visible: boolean): void {
+// ================= toolbar / banner / status =================
+
+function statusChip(s: SessionState): { text: string; tone: string; spin: boolean } {
+  if (s.phase === "error" || s.phase === "needs-figma-signin" || s.phase === "needs-ai-signin" || s.phase === "conflict" || s.phase === "needs-ai-choice") return { text: s.phase === "error" ? "Needs attention" : "Waiting for you", tone: s.phase === "error" ? "bad" : "chg", spin: false };
+  if (busyNow(s)) return { text: "Working", tone: "busy", spin: true };
+  return s.canSend ? { text: "Changes waiting", tone: "chg", spin: false } : { text: "Up to date", tone: "ok", spin: false };
+}
+
+function renderToolbar(s: SessionState): void {
+  const hasProject = s.phase !== "start" && s.projectName;
+  title.textContent = hasProject ? s.projectName : "figmake-sync";
+  chip.hidden = !hasProject;
+  if (hasProject) {
+    const c = statusChip(s);
+    chip.className = `chip status ${c.tone}`;
+    chip.replaceChildren(c.spin ? h("span", { class: "spin", "aria-hidden": "true" }) : h("span", { class: `dot ${c.tone === "busy" ? "" : c.tone}` }), c.text);
+  }
+  sendBtn.hidden = !hasProject;
+  const enabled = s.phase === "ready" && s.canSend;
+  sendBtn.disabled = !enabled;
+  const count = s.changes.length;
+  sendBtn.replaceChildren(...nodes(icon("up"), h("span", { class: "bl" }, "Send to Figma"), enabled && count > 0 ? h("span", { class: "badge", "aria-label": plural(count, "change") }, String(count)) : null));
+  updateBtn.hidden = !updateReady;
+}
+
+function renderBanner(s: SessionState): void {
+  // A failed turn is answered inside the chat; the banner is for everything else.
+  const inline = s.phase === "error" && Boolean(s.previewUrl) && chatState.messages.at(-1)?.status === "error";
+  banner.hidden = s.phase !== "error" || inline;
+  if (banner.hidden) return banner.replaceChildren();
+  banner.replaceChildren(icon("warn"), h("div", { class: "t" }, s.message ?? "Something went wrong."), h("button", { type: "button", class: "btn primary sm", onclick: () => void api.retry() }, "Try again"), h("button", { type: "button", class: "btn sm", onclick: () => report(s) }, "Report"));
+}
+
+const WORKING_TEXT: Partial<Record<Phase, (s: SessionState) => string>> = {
+  connecting: () => "Getting your project…",
+  preparing: (s) => (s.previewUrl ? `Getting ${agentName(s.agent)} ready…` : "Setting things up…"),
+  working: (s) => `${agentName(s.agent)} is making your change…`,
+  sending: () => "Sending to Figma…",
+};
+
+function renderStatus(s: SessionState): void {
+  const parts: string[] = [];
+  const working = WORKING_TEXT[s.phase];
+  if (working) parts.push(working(s));
+  else if (s.phase === "error") parts.push("Something went wrong");
+  else if (s.phase === "start") parts.push("Ready");
+  else {
+    const when = ago(s.syncedAt);
+    parts.push(when ? `Synced ${when}` : "Not synced yet", "Backup saved");
+  }
+  statusText.textContent = parts.join(" · ");
+}
+
+// ================= stage =================
+
+function prepStep(s: SessionState): number {
+  if (s.phase === "connecting") return 0;
+  return Date.now() - prepSince > 3500 ? 2 : 1;
+}
+
+function renderPrep(s: SessionState): void {
+  const cur = prepStep(s);
+  prep.replaceChildren(
+    h("h2", {}, "Getting your project ready"),
+    h("p", {}, "This only takes a moment. You can keep this window open."),
+    h("div", { class: "prog", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(Math.round(((cur + 0.5) / STEPS.length) * 100)) }, progressFill(((cur + 0.5) / STEPS.length) * 100)),
+    h("ul", { class: "steps" }, ...STEPS.map((label, i) => h("li", { class: i < cur ? "done" : i === cur ? "cur" : "" }, h("span", { class: "mk" }, i < cur ? icon("check-b", true) : i === cur ? h("span", { class: "spin" }) : String(i + 1)), h("span", {}, label)))),
+    h("div", { class: "foot" }, h("button", { type: "button", class: "plain quiet", onclick: () => void api.cancel() }, "Stop")),
+  );
+}
+function progressFill(pct: number): HTMLElement {
+  const i = document.createElement("i");
+  i.style.width = `${pct}%`;
+  return i;
+}
+
+function renderStage(s: SessionState): void {
+  const start = s.phase === "start";
+  const preparing = !s.previewUrl && (s.phase === "connecting" || s.phase === "preparing");
+  const calmIdle = !start && !preparing && !s.previewUrl;
+  welcome.hidden = !start;
+  prep.hidden = !preparing;
+  calm.hidden = !calmIdle;
+  slot.hidden = !s.previewUrl;
+  if (preparing) {
+    if (!prepSince) prepSince = Date.now();
+    renderPrep(s);
+    window.clearTimeout(prepTimer);
+    prepTimer = window.setTimeout(() => state && renderStage(state), 3600);
+  } else prepSince = 0;
+  if (calmIdle) calm.replaceChildren(h("span", { class: "ico" }, icon("laptop")), h("h3", {}, "Your preview shows up here"), h("p", {}, "Once this is sorted out, your project appears in this space."));
+}
+
+// ================= sheets =================
+
+function sheetFrame(o: { tone?: string; glyph: Node; title: string; sub?: string; body?: Child[]; hint?: string; acts?: Child[]; label: string }): HTMLDialogElement {
+  const dlg = h(
+    "dialog",
+    { class: "sheet", "aria-label": o.label },
+    h("div", { class: "hd" }, h("div", { class: `logo ${o.tone ?? ""}`, "aria-hidden": "true" }, o.glyph), h("div", { class: "t" }, h("h2", {}, o.title), o.sub ? h("p", {}, o.sub) : null)),
+    o.body?.length ? h("div", { class: "bd" }, ...o.body) : null,
+    o.acts || o.hint ? h("div", { class: "ft" }, h("small", {}, o.hint ?? ""), h("span", { class: "acts" }, ...(o.acts ?? []))) : h("div", { class: "pad" }),
+  );
+  return dlg;
+}
+
+const btn = (label: string, onclick: () => void, kind = "", extra: Record<string, unknown> = {}): HTMLButtonElement => h("button", { type: "button", class: `btn lg ${kind}`.trim(), onclick, ...extra }, label);
+const waitRow = (text: string): HTMLElement => h("div", { class: "waitrow", role: "status" }, h("span", { class: "spin" }), text);
+
+function filesList(files: string[]): HTMLElement {
+  return h("ul", { class: "files" }, ...files.slice(0, 6).map((f) => h("li", {}, icon("doc", true), f)), files.length > 6 ? h("li", {}, `and ${files.length - 6} more`) : null);
+}
+
+function buildSheet(kind: string, s: SessionState): HTMLDialogElement {
+  switch (kind) {
+    case "ai-choice":
+      return sheetFrame({ label: "Pick your AI helper", glyph: icon("sparkle"), tone: "accent", title: "Pick your AI helper", sub: "It makes the changes you describe. You can switch any time in Settings.", body: [h("div", { class: "choices", role: "group" }, ...AGENTS.map((a) => h("button", { type: "button", class: "choice", onclick: () => void api.setAgent(a.id) }, h("span", { class: `mark ${a.mark}` }, icon(a.glyph)), h("b", {}, a.name), h("span", {}, a.blurb))))], hint: "You'll sign in once, in your browser." });
+    case "ai-signin":
+      return sheetFrame({ label: "Signing in", glyph: icon("person"), tone: "accent", title: `Sign in to ${agentName(s.agent)}`, sub: "A browser window opened for you.", body: [waitRow("Waiting for sign-in in your browser"), h("p", { class: "lead" }, "Finish signing in there and this window carries on by itself.")], acts: [btn("Stop", () => void api.cancel())] });
+    case "figma-signin": {
+      const waiting = Boolean(s.message);
+      return sheetFrame({
+        label: "Sign in to Figma",
+        glyph: icon("figma"),
+        tone: "accent",
+        title: "Sign in to Figma",
+        sub: "So we can bring in your project.",
+        body: waiting ? [waitRow("Waiting for sign-in in your browser"), h("p", { class: "lead" }, "Sign in to Figma in the window that opened. This closes by itself when you're done.")] : [h("p", { class: "lead" }, "Figma opens in a window. Sign in there and you'll come straight back.")],
+        acts: waiting ? [btn("Cancel", () => void api.cancel())] : [btn("Open Figma", () => void api.retry(), "primary")],
+      });
+    }
+    case "conflict":
+      return sheetFrame({
+        label: "Figma has newer changes",
+        glyph: icon("warn"),
+        tone: "warn",
+        title: "Figma has newer changes",
+        sub: "Someone edited this project since you last synced.",
+        body: [h("p", { class: "lead" }, "Which version do you want to keep?"), s.conflictFiles?.length ? filesList(s.conflictFiles) : null],
+        hint: "Either way, a backup is saved first.",
+        acts: [btn("Use Figma's", () => void api.send("figma")), btn("Keep mine", () => void api.send("mine"), "primary")],
+      });
+    case "add": {
+      const input = h("input", { class: "field", type: "text", placeholder: "https://www.figma.com/make/…", "aria-label": "Figma Make link", spellcheck: "false", autocomplete: "off" });
+      const open = btn("Open", () => submitLink(input, open), "primary", { disabled: true });
+      input.addEventListener("input", () => (open.disabled = !input.value.trim()));
+      input.addEventListener("keydown", (e) => e.key === "Enter" && !e.isComposing && submitLink(input, open));
+      queueMicrotask(() => input.focus());
+      return sheetFrame({ label: "Add a project", glyph: icon("plus"), tone: "accent", title: "Add a project", sub: "Paste the link to your Figma Make file.", body: [input, h("p", { class: "help" }, "Copy it from the address bar while the file is open.")], acts: [btn("Cancel", closeSheet), open] });
+    }
+    case "settings": {
+      const seg = h("div", { class: "seg", role: "group", "aria-label": "AI helper" }, ...AGENTS.map((a) => h("button", { type: "button", "aria-pressed": String(s.agent === a.id), "aria-selected": String(s.agent === a.id), onclick: () => void api.setAgent(a.id) }, a.name)));
+      const updates = h("button", { type: "button", class: "sw", role: "switch", "aria-checked": String(s.updatesEnabled), "aria-label": "Keep the app up to date", onclick: () => void api.setUpdates(!s.updatesEnabled) });
+      return sheetFrame({
+        label: "Settings",
+        glyph: icon("gear"),
+        title: "Settings",
+        body: [
+          h(
+            "div",
+            { class: "setrows" },
+            h("div", { class: "row" }, h("div", { class: "l" }, h("b", {}, "AI helper"), h("span", {}, "Who makes your changes")), h("div", { class: "r" }, seg)),
+            h("div", { class: "row" }, h("div", { class: "l" }, h("b", {}, "Projects folder"), h("span", { class: s.workspaceError ? "bad" : "" }, s.workspaceError ?? s.workspace)), h("div", { class: "r" }, btn("Change…", () => void api.chooseWorkspace()))),
+            h("div", { class: "row" }, h("div", { class: "l" }, h("b", {}, "Figma account"), h("span", {}, "Sign out on this Mac")), h("div", { class: "r" }, btn("Sign out of Figma", () => { void api.signOutFigma(); toast("Signed out of Figma"); }))),
+            h("div", { class: "row" }, h("div", { class: "l" }, h("b", {}, "Updates"), h("span", {}, "Install new versions quietly")), h("div", { class: "r" }, updates)),
+          ),
+        ],
+        acts: [h("button", { type: "button", class: "plain", onclick: () => { closeSheet(); reportProblem(); } }, "Report a problem"), btn("Done", closeSheet, "primary")],
+      });
+    }
+    case "remove": {
+      const p = s.projects.find((x) => x.key === (userSheet as { key: string }).key);
+      const key = p?.key ?? "";
+      const del = h("input", { type: "checkbox", "aria-label": "Also delete its files" });
+      const go = btn("Remove from list", () => { closeSheet(); void api.removeProject(key, del.checked); }, "primary");
+      del.addEventListener("change", () => { go.textContent = del.checked ? "Remove and delete files" : "Remove from list"; go.classList.toggle("danger-solid", del.checked); go.classList.toggle("primary", !del.checked); });
+      return sheetFrame({ label: "Remove from list", glyph: icon("trash"), tone: "bad", title: `Remove “${p?.name ?? "this project"}”?`, sub: "It leaves your list, and your files stay where they are.", body: [h("label", { class: "sheet-confirm" }, del, "Also delete its files from this Mac")], acts: [btn("Cancel", closeSheet), go] });
+    }
+    default: {
+      const index = (userSheet as { index: number }).index;
+      const later = s.changes.length - 1 - index;
+      return sheetFrame({ label: "Undo", glyph: icon("undo"), tone: "warn", title: "Undo this change?", sub: `“${s.changes[index] ?? ""}”`, body: [h("p", { class: "lead" }, later > 0 ? `This also undoes the ${plural(later, "change")} you made after it.` : "Your files go back to how they were.")], acts: [btn("Cancel", closeSheet), btn("Undo", () => { closeSheet(); void api.undo(index); }, "primary")] });
+    }
+  }
+}
+
+let shownSheet = "";
+let dialog: HTMLDialogElement | null = null;
+
+function openSheet(next: UserSheet): void {
+  userSheet = next;
+  if (state) renderSheets(state);
+}
+function closeSheet(): void {
+  userSheet = null;
+  if (state) renderSheets(state);
+}
+
+function phaseSheet(s: SessionState): string | null {
+  if (s.phase === "needs-ai-choice") return "ai-choice";
+  if (s.phase === "needs-ai-signin") return "ai-signin";
+  if (s.phase === "needs-figma-signin") return "figma-signin";
+  if (s.phase === "conflict") return "conflict";
+  return null;
+}
+
+function renderSheets(s: SessionState): void {
+  const kind = phaseSheet(s) ?? userSheet?.kind ?? null;
+  const sig = kind === null ? "" : [kind, kind === "settings" ? [s.agent, s.workspace, s.workspaceError, s.updatesEnabled].join("|") : "", kind === "figma-signin" ? Boolean(s.message) : "", kind === "conflict" ? (s.conflictFiles ?? []).join(",") : "", kind === "ai-signin" ? s.agent : "", kind === "remove" ? (userSheet as { key: string }).key : "", kind === "undo" ? (userSheet as { index: number }).index : ""].join("#");
+  if (sig === shownSheet) return syncPreview();
+  shownSheet = sig;
+  const previous = dialog;
+  dialog = null;
+  if (previous) {
+    previous.close();
+    previous.remove();
+  }
+  if (kind) {
+    const dlg = buildSheet(kind, s);
+    const isPhase = phaseSheet(s) !== null;
+    dlg.addEventListener("cancel", (e) => {
+      e.preventDefault();
+      if (!isPhase) closeSheet();
+      else if (kind === "conflict" || kind === "ai-signin" || (kind === "figma-signin" && s.message)) void api.cancel();
+    });
+    sheetHost.append(dlg);
+    dlg.showModal();
+    dialog = dlg;
+    (dlg.querySelector("input") ?? dlg.querySelector("button.primary, button.choice, button.btn"))?.focus();
+  }
+  syncPreview();
+}
+
+// ================= palette =================
+
+interface Cmd { label: string; glyph: string; keys?: string[]; off?: boolean; group: string; run: () => void }
+
+function commands(s: SessionState): Cmd[] {
+  const list: Cmd[] = [
+    { group: "Do", label: "Open project…", glyph: "plus", keys: [`${MOD}N`], run: () => openSheet({ kind: "add" }) },
+    { group: "Do", label: "Send to Figma", glyph: "up", off: !(s.phase === "ready" && s.canSend), run: () => void api.send() },
+    { group: "Do", label: "New chat", glyph: "compose", off: !(s.phase === "ready" && chatState.messages.length > 0), run: () => void api.newChat() },
+    { group: "Do", label: "Toggle chat", glyph: "panel", keys: [`${MOD}J`], off: !hasChat(s), run: () => setChatOpen(!chatOpen) },
+    { group: "Do", label: "Undo last change", glyph: "undo", off: !(s.phase === "ready" && s.canUndo), run: () => void api.undo() },
+    { group: "Do", label: "Settings", glyph: "gear", keys: [`${MOD},`], run: () => openSheet({ kind: "settings" }) },
+    { group: "Do", label: "Report a problem", glyph: "info", run: reportProblem },
+  ];
+  for (const p of s.projects) if (p.key !== s.activeKey) list.push({ group: "Projects", label: p.name, glyph: "folder", run: () => void api.switchProject(p.key) });
+  return list;
+}
+
+function openPalette(): void {
+  if (paletteOpen || !state || phaseSheet(state)) return;
+  paletteOpen = true;
+  let q = "";
+  let sel = 0;
+  const input = h("input", { type: "text", placeholder: "Type a command…", "aria-label": "Command", autocomplete: "off", spellcheck: "false", role: "combobox", "aria-expanded": "true", "aria-controls": "pal-list" });
+  const list = h("div", { class: "list", role: "listbox", id: "pal-list" });
+  const dlg = h("dialog", { class: "pal", "aria-label": "Commands" }, h("div", { class: "in" }, icon("search"), input, h("span", { class: "kbd", "aria-hidden": "true" }, "esc")), list, h("div", { class: "ft" }, h("span", {}, h("span", { class: "kbd" }, "↑↓"), " move"), h("span", {}, h("span", { class: "kbd" }, "↵"), " run")));
+  const shown = (): Cmd[] => commands(state as SessionState).filter((c) => c.label.toLowerCase().includes(q.trim().toLowerCase()));
+  const draw = (): void => {
+    const items = shown();
+    sel = Math.min(sel, Math.max(items.length - 1, 0));
+    const out: Child[] = [];
+    let group = "";
+    items.forEach((c, i) => {
+      if (c.group !== group) { group = c.group; out.push(h("div", { class: "gh" }, group === "Do" ? "Commands" : group)); }
+      out.push(h("button", { type: "button", class: "it", role: "option", "aria-selected": String(i === sel), "aria-disabled": String(Boolean(c.off)), onclick: () => run(c), onmousemove: () => { if (sel !== i) { sel = i; draw(); } } }, icon(c.glyph), h("span", { class: "lbl" }, c.label), c.keys ? h("span", { class: "keys" }, ...c.keys.map((k) => h("span", { class: "kbd" }, k))) : null));
+    });
+    list.replaceChildren(...nodes(...(out.length ? out : [h("div", { class: "none" }, "Nothing matches that.")])));
+  };
+  const run = (c: Cmd | undefined): void => {
+    if (!c || c.off) return;
+    closePalette();
+    c.run();
+  };
+  input.addEventListener("input", () => { q = input.value; sel = 0; draw(); });
+  input.addEventListener("keydown", (e) => {
+    const n = shown().length;
+    if (e.key === "ArrowDown") { e.preventDefault(); sel = (sel + 1) % Math.max(n, 1); draw(); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); sel = (sel - 1 + n) % Math.max(n, 1); draw(); }
+    else if (e.key === "Enter") { e.preventDefault(); run(shown()[sel]); }
+  });
+  dlg.addEventListener("cancel", (e) => { e.preventDefault(); closePalette(); });
+  dlg.addEventListener("click", (e) => { if (e.target === dlg) closePalette(); });
+  sheetHost.append(dlg);
+  dlg.showModal();
+  draw();
+  input.focus();
+  syncPreview();
+}
+function closePalette(): void {
+  if (!paletteOpen) return;
+  paletteOpen = false;
+  for (const d of Array.from(sheetHost.querySelectorAll("dialog.pal"))) { (d as HTMLDialogElement).close(); d.remove(); }
+  syncPreview();
+}
+
+// ================= chat layout =================
+
+const store = {
+  get(key: string): string | null {
+    try { return window.localStorage.getItem(`figmake.${key}`); } catch { return null; }
+  },
+  set(key: string, value: string): void {
+    try { window.localStorage.setItem(`figmake.${key}`, value); } catch { /* private mode: layout just isn't remembered */ }
+  },
+};
+const MIN_CHAT = 300;
+const MAX_CHAT = 640;
+const MIN_STAGE = 340;
+const compactQuery = window.matchMedia("(max-width: 900px)");
+let chatOpen = store.get("chat.open") !== "0";
+let chatW = Math.round(Number(store.get("chat.w")) || 400);
+let chatH = Math.round(Number(store.get("chat.h")) || 320);
+
+const hasChat = (s: SessionState | null): boolean => Boolean(s && s.phase !== "start" && s.projectName);
+
+function clampChat(): void {
+  const box = body.getBoundingClientRect();
+  if (compactQuery.matches) chatH = Math.max(200, Math.min(chatH, Math.max(200, box.height - 160)));
+  else chatW = Math.max(MIN_CHAT, Math.min(chatW, MAX_CHAT, Math.max(MIN_CHAT, box.width - MIN_STAGE)));
+}
+
+function layoutChat(): void {
+  const show = hasChat(state) && chatOpen;
+  body.classList.toggle("compact", compactQuery.matches);
+  body.classList.toggle("chat-off", !show);
+  chatPanel.el.hidden = !show;
+  resizer.hidden = !show;
+  chatBtn.hidden = !hasChat(state);
+  chatBtn.setAttribute("aria-pressed", String(show));
+  chatBtn.classList.toggle("on", show);
+  clampChat();
+  body.style.setProperty("--chat-w", `${chatW}px`);
+  body.style.setProperty("--chat-h", `${chatH}px`);
+  resizer.setAttribute("aria-orientation", compactQuery.matches ? "horizontal" : "vertical");
+  resizer.setAttribute("aria-valuenow", String(compactQuery.matches ? chatH : chatW));
+  syncPreview();
+}
+
+function setChatOpen(open: boolean): void {
+  if (!hasChat(state)) return;
+  chatOpen = open;
+  store.set("chat.open", open ? "1" : "0");
+  layoutChat();
+  if (open) chatPanel.focusComposer();
+}
+
+resizer.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  resizer.setPointerCapture(e.pointerId);
+  resizer.classList.add("drag");
+  const move = (ev: PointerEvent): void => {
+    const box = body.getBoundingClientRect();
+    if (compactQuery.matches) chatH = Math.round(box.bottom - ev.clientY);
+    else chatW = Math.round(box.right - ev.clientX);
+    layoutChat();
+  };
+  const up = (): void => {
+    resizer.classList.remove("drag");
+    resizer.removeEventListener("pointermove", move);
+    resizer.removeEventListener("pointerup", up);
+    resizer.removeEventListener("pointercancel", up);
+    store.set("chat.w", String(chatW));
+    store.set("chat.h", String(chatH));
+  };
+  resizer.addEventListener("pointermove", move);
+  resizer.addEventListener("pointerup", up);
+  resizer.addEventListener("pointercancel", up);
+});
+resizer.addEventListener("dblclick", () => {
+  chatW = 400;
+  chatH = 320;
+  store.set("chat.w", "400");
+  store.set("chat.h", "320");
+  layoutChat();
+});
+resizer.addEventListener("keydown", (e) => {
+  const grow = compactQuery.matches ? (e.key === "ArrowUp" ? 1 : e.key === "ArrowDown" ? -1 : 0) : e.key === "ArrowLeft" ? 1 : e.key === "ArrowRight" ? -1 : 0;
+  if (!grow) return;
+  e.preventDefault();
+  if (compactQuery.matches) chatH += grow * 24;
+  else chatW += grow * 24;
+  layoutChat();
+  store.set("chat.w", String(chatW));
+  store.set("chat.h", String(chatH));
+});
+compactQuery.addEventListener("change", layoutChat);
+window.addEventListener("resize", layoutChat);
+
+// ================= preview slot =================
+
+let previewShown = false;
+function syncPreview(): void {
+  const s = state;
+  const overlay = Boolean(dialog) || paletteOpen || menuOpen;
+  previewShown = Boolean(s?.previewUrl) && s?.phase !== "start";
+  slot.classList.toggle("paused", overlay && previewShown);
   const r = slot.getBoundingClientRect();
-  api.previewRect(visible && r.width > 0 ? { x: r.x, y: r.y, width: r.width, height: r.height } : null);
+  api.previewRect(previewShown && !overlay && r.width > 0 ? { x: r.x, y: r.y, width: r.width, height: r.height } : null);
 }
-let previewVisible = false;
-new ResizeObserver(() => reportPreview(previewVisible)).observe(slot);
+new ResizeObserver(syncPreview).observe(slot);
 
-function centerContent(s: SessionState): Child[] {
-  if (s.phase === "needs-figma-signin") return [h("button", { class: "primary", onclick: () => api.retry() }, "Sign in to Figma")];
-  if (s.phase === "error") return [h("span", { class: "msg", role: "alert" }, s.message), h("span", { class: "actions" }, h("button", { class: "link", onclick: () => api.retry() }, "Try again"), report())];
-  return [h("span", { role: "status" }, s.message ?? WORKING[s.phase] ?? ""), h("button", { class: "link", onclick: () => api.cancel() }, "Stop")];
-}
+// ================= render =================
 
+let lastMessage: string | undefined;
 function render(s: SessionState): void {
+  const wasBusy = state ? busyNow(state) : false;
   state = s;
-  const onStart = view === "start" || s.phase === "start";
-  const onSettings = !onStart && view === "settings";
-  startScreen.hidden = !onStart;
-  settingsScreen.hidden = !onSettings;
-  projectScreen.hidden = onStart || onSettings;
-
-  const ready = s.phase === "ready";
-  const hasPreview = Boolean(s.previewUrl);
-  name.textContent = s.projectName ?? "";
-  undo.hidden = !(ready && s.canUndo);
-  send.disabled = !(ready && s.canSend);
-  center.hidden = hasPreview;
-  if (!hasPreview) center.replaceChildren(...(centerContent(s).filter(Boolean) as Node[]));
-  dock.hidden = !hasPreview;
-
-  const last = s.changes.at(-1);
-  changes.hidden = !(ready && (last || s.message));
-  changesBtn.textContent = last ?? s.message ?? "";
-  changesBtn.disabled = !last;
-  changesBtn.setAttribute("aria-expanded", String(expanded && Boolean(last)));
-  changesList.hidden = !(expanded && s.changes.length > 1);
-  changesList.replaceChildren(...s.changes.slice(0, -1).reverse().map((c) => h("li", {}, c)));
-
-  const asking = ready || s.phase === "conflict";
-  prompt.hidden = !asking;
-  choice.hidden = s.phase !== "needs-ai-choice";
-  retry.hidden = s.phase !== "error";
-  reportBar.hidden = s.phase !== "error";
-  update.hidden = !updateReady;
-  stop.hidden = !["preparing", "working", "sending", "needs-ai-signin"].includes(s.phase);
-  stateText.hidden = asking || s.phase === "needs-ai-choice";
-  stateText.className = s.phase === "error" ? "state bad" : "state";
-  stateText.textContent = s.phase === "error" ? (s.message ?? "") : (s.message ?? WORKING[s.phase] ?? "");
-
-  agentButtons.forEach((b, i) => b.setAttribute("aria-pressed", String(AGENTS[i]?.[0] === s.agent)));
-  workspaceName.textContent = s.workspace;
-  workspaceError.textContent = s.workspaceError ?? "";
-  workspaceError.hidden = !s.workspaceError;
-
-  sheet.hidden = s.phase !== "conflict";
-  previewVisible = hasPreview && !onStart && !onSettings && s.phase !== "conflict";
-  reportPreview(previewVisible);
-  if (s.phase === "conflict") sheet.querySelector("button")?.focus();
-  else if (!projectScreen.hidden && !prompt.hidden && document.activeElement === document.body) prompt.focus();
-  if (onStart) link.focus();
+  renderSidebar(s);
+  renderToolbar(s);
+  renderBanner(s);
+  renderStage(s);
+  chatPanel.setSession(s);
+  layoutChat();
+  renderStatus(s);
+  renderSheets(s);
+  if (s.message === "Sent to Figma" && lastMessage !== "Sent to Figma") toast("Sent to Figma");
+  lastMessage = s.message;
+  if (s.phase === "start" && !dialog && !paletteOpen) welcomeInput.focus();
+  else if (s.phase === "ready" && wasBusy && !dialog && !paletteOpen && document.activeElement === document.body) chatPanel.focusComposer();
 }
 
 document.addEventListener("keydown", (e) => {
-  if (e.key !== "Escape") return;
-  if (view !== "main" && state && state.phase !== "start") show("main");
-  else void api.cancel();
+  const mod = e.metaKey || e.ctrlKey;
+  if (mod && e.key.toLowerCase() === "j") { e.preventDefault(); closePalette(); setChatOpen(!chatOpen); }
+  else if (mod && e.key.toLowerCase() === "k") { e.preventDefault(); if (paletteOpen) closePalette(); else openPalette(); }
+  else if (mod && e.key.toLowerCase() === "n") { e.preventDefault(); closePalette(); openSheet({ kind: "add" }); }
+  else if (mod && e.key === ",") { e.preventDefault(); closePalette(); openSheet({ kind: "settings" }); }
+  else if (e.key === "Escape") {
+    if (menuOpen) closeMenu();
+    else if (!dialog && !paletteOpen && state && ["working", "sending", "preparing"].includes(state.phase)) void api.cancel();
+  }
 });
-api.onCommand((command) => show(command === "settings" ? (view === "settings" ? "main" : "settings") : "start"));
+api.onCommand((command) => openSheet({ kind: command === "settings" ? "settings" : "add" }));
+api.onChat((chat) => {
+  chatState = chat;
+  chatPanel.setChat(chat);
+  if (state) { renderBanner(state); updatePip(); }
+});
+void api.chat().then((chat) => { chatState = chat; chatPanel.setChat(chat); });
+function updatePip(): void {
+  const pip = chatBtn.querySelector(".pip");
+  if (pip) (pip as HTMLElement).hidden = !(chatState.active && !chatOpen);
+}
+api.onUpdateState((u) => {
+  updateReady = u.phase === "ready";
+  if (state) renderToolbar(state);
+});
+window.setInterval(() => state && renderStatus(state), 30_000);
 api.onState(render);
 void api.state().then(render);

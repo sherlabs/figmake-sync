@@ -19,6 +19,7 @@ import fs from "fs-extra";
 
 import { createHealingAdapterFactory } from "../app/healing.js";
 import { DiagnosticsLog, handleReportRequest, type SanitizeContext } from "../app/report.js";
+import { ChatStore } from "../app/chatStore.js";
 import { Session } from "../app/session.js";
 import { slugify } from "../app/workspace.js";
 import { installPlaywrightBrowser, isBrowserInstalled, isPlaywrightBrowserMissingError } from "../browser/install.js";
@@ -119,13 +120,21 @@ async function ensureNode(signal?: AbortSignal): Promise<{ ok: boolean; message?
   }
 }
 
-async function waitForFigmaSignin(): Promise<void> {
-  const options = { type: "info" as const, message: "Sign in to Figma, then click Done.", buttons: ["Done"], defaultId: 0 };
-  if (mainWindow && !mainWindow.isDestroyed()) await dialog.showMessageBox(mainWindow, options);
-  else await dialog.showMessageBox(options);
+/** Never resolves on its own: the browser auto-detects the sign-in. Rejects when the person cancels. */
+function waitForFigmaSignin(signal: AbortSignal): Promise<void> {
+  return new Promise<void>((_resolve, reject) => {
+    const abort = (): void => reject(Object.assign(new Error("Sign-in cancelled"), { name: "AbortError" }));
+    if (signal.aborted) abort();
+    else signal.addEventListener("abort", abort, { once: true });
+  });
 }
 
 // ---- window ----
+
+function overlayColors(): { color: string; symbolColor: string; height: number } {
+  const dark = nativeTheme.shouldUseDarkColors;
+  return { color: dark ? "#1e1e20" : "#ffffff", symbolColor: dark ? "#e5e5e7" : "#1d1d1f", height: 52 };
+}
 
 async function createWindow(): Promise<BrowserWindow> {
   const window = new BrowserWindow({
@@ -137,8 +146,10 @@ async function createWindow(): Promise<BrowserWindow> {
     center: true,
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#1c1c1e" : "#ffffff",
     icon: path.join(import.meta.dirname, "renderer", "assets", "icon-512.png"),
-    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
+    // macOS: traffic lights inset into the sidebar. Windows: the toolbar is the title bar, with the system buttons overlaid on its right.
+    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : process.platform === "win32" ? "hidden" : "default",
     trafficLightPosition: { x: 18, y: 18 },
+    ...(process.platform === "win32" ? { titleBarOverlay: overlayColors() } : {}),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -168,6 +179,7 @@ async function createWindow(): Promise<BrowserWindow> {
     if (level >= 2) void log(`Renderer: ${message}`);
   });
   window.once("ready-to-show", () => window.show());
+  if (process.platform === "win32") nativeTheme.on("updated", () => !window.isDestroyed() && window.setTitleBarOverlay(overlayColors()));
   await window.loadFile(path.join(import.meta.dirname, "renderer", "index.html"));
   return window;
 }
@@ -181,7 +193,7 @@ function buildMenu(): void {
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
       { label: "figmake-sync", submenu: [command("Settings…", "CommandOrControl+,", "settings"), { type: "separator" }, { role: "hide" }, { role: "quit" }] },
-      { label: "File", submenu: [command("Open Link…", "CommandOrControl+N", "start"), { role: "close" }] },
+      { label: "File", submenu: [command("Add Project…", "CommandOrControl+N", "add-project"), { role: "close" }] },
       { role: "editMenu" },
       { role: "windowMenu" },
     ]),
@@ -197,6 +209,11 @@ function registerIpc(s: Session): void {
     if (typed.length > 10) typed.shift();
     return s.ask(prompt.slice(0, 20_000));
   });
+  ipcMain.handle("figmake:chat", () => s.chat);
+  ipcMain.handle("figmake:new-chat", () => s.newChat());
+  ipcMain.handle("figmake:clipboard-write", (_e, text: unknown) => {
+    if (typeof text === "string") clipboard.writeText(text.slice(0, 100_000));
+  });
   ipcMain.handle("figmake:report-issue", (_e, request: unknown) => {
     handleReportRequest(request, {
       version: app.getVersion(),
@@ -209,7 +226,19 @@ function registerIpc(s: Session): void {
       writeClipboard: (text) => clipboard.writeText(text),
     });
   });
-  ipcMain.handle("figmake:undo", () => s.undo());
+  ipcMain.handle("figmake:undo", (_e, index: unknown) => s.undo(typeof index === "number" && Number.isInteger(index) ? index : undefined));
+  ipcMain.handle("figmake:switch", (_e, key: unknown) => (typeof key === "string" ? s.switchProject(key.slice(0, 256)) : undefined));
+  ipcMain.handle("figmake:remove-project", (_e, key: unknown, deleteFiles: unknown) =>
+    typeof key === "string" ? s.removeProject(key.slice(0, 256), deleteFiles === true) : undefined,
+  );
+  ipcMain.handle("figmake:describe-change", (_e, index: unknown) => (typeof index === "number" && Number.isInteger(index) ? s.describeChange(index) : []));
+  ipcMain.handle("figmake:set-updates", async (_e, enabled: unknown) => {
+    if (typeof enabled !== "boolean") return;
+    await s.setUpdates(enabled);
+    if (!enabled) updater?.stop();
+    else if (updater) updater.start();
+    else await startUpdater(s, true);
+  });
   ipcMain.handle("figmake:send", (_e, resolution: unknown) =>
     s.send(resolution === "mine" || resolution === "figma" ? resolution : undefined),
   );
@@ -255,6 +284,7 @@ async function bootstrap(): Promise<void> {
     sync,
     harness,
     appState: store,
+    chatStore: new ChatStore(userData("chats")),
     documentsDir,
     guard: { home: app.getPath("home"), forbidden: [app.getAppPath(), path.dirname(process.execPath)] },
     chooseFolder: async () => {
@@ -288,6 +318,7 @@ async function bootstrap(): Promise<void> {
     }
     send("figmake:state", state);
   });
+  live.onChat((chat) => send("figmake:chat", chat));
   void live.start().catch((error: unknown) => log("Start failed", error));
   await startUpdater(live, (await store.load()).updates.enabled);
 }
@@ -333,7 +364,7 @@ app.on("will-quit", (event) => {
   // Dev servers run in their own process groups; none may outlive the app.
   if (shutdownDone || !harness) return;
   event.preventDefault();
-  void harness.shutdown().catch(() => undefined).then(() => {
+  void Promise.all([harness.shutdown().catch(() => undefined), appSession?.flush().catch(() => undefined)]).then(() => {
     shutdownDone = true;
     app.quit();
   });

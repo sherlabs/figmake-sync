@@ -67,18 +67,46 @@ body{margin:0;background:#14171c;font-family:Inter,system-ui,sans-serif}
 .strip u{text-decoration:none}
 .big{position:absolute;font-weight:800;letter-spacing:-.035em}
 
+
+.card{position:absolute;left:40px;width:1000px;border-radius:34px;background:#fff;box-shadow:0 30px 90px rgba(0,0,0,.28),0 0 0 3px rgba(130,135,145,.35);overflow:hidden}
+.uk{position:absolute;transform-origin:0 0;font:13px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,system-ui,sans-serif;color:#1d1d1f}
+.fld{position:relative;flex:1;height:44px;border-radius:12px;background:#f2f2f4;display:flex;align-items:center;padding:0 14px;font-size:15px;overflow:hidden}
+.fld .ph{position:absolute;left:14px;color:#65656a}
+.fld .tx{white-space:pre}
+.fld .st{flex:1;color:#65656a;font-size:14px}
+.fld .stop{color:#0071e3;font-size:13px}
+.fld .lay{position:absolute;inset:0;display:flex;align-items:center;padding:0 14px;font-size:15px}
+.fld .rg{position:absolute;inset:0;border-radius:12px;box-shadow:0 0 0 2px #0071e3;opacity:0}
+.row4{display:flex;gap:10px;width:400px}
+.pri{height:44px;padding:0 20px;border-radius:12px;font-size:15px;display:flex;align-items:center;background:#ececef;color:#65656a;font-weight:500}
+.pri.sm{height:auto;padding:5px 12px;border-radius:8px;font-size:13px}
+.cho{display:flex;gap:8px;width:100%;padding:0}
+.cho span{flex:1;height:30px;border-radius:8px;background:#fff;display:flex;align-items:center;justify-content:center;font-weight:500;font-size:14px;position:relative}
+.cho span i{position:absolute;inset:0;border-radius:8px;box-shadow:0 0 0 2px #0071e3;opacity:0}
+.pv{position:absolute;left:0;top:0;width:1180px;height:700px;background:#f5f2ea;font-family:Georgia,serif;color:#1c1b19;transform-origin:0 0}
+.pv h1{position:absolute;left:48px;top:111px;margin:0;width:600px;font-weight:400;font-size:49px;line-height:50px;letter-spacing:-.3px}
+.pv .sub{position:absolute;left:48px;top:238px;font-size:17px;color:#4d4a44}
+.pv .btn{position:absolute;left:48px;top:290px;height:47px;padding:0 26px;border-radius:999px;background:#222;color:#fff;font:400 15px/47px -apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,sans-serif}
+.pv .sw{position:absolute;top:381px;width:150px;height:150px;border-radius:14px}
+.chgl{display:flex;justify-content:space-between;align-items:center;width:370px;height:62px;padding:0 4px;color:#65656a;font-size:13px}
+.bar2{display:flex;align-items:center;gap:12px;width:500px;height:52px;padding:0 14px;font-size:13px}
+.bar2 .nm{font-weight:600;color:#1d1d1f}
+.bar2 .lk{color:#0071e3;padding:4px 6px}
+.bar2 .gr{flex:1}
+.bar2 svg{width:16px;height:16px;color:#65656a;margin:0 6px}
+
 </style>
 </head>
 <body>
 <div id="root" data-composition-id="main" data-start="0" data-width="1080" data-height="1920" data-duration="22.37">
 <section id="s1" class="scene ink clip" data-start="0" data-duration="2.46"><div class="grid"></div><div class="glow"></div><div class="kick" id="k1"><img class="fg" src="assets/figma-logo.svg"/>Figma Make</div><div class="cap"  style="font-size:158px;top:215px"><span class="ln"><span class="w">Every</span><span class="w hl">tweak</span></span><span class="ln"><span class="w">costs</span><span class="w hl">tokens.</span></span></div><div class="meter" id="m1" style="top:730px"><div class="mlab">AI CREDITS</div><div class="mtrack"><div class="mfill" style="width:100%"></div></div></div><div class="task" id="t0" style="top:1010px"><span>Change the button color</span><div class="coin" id="k0"><i></i></div></div><div class="task" id="t1" style="top:1260px"><span>Fix the cart total</span><div class="coin" id="k1"><i></i></div></div><div class="task" id="t2" style="top:1510px"><span>Rename a label</span><div class="coin" id="k2"><i></i></div></div></section>
-<section id="s2" class="scene paper clip" data-start="2.46" data-duration="2.18"><div class="grid"></div><div class="kick" id="k2"><img class="fg" src="assets/figma-logo.svg"/>Figma Make builds a real React app</div><div class="cap"  style="font-size:236px;top:225px"><span class="ln"><span class="w">It's</span><span class="w hl">your</span></span><span class="ln"><span class="w hl">code.</span></span></div><div class="codecard" id="cc"><div class="tag">src/pages/Cart.tsx</div><div class="cl" style="top:200px">export default function Cart() {</div><div class="cl" style="top:325px">  const total = items.reduce(</div><div class="cl bug" style="top:450px">    (s, i) =&gt; s + i.price, 0)</div><div class="cl" style="top:575px">  return &lt;Total value={total} /&gt;</div><div class="cl" style="top:700px">}</div></div></section>
+<section id="s2" class="scene paper clip" data-start="2.46" data-duration="2.18"><div class="grid"></div><div class="kick" id="k2"><img class="fg" src="assets/figma-logo.svg"/>Figma Make</div><div class="cap"  style="font-size:236px;top:225px"><span class="ln"><span class="w">It's</span><span class="w hl">your</span></span><span class="ln"><span class="w hl">code.</span></span></div><div class="codecard" id="cc"><div class="tag">src/pages/Cart.tsx</div><div class="cl" style="top:200px">export default function Cart() {</div><div class="cl" style="top:325px">  const total = items.reduce(</div><div class="cl bug" style="top:450px">    (s, i) =&gt; s + i.price, 0)</div><div class="cl" style="top:575px">  return &lt;Total value={total} /&gt;</div><div class="cl" style="top:700px">}</div></div></section>
 <section id="s3" class="scene ink clip" data-start="4.64" data-duration="2.71"><div class="grid"></div><div class="glow"></div><div class="cap"  style="font-size:122px;top:190px"><span class="ln"><span class="w">Edit</span><span class="w">it</span><span class="w hl">by</span><span class="w">hand.</span></span><span class="ln"><span class="w">Or</span><span class="w">spend</span><span class="w hl">tokens.</span></span></div><div class="opt" id="oa" style="top:660px"><div class="olab">BY HAND</div><div class="ocode">const total =<br><span id="typ"></span><b class="caret"></b></div></div><div class="opt" id="ob" style="top:1230px"><div class="olab">FIGMA'S AI CREDITS</div><div class="meter" id="m3" style="top:130px"><div class="mlab"></div><div class="mtrack"><div class="mfill" style="width:64%"></div></div></div><div class="orow"><span>Change the button color</span><div class="coin sm" id="k3"><i></i></div></div></div></section>
-<section id="s4" class="scene orange clip" data-start="7.35" data-duration="1.94"><div class="grid"></div><div class="kick" id="k4"><i></i>figmake-sync</div><div class="cap"  style="font-size:320px;top:160px"><span class="ln"><span class="w">Pull</span><span class="w">it</span></span><span class="ln"><span class="w hl">local.</span></span></div><div class="crop" id="c4" style="left:40px;top:900px;width:1000px;height:325.0px;"><img src="assets/08-pull-running-progress-light.png" style="left:-730.77px;top:-107.69px;width:2461.54px"/></div><div class="pillbig" id="pa" style="top:1285px;font-family:JetBrains Mono,ui-monospace,monospace;font-size:52px">~/Projects/checkout-flow</div><div id="row4" style="position:absolute;left:0;width:1080px;top:1560px;height:240px;display:flex;align-items:center;justify-content:center;gap:50px"><img id="fg4" src="assets/figma-logo.svg" style="height:200px;width:auto"/><svg id="ar4" width="130" height="100" viewBox="0 0 120 90"><path d="M8 45H100M68 12L104 45L68 78" fill="none" stroke="#14171c" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/></svg><img id="ic4" src="assets/figmake-sync-icon.svg" style="width:220px;height:220px;border-radius:50px;box-shadow:0 20px 60px rgba(0,0,0,.3)"/></div></section>
-<section id="s5" class="scene ink clip" data-start="9.29" data-duration="2.73"><div class="grid"></div><div class="glow"></div><div class="cap"  style="font-size:150px;top:190px"><span class="ln"><span class="w">Your</span><span class="w">own</span></span><span class="ln"><span class="w hl">subscription.</span></span></div><div class="pills" id="pl5" style="top:590px"><span class="pill">Claude Code</span><span class="pill">Codex</span></div><div class="crop" id="c5" style="left:47px;top:760px;width:986px;height:288.0px;"><img src="assets/a09-run-finished-changes-light.png" style="left:-504.00px;top:-144.00px;width:2560.00px"/></div><div class="strip" id="st5">Not <u>Figma's</u> tokens.</div><div class="meter" id="m5" style="top:1580px"><div class="mlab">AI CREDITS</div><div class="mtrack"><div class="mfill" style="width:100%"></div></div></div></section>
-<section id="s6" class="scene paper clip" data-start="12.02" data-duration="2.18"><div class="grid"></div><div class="cap"  style="font-size:150px;top:215px"><span class="ln"><span class="w">npm</span><span class="w">install.</span></span><span class="ln"><span class="w hl">Runs</span><span class="w">locally.</span></span></div><div class="crop" id="c6a" style="left:40px;top:700px;width:1000px;height:241.6px;"><img src="assets/a04-setup-running-light.png" style="left:-486.99px;top:-789.96px;width:2379.18px"/></div><div class="crop top" id="c6b"  style="left:40px;top:700px;width:1000px;height:241.6px;"><img src="assets/a05-dev-running-url-light.png" style="left:-486.99px;top:-789.96px;width:2379.18px"/></div><div class="crop log" id="c6l" style="left:40px;top:1012px;width:1000px;height:241.9px;"><img src="assets/a05-dev-running-url-light.png" style="left:-674.42px;top:-1390.70px;width:2976.74px"/></div><div class="pillbig" id="pu" style="top:1450px;font-family:JetBrains Mono,ui-monospace,monospace">http://localhost:5173</div></section>
-<section id="s7" class="scene ink clip" data-start="14.2" data-duration="2.73"><div class="grid"></div><div class="glow"></div><div class="cap"  style="font-size:160px;top:215px"><span class="ln"><span class="w">Type</span><span class="w">the</span></span><span class="ln"><span class="w hl">change.</span></span></div><div class="pbox" id="pb7"><div class="plab">Ask for a change</div><div class="ptxt" id="pt7"><span class="ch">M</span><span class="ch">a</span><span class="ch">k</span><span class="ch">e</span><span class="ch"> </span><span class="ch">t</span><span class="ch">h</span><span class="ch">e</span><span class="ch"> </span><span class="ch">c</span><span class="ch">a</span><span class="ch">r</span><span class="ch">t</span><span class="ch"> </span><span class="ch">t</span><span class="ch">o</span><span class="ch">t</span><span class="ch">a</span><span class="ch">l</span><span class="ch"> </span><span class="ch">i</span><span class="ch">n</span><span class="ch">c</span><span class="ch">l</span><span class="ch">u</span><span class="ch">d</span><span class="ch">e</span><span class="ch"> </span><span class="ch">t</span><span class="ch">h</span><span class="ch">e</span><span class="ch"> </span><span class="ch">p</span><span class="ch">r</span><span class="ch">o</span><span class="ch">m</span><span class="ch">o</span><span class="ch"> </span><span class="ch">d</span><span class="ch">i</span><span class="ch">s</span><span class="ch">c</span><span class="ch">o</span><span class="ch">u</span><span class="ch">n</span><span class="ch">t</span><b class="caret" id="car7"></b></div></div><div class="crop" id="c7" style="left:40px;top:1110px;width:1000px;height:343.9px;"><img src="assets/a08-agent-streaming-dark.png" style="left:-486.99px;top:-1356.88px;width:2379.18px"/></div><div class="pills" id="pl7" style="top:1590px"><span class="pill" style="font-size:52px;padding:22px 42px">Claude Code</span><span class="pill" style="font-size:52px;padding:22px 42px">your account</span></div></section>
-<section id="s8" class="scene paper clip" data-start="16.93" data-duration="2.17"><div class="grid"></div><div class="kick" id="k8"><img class="fg" src="assets/figma-logo.svg"/>Figma Make</div><div class="cap"  style="font-size:136px;top:215px"><span class="ln"><span class="w">Push</span><span class="w">it</span><span class="w">back</span></span><span class="ln"><span class="w">to</span><span class="w hl">Figma</span><span class="w">Make.</span></span></div><div class="pills" id="pl8" style="top:650px"><span class="pill" style="font-size:44px">Nothing is sent until you push</span></div><div id="cam8" style="position:absolute;left:0;top:0;width:1080px;height:1920px;transform-origin:975.8px 1047.5px"><div class="crop" style="left:40px;top:1020px;width:1000px;height:217.9px"><img src="assets/a09-run-finished-changes-light.png" style="left:-288.99px;top:-1291.28px;width:1467.89px"/></div><div class="ring" id="r8" style="left:917.8px;top:1023.5px;width:116px;height:50px;border-radius:12px"></div><div class="rip" id="p8" style="left:975.8px;top:1047.5px"></div><svg class="cur" id="c8" viewBox="0 0 24 24" style="width:54px;height:54px"><path d="M3 2l7 19 3-8 8-3z" fill="#fff" stroke="#111" stroke-width="1.6" stroke-linejoin="round"/></svg></div></section>
+<section id="s4" class="scene orange clip" data-start="7.35" data-duration="1.94"><div class="grid"></div><div class="kick" id="k4"><i></i>figmake-sync</div><div class="cap"  style="font-size:320px;top:160px"><span class="ln"><span class="w">Pull</span><span class="w">it</span></span><span class="ln"><span class="w hl">local.</span></span></div><div class="card" id="c4" style="top:880px;height:300px"><div class="uk" style="left:20px;top:98px;width:400px;transform:scale(2.4)"><div class="row4"><div class="fld"><span class="ph" id="ph4">Figma Make link</span><span class="tx" id="tx4"></span><div class="rg" id="rg4"></div></div><div class="pri" id="op4">Open</div></div></div></div><div id="row4" style="position:absolute;left:0;width:1080px;top:1440px;height:240px;display:flex;align-items:center;justify-content:center;gap:50px"><img id="fg4" src="assets/figma-logo.svg" style="height:200px;width:auto"/><svg id="ar4" width="130" height="100" viewBox="0 0 120 90"><path d="M8 45H100M68 12L104 45L68 78" fill="none" stroke="#14171c" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/></svg><img id="ic4" src="assets/figmake-sync-icon.svg" style="width:220px;height:220px;border-radius:50px;box-shadow:0 20px 60px rgba(0,0,0,.3)"/></div></section>
+<section id="s5" class="scene ink clip" data-start="9.29" data-duration="2.73"><div class="grid"></div><div class="glow"></div><div class="cap"  style="font-size:150px;top:190px"><span class="ln"><span class="w">Your</span><span class="w">own</span></span><span class="ln"><span class="w hl">subscription.</span></span></div><div class="card" id="c5" style="top:690px;height:250px"><div class="uk" style="left:20px;top:72px;width:400px;transform:scale(2.4)"><div class="fld" style="padding:0 7px"><div class="cho"><span>Claude<i id="ch1"></i></span><span>ChatGPT<i id="ch2"></i></span></div></div></div></div><div class="strip" id="st5" style="top:1090px">Not <u>Figma's</u> tokens.</div><div class="meter" id="m5" style="top:1580px"><div class="mlab">AI CREDITS</div><div class="mtrack"><div class="mfill" style="width:100%"></div></div></div></section>
+<section id="s6" class="scene paper clip" data-start="12.02" data-duration="2.18"><div class="grid"></div><div class="cap"  style="font-size:176px;top:200px"><span class="ln"><span class="w">Describe</span><span class="w">a</span></span><span class="ln"><span class="w hl">change.</span></span></div><div class="card" id="c6" style="top:960px;height:300px"><div class="uk" style="left:20px;top:98px;width:400px;transform:scale(2.4)"><div class="fld" style="padding:0 14px"><div class="lay" id="p6i"><span class="ph" id="ph6">Describe a change</span><span class="tx" id="tx6"></span></div><div class="lay" id="p6w" style="opacity:0"><span class="st">Working</span><span class="stop">Stop</span></div><div class="rg" id="rg6"></div></div></div></div></section>
+<section id="s7" class="scene ink clip" data-start="14.2" data-duration="2.73"><div class="grid"></div><div class="glow"></div><div class="cap"  style="font-size:160px;top:200px"><span class="ln"><span class="w">See</span><span class="w">it</span></span><span class="ln"><span class="w hl">change.</span></span></div><div class="card" id="c7" style="top:600px;height:790px"><div class="pv" style="transform:translate(-40px,-160px) scale(1.6)"><h1>Hand-poured candles for slow evenings.</h1><div class="sub">Small batches. Soy wax. Burns for forty hours.</div><div class="btn" id="btn7">Shop the collection</div><div class="sw" style="left:48px;background:#dac7a6"></div><div class="sw" style="left:216px;background:#c8ae8a"></div><div class="sw" style="left:384px;background:#b89a74"></div></div></div><div class="card" id="l7" style="top:1450px;height:160px"><div class="uk" style="left:19px;top:0px;width:370px;transform:scale(2.6)"><div class="chgl" style="height:61px"><span>Made the button blue ›</span><span style="color:#0071e3">Undo</span></div></div></div></section>
+<section id="s8" class="scene paper clip" data-start="16.93" data-duration="2.17"><div class="grid"></div><div class="kick" id="k8"><img class="fg" src="assets/figma-logo.svg"/>Figma Make</div><div class="cap"  style="font-size:250px;top:215px"><span class="ln"><span class="w">Send</span><span class="w">it</span></span><span class="ln"><span class="w hl">back.</span></span></div><div id="cam8" style="position:absolute;left:0;top:0;width:1080px;height:1920px;transform-origin:822px 1110px"><div class="card" id="c8k" style="top:1000px;height:220px"><div class="uk" style="left:0;top:58px;width:500px;transform:scale(2)"><div class="bar2"><span class="nm">Checkout Flow</span><span class="lk" id="un8">Undo</span><span class="gr"></span><div class="pri sm" id="sb8" style="background:#0071e3;color:#fff">Send to Figma</div><svg viewBox="0 0 16 16"><path d="M8 5.6a2.4 2.4 0 1 0 0 4.8 2.4 2.4 0 0 0 0-4.8zM6.8 1.5h2.4l.4 1.7 1.2.5 1.5-.9 1.7 1.7-.9 1.5.5 1.2 1.7.4v2.4l-1.7.4-.5 1.2.9 1.5-1.7 1.7-1.5-.9-1.2.5-.4 1.7H6.8l-.4-1.7-1.2-.5-1.5.9-1.7-1.7.9-1.5-.5-1.2-1.7-.4V6.8l1.7-.4.5-1.2-.9-1.5 1.7-1.7 1.5.9 1.2-.5z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg></div></div></div><div class="ring" id="r8"></div><div class="rip" id="p8"></div><svg class="cur" id="c8" viewBox="0 0 24 24" style="width:54px;height:54px"><path d="M3 2l7 19 3-8 8-3z" fill="#fff" stroke="#111" stroke-width="1.6" stroke-linejoin="round"/></svg></div><div class="card" id="l8" style="top:1500px;height:160px"><div class="uk" style="left:19px;top:0px;width:370px;transform:scale(2.6)"><div class="chgl" style="height:61px"><span>Sent to Figma</span><span></span></div></div></div></section>
 <section id="s9" class="scene ink clip" data-start="19.1" data-duration="3.27"><div class="grid"></div><div class="glow"></div><div id="row9" style="position:absolute;left:0;width:1080px;top:190px;height:320px;display:flex;align-items:center;justify-content:center;gap:56px"><img id="fg9" src="assets/figma-logo.svg" style="height:230px;width:auto;display:block"/><svg id="ar9" width="120" height="90" viewBox="0 0 120 90"><path d="M8 45H100M68 12L104 45L68 78" fill="none" stroke="#d9641a" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/></svg><img id="ic9" src="assets/figmake-sync-icon.svg" style="width:300px;height:300px;border-radius:68px;box-shadow:0 30px 100px rgba(217,100,26,.35);display:block"/></div><div id="n9" class="big" style="left:0;width:1080px;top:600px;text-align:center;font-size:146px;color:#f3f4f6">figmake-sync</div><div id="f9" class="big" style="left:0;width:1080px;top:800px;text-align:center;font-size:88px;line-height:1.1;color:#f3f4f6">Free for <span class="hl">Mac</span> &amp; <span class="hl">Windows</span></div><div id="by9" style="position:absolute;left:0;width:1080px;top:1050px;display:flex;flex-direction:column;align-items:center;gap:34px"><div style="font:600 44px/1 'JetBrains Mono',ui-monospace,monospace;letter-spacing:.1em;color:#aab1bd">by</div><img src="assets/sherlabs-wordmark-light.svg" style="width:680px;height:auto;display:block"/></div><div id="u9" style="position:absolute;left:0;width:1080px;top:1490px;text-align:center"><span style="display:inline-block;font:700 70px 'JetBrains Mono',ui-monospace,monospace;color:#14171c;background:#d9641a;padding:26px 60px;border-radius:999px">sherlabs.com</span></div><div id="dis9" style="position:absolute;left:0;width:1080px;top:1730px;text-align:center;font:500 38px/1.3 Inter,system-ui,sans-serif;color:#aab1bd">Unofficial. Not affiliated with Figma.</div></section>
 
 <div id="wipe"></div>
@@ -116,30 +144,65 @@ body{margin:0;background:#14171c;font-family:Inter,system-ui,sans-serif}
 <audio id="sx29" src="assets/sfx/click_003.ogg" data-start="9.89" data-track-index="40" data-volume="0.6"></audio>
 <audio id="sx30" src="assets/sfx/card-slide-1.ogg" data-start="9.94" data-track-index="41" data-volume="0.5"></audio>
 <audio id="sx31" src="assets/sfx/impactSoft_heavy_003.ogg" data-start="10.69" data-track-index="42" data-volume="0.8"></audio>
-<audio id="sx32" src="assets/sfx/card-slide-1.ogg" data-start="12.24" data-track-index="43" data-volume="0.5"></audio>
-<audio id="sx33" src="assets/sfx/click_002.ogg" data-start="12.77" data-track-index="44" data-volume="0.6"></audio>
-<audio id="sx34" src="assets/sfx/drop_002.ogg" data-start="12.97" data-track-index="45" data-volume="0.6"></audio>
-<audio id="sx35" src="assets/sfx/keypress-003.wav" data-start="14.8" data-track-index="46" data-volume="0.4"></audio>
-<audio id="sx36" src="assets/sfx/keypress-023.wav" data-start="14.848" data-track-index="47" data-volume="0.4"></audio>
-<audio id="sx37" src="assets/sfx/keypress-019.wav" data-start="14.896" data-track-index="48" data-volume="0.4"></audio>
-<audio id="sx38" src="assets/sfx/keypress-015.wav" data-start="14.944" data-track-index="49" data-volume="0.4"></audio>
-<audio id="sx39" src="assets/sfx/keypress-011.wav" data-start="14.992" data-track-index="50" data-volume="0.4"></audio>
-<audio id="sx40" src="assets/sfx/keypress-007.wav" data-start="15.04" data-track-index="51" data-volume="0.4"></audio>
-<audio id="sx41" src="assets/sfx/keypress-003.wav" data-start="15.088" data-track-index="52" data-volume="0.4"></audio>
-<audio id="sx42" src="assets/sfx/keypress-023.wav" data-start="15.136" data-track-index="53" data-volume="0.4"></audio>
-<audio id="sx43" src="assets/sfx/keypress-019.wav" data-start="15.184" data-track-index="54" data-volume="0.4"></audio>
-<audio id="sx44" src="assets/sfx/keypress-015.wav" data-start="15.232" data-track-index="55" data-volume="0.4"></audio>
-<audio id="sx45" src="assets/sfx/keypress-011.wav" data-start="15.28" data-track-index="56" data-volume="0.4"></audio>
-<audio id="sx46" src="assets/sfx/keypress-007.wav" data-start="15.328" data-track-index="57" data-volume="0.4"></audio>
-<audio id="sx47" src="assets/sfx/keypress-003.wav" data-start="15.376" data-track-index="58" data-volume="0.4"></audio>
-<audio id="sx48" src="assets/sfx/keypress-023.wav" data-start="15.424" data-track-index="59" data-volume="0.4"></audio>
-<audio id="sx49" src="assets/sfx/click_003.ogg" data-start="15.6" data-track-index="60" data-volume="0.6"></audio>
-<audio id="sx50" src="assets/sfx/card-slide-1.ogg" data-start="15.6" data-track-index="61" data-volume="0.5"></audio>
-<audio id="sx51" src="assets/sfx/card-slide-1.ogg" data-start="17.13" data-track-index="62" data-volume="0.5"></audio>
-<audio id="sx52" src="assets/sfx/mouseclick1.ogg" data-start="18.55" data-track-index="63" data-volume="0.9"></audio>
-<audio id="sx53" src="assets/sfx/impactBell_heavy_000.ogg" data-start="18.6" data-track-index="64" data-volume="0.55"></audio>
-<audio id="sx54" src="assets/sfx/impactBell_heavy_004.ogg" data-start="19.62" data-track-index="65" data-volume="0.85"></audio>
-<audio id="sx55" src="assets/sfx/drop_001.ogg" data-start="20.35" data-track-index="66" data-volume="0.6"></audio>
+<audio id="sx32" src="assets/sfx/keypress-003.wav" data-start="8.050" data-track-index="44" data-volume="0.35"></audio>
+<audio id="sx33" src="assets/sfx/keypress-007.wav" data-start="8.075" data-track-index="45" data-volume="0.35"></audio>
+<audio id="sx34" src="assets/sfx/keypress-011.wav" data-start="8.100" data-track-index="46" data-volume="0.35"></audio>
+<audio id="sx35" src="assets/sfx/keypress-015.wav" data-start="8.125" data-track-index="47" data-volume="0.35"></audio>
+<audio id="sx36" src="assets/sfx/keypress-019.wav" data-start="8.150" data-track-index="48" data-volume="0.35"></audio>
+<audio id="sx37" src="assets/sfx/keypress-023.wav" data-start="8.175" data-track-index="49" data-volume="0.35"></audio>
+<audio id="sx38" src="assets/sfx/keypress-003.wav" data-start="8.200" data-track-index="50" data-volume="0.35"></audio>
+<audio id="sx39" src="assets/sfx/keypress-007.wav" data-start="8.225" data-track-index="51" data-volume="0.35"></audio>
+<audio id="sx40" src="assets/sfx/keypress-011.wav" data-start="8.250" data-track-index="52" data-volume="0.35"></audio>
+<audio id="sx41" src="assets/sfx/keypress-015.wav" data-start="8.275" data-track-index="53" data-volume="0.35"></audio>
+<audio id="sx42" src="assets/sfx/keypress-019.wav" data-start="8.300" data-track-index="54" data-volume="0.35"></audio>
+<audio id="sx43" src="assets/sfx/keypress-023.wav" data-start="8.325" data-track-index="55" data-volume="0.35"></audio>
+<audio id="sx44" src="assets/sfx/keypress-003.wav" data-start="8.350" data-track-index="56" data-volume="0.35"></audio>
+<audio id="sx45" src="assets/sfx/keypress-007.wav" data-start="8.375" data-track-index="57" data-volume="0.35"></audio>
+<audio id="sx46" src="assets/sfx/keypress-011.wav" data-start="8.400" data-track-index="58" data-volume="0.35"></audio>
+<audio id="sx47" src="assets/sfx/keypress-015.wav" data-start="8.425" data-track-index="59" data-volume="0.35"></audio>
+<audio id="sx48" src="assets/sfx/keypress-019.wav" data-start="8.450" data-track-index="60" data-volume="0.35"></audio>
+<audio id="sx49" src="assets/sfx/keypress-023.wav" data-start="8.475" data-track-index="61" data-volume="0.35"></audio>
+<audio id="sx50" src="assets/sfx/keypress-003.wav" data-start="8.500" data-track-index="62" data-volume="0.35"></audio>
+<audio id="sx51" src="assets/sfx/keypress-007.wav" data-start="8.525" data-track-index="63" data-volume="0.35"></audio>
+<audio id="sx52" src="assets/sfx/keypress-011.wav" data-start="8.550" data-track-index="64" data-volume="0.35"></audio>
+<audio id="sx53" src="assets/sfx/keypress-015.wav" data-start="8.575" data-track-index="65" data-volume="0.35"></audio>
+<audio id="sx54" src="assets/sfx/keypress-019.wav" data-start="8.600" data-track-index="66" data-volume="0.35"></audio>
+<audio id="sx55" src="assets/sfx/keypress-023.wav" data-start="8.625" data-track-index="67" data-volume="0.35"></audio>
+<audio id="sx56" src="assets/sfx/keypress-003.wav" data-start="8.650" data-track-index="68" data-volume="0.35"></audio>
+<audio id="sx57" src="assets/sfx/keypress-007.wav" data-start="8.675" data-track-index="69" data-volume="0.35"></audio>
+<audio id="sx58" src="assets/sfx/keypress-011.wav" data-start="8.700" data-track-index="70" data-volume="0.35"></audio>
+<audio id="sx59" src="assets/sfx/keypress-015.wav" data-start="8.725" data-track-index="71" data-volume="0.35"></audio>
+<audio id="sx60" src="assets/sfx/keypress-003.wav" data-start="12.620" data-track-index="72" data-volume="0.4"></audio>
+<audio id="sx61" src="assets/sfx/keypress-023.wav" data-start="12.665" data-track-index="73" data-volume="0.4"></audio>
+<audio id="sx62" src="assets/sfx/keypress-019.wav" data-start="12.710" data-track-index="74" data-volume="0.4"></audio>
+<audio id="sx63" src="assets/sfx/keypress-015.wav" data-start="12.755" data-track-index="75" data-volume="0.4"></audio>
+<audio id="sx64" src="assets/sfx/keypress-011.wav" data-start="12.800" data-track-index="76" data-volume="0.4"></audio>
+<audio id="sx65" src="assets/sfx/keypress-007.wav" data-start="12.845" data-track-index="77" data-volume="0.4"></audio>
+<audio id="sx66" src="assets/sfx/keypress-003.wav" data-start="12.890" data-track-index="78" data-volume="0.4"></audio>
+<audio id="sx67" src="assets/sfx/keypress-023.wav" data-start="12.935" data-track-index="79" data-volume="0.4"></audio>
+<audio id="sx68" src="assets/sfx/keypress-019.wav" data-start="12.980" data-track-index="80" data-volume="0.4"></audio>
+<audio id="sx69" src="assets/sfx/keypress-015.wav" data-start="13.025" data-track-index="81" data-volume="0.4"></audio>
+<audio id="sx70" src="assets/sfx/keypress-011.wav" data-start="13.070" data-track-index="82" data-volume="0.4"></audio>
+<audio id="sx71" src="assets/sfx/keypress-007.wav" data-start="13.115" data-track-index="83" data-volume="0.4"></audio>
+<audio id="sx72" src="assets/sfx/keypress-003.wav" data-start="13.160" data-track-index="84" data-volume="0.4"></audio>
+<audio id="sx73" src="assets/sfx/keypress-023.wav" data-start="13.205" data-track-index="85" data-volume="0.4"></audio>
+<audio id="sx74" src="assets/sfx/keypress-019.wav" data-start="13.250" data-track-index="86" data-volume="0.4"></audio>
+<audio id="sx75" src="assets/sfx/keypress-015.wav" data-start="13.295" data-track-index="87" data-volume="0.4"></audio>
+<audio id="sx76" src="assets/sfx/keypress-011.wav" data-start="13.340" data-track-index="88" data-volume="0.4"></audio>
+<audio id="sx77" src="assets/sfx/keypress-007.wav" data-start="13.385" data-track-index="89" data-volume="0.4"></audio>
+<audio id="sx78" src="assets/sfx/keypress-003.wav" data-start="13.430" data-track-index="90" data-volume="0.4"></audio>
+<audio id="sx79" src="assets/sfx/keypress-023.wav" data-start="13.475" data-track-index="91" data-volume="0.4"></audio>
+<audio id="sx80" src="assets/sfx/card-slide-1.ogg" data-start="12.240" data-track-index="92" data-volume="0.5"></audio>
+<audio id="sx81" src="assets/sfx/click_003.ogg" data-start="13.740" data-track-index="93" data-volume="0.6"></audio>
+<audio id="sx82" src="assets/sfx/card-slide-1.ogg" data-start="14.450" data-track-index="94" data-volume="0.5"></audio>
+<audio id="sx83" src="assets/sfx/drop_002.ogg" data-start="15.450" data-track-index="95" data-volume="0.6"></audio>
+<audio id="sx84" src="assets/sfx/impactSoft_medium_001.ogg" data-start="15.450" data-track-index="96" data-volume="0.45"></audio>
+<audio id="sx85" src="assets/sfx/drop_001.ogg" data-start="15.900" data-track-index="97" data-volume="0.6"></audio>
+<audio id="sx86" src="assets/sfx/card-slide-1.ogg" data-start="17.130" data-track-index="98" data-volume="0.5"></audio>
+<audio id="sx100" src="assets/sfx/mouseclick1.ogg" data-start="18.55" data-track-index="120" data-volume="0.9"></audio>
+<audio id="sx101" src="assets/sfx/impactBell_heavy_000.ogg" data-start="18.6" data-track-index="121" data-volume="0.55"></audio>
+<audio id="sx102" src="assets/sfx/impactBell_heavy_004.ogg" data-start="19.62" data-track-index="122" data-volume="0.85"></audio>
+<audio id="sx103" src="assets/sfx/drop_001.ogg" data-start="20.35" data-track-index="123" data-volume="0.6"></audio>
 
 </div>
 <script>
@@ -188,52 +251,62 @@ pop("#ob", t0 + 1.05, 140);
 tl.to("#m3 .mfill", { width: "28%", duration: .5, ease: "power2.out" }, t0 + 1.5);
 tl.from("#k3", { scale: 0, duration: .3, ease: "back.out(3)" }, t0 + 1.6);
 
+const typeTo=(id,str,t,cps)=>{const o={n:0};tl.to(o,{n:str.length,duration:str.length/cps,ease:"none",onUpdate:()=>{q(id).textContent=str.slice(0,Math.round(o.n))}},t);};
+
 // S4 pull local 7.35 -> 9.29
 t0 = T[3];
 kick("#k4", t0 + .05);
 lineIn("#s4 .cap .ln:nth-child(1)", t0 + .08); lineIn("#s4 .cap .ln:nth-child(2)", t0 + .18);
 tl.from("#c4", { y: 220, opacity: 0, duration: .45, ease: "power3.out" }, t0 + .25);
-tl.from("#row4", { y: 120, opacity: 0, duration: .4, ease: "power3.out" }, t0 + .8);
-tl.from("#pa", { y: 90, opacity: 0, scale: .92, duration: .4, ease: "back.out(1.8)" }, t0 + .6);
+tl.set("#rg4", { opacity: 1 }, t0 + .65);
+tl.set("#ph4", { opacity: 0 }, t0 + .7);
+typeTo("#tx4", "figma.com/make/Oak-and-Ember", t0 + .7, 40);
+tl.to("#op4", { backgroundColor: "#0071e3", color: "#fff", duration: .15 }, t0 + .78);
+tl.from("#row4", { y: 120, opacity: 0, duration: .4, ease: "power3.out" }, t0 + .9);
 
 // S5 own subscription 9.29 -> 12.02
 t0 = T[4];
 lineIn("#s5 .cap .ln:nth-child(1)", t0 + .08); lineIn("#s5 .cap .ln:nth-child(2)", t0 + .18);
-tl.from("#pl5 .pill", { y: 60, opacity: 0, duration: .35, stagger: .15, ease: "back.out(1.8)" }, t0 + .45);
-tl.from("#c5", { y: 180, opacity: 0, duration: .45, ease: "power3.out" }, t0 + .65);
+tl.from("#c5", { y: 180, opacity: 0, duration: .45, ease: "power3.out" }, t0 + .4);
+tl.fromTo("#ch1", { opacity: 0 }, { opacity: 1, duration: .15 }, t0 + .75);
 tl.fromTo("#st5", { scale: 1.2, opacity: 0, y: 40 }, { scale: 1, opacity: 1, y: 0, duration: .35, ease: "back.out(2)" }, t0 + 1.4);
 tl.from("#m5", { opacity: 0, y: 40, duration: .4, ease: "power3.out" }, t0 + 1.65);
 
-// S6 install + run 12.02 -> 14.20
+// S6 describe 12.02 -> 14.20
 t0 = T[5];
 lineIn("#s6 .cap .ln:nth-child(1)", t0 + .06); lineIn("#s6 .cap .ln:nth-child(2)", t0 + .16);
-tl.from("#c6a", { y: 160, opacity: 0, duration: .4, ease: "power3.out" }, t0 + .22);
-tl.fromTo("#c6b", { opacity: 0 }, { opacity: 1, duration: .1 }, t0 + .75);
-tl.from("#c6l", { y: 120, opacity: 0, duration: .4, ease: "power3.out" }, t0 + .8);
-tl.from("#pu", { y: 90, opacity: 0, scale: .92, duration: .4, ease: "back.out(1.8)" }, t0 + .95);
+tl.from("#c6", { y: 160, opacity: 0, duration: .4, ease: "power3.out" }, t0 + .22);
+tl.set("#rg6", { opacity: 1 }, t0 + .55);
+tl.set("#ph6", { opacity: 0 }, t0 + .6);
+typeTo("#tx6", "Make the button blue", t0 + .6, 22);
+tl.set("#p6i", { opacity: 0 }, t0 + 1.7); tl.set("#p6w", { opacity: 1 }, t0 + 1.7); tl.set("#rg6", { opacity: 0 }, t0 + 1.7);
 
-// S7 prompt 14.20 -> 16.93
+// S7 see it change 14.20 -> 16.93
 t0 = T[6];
 lineIn("#s7 .cap .ln:nth-child(1)", t0 + .06); lineIn("#s7 .cap .ln:nth-child(2)", t0 + .16);
-tl.from("#pb7", { y: 120, opacity: 0, duration: .35, ease: "power3.out" }, t0 + .25);
-document.querySelectorAll("#pt7 .ch").forEach((sp, k) => { tl.set(sp, { opacity: 1 }, t0 + .6 + k * .016); });
-tl.fromTo("#pb7", { borderColor: "#4a5363" }, { borderColor: "#d9641a", duration: .15 }, t0 + 1.4);
-tl.from("#c7", { y: 180, opacity: 0, duration: .45, ease: "power3.out" }, t0 + 1.4);
-tl.from("#pl7 .pill", { y: 60, opacity: 0, duration: .35, stagger: .12, ease: "back.out(1.8)" }, t0 + 1.7);
+tl.from("#c7", { y: 180, opacity: 0, duration: .45, ease: "power3.out" }, t0 + .25);
+tl.to("#btn7", { backgroundColor: "#0a6cf0", duration: .3, ease: "power2.out" }, t0 + 1.25);
+tl.fromTo("#btn7", { scale: 1 }, { scale: 1.08, duration: .2, yoyo: true, repeat: 1, ease: "sine.inOut", transformOrigin: "0 50%" }, t0 + 1.25);
+tl.from("#l7", { y: 90, opacity: 0, scale: .94, duration: .4, ease: "back.out(1.8)" }, t0 + 1.7);
 
-// S8 push 16.93 -> 19.64
+// S8 push 16.93 -> 19.1
 t0 = T[7];
+const BX = 825, BY = 1110;
 kick("#k8", t0 + .05);
 lineIn("#s8 .cap .ln:nth-child(1)", t0 + .08); lineIn("#s8 .cap .ln:nth-child(2)", t0 + .18);
-tl.from("#pl8 .pill", { y: 60, opacity: 0, duration: .35, ease: "back.out(1.8)" }, t0 + .28);
-tl.from("#cam8 .crop", { y: 200, opacity: 0, duration: .45, ease: "power3.out" }, t0 + .2);
-const BX = parseFloat(q("#cam8").style.transformOrigin), BY = parseFloat(q("#cam8").style.transformOrigin.split(" ")[1]);
-tl.to("#cam8", { scale: 2.15, x: 700 - BX, y: 1330 - BY, duration: .65, ease: "power3.inOut" }, t0 + .75);
+tl.from("#c8k", { y: 200, opacity: 0, duration: .45, ease: "power3.out" }, t0 + .2);
+gsap.set("#r8", { left: BX - 125, top: BY - 40, width: 250, height: 80, borderRadius: 14 });
+gsap.set("#p8", { left: BX, top: BY });
+tl.to("#cam8", { scale: 1.45, x: -90, duration: .65, ease: "power3.inOut" }, t0 + .75);
 tl.fromTo("#c8", { opacity: 0, x: BX - 320, y: BY + 260 }, { opacity: 1, x: BX + 26, y: BY + 12, duration: .7, ease: "power3.inOut" }, t0 + .75);
 ringIn("#r8", t0 + 1.45);
 // beat-locked: click at 18.55s (strong cue 0.98)
 tl.to("#c8", { scale: .82, duration: .08, yoyo: true, repeat: 1, transformOrigin: "0 0" }, t0 + 1.6);
 tl.fromTo("#p8", { opacity: .95, scale: .3 }, { opacity: 0, scale: 1.8, duration: .5, ease: "power2.out" }, t0 + 1.62);
+tl.to("#sb8", { backgroundColor: "#ececef", color: "#65656a", duration: .2 }, t0 + 1.65);
+tl.to("#un8", { opacity: 0, duration: .2 }, t0 + 1.65);
+tl.to("#r8", { opacity: 0, duration: .2 }, t0 + 1.7);
+tl.from("#l8", { y: 90, opacity: 0, scale: .94, duration: .4, ease: "back.out(1.8)" }, t0 + 1.75);
 
 // S9 end card 19.64 -> 22.37
 t0 = T[8];

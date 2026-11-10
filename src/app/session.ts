@@ -3,16 +3,19 @@ import path from "node:path";
 import fs from "fs-extra";
 
 import type { FigmakeSyncService } from "../core/service.js";
-import { ProjectStateStore } from "../core/state.js";
+import { ProjectStateStore, STATE_DIRECTORY_NAME } from "../core/state.js";
 import { REMOTE_DIVERGED_PROMPT, isAllowedLoginUrl } from "../harness/index.js";
 import type { HarnessEvent, HarnessService } from "../harness/index.js";
-import type { AgentChoice, DesktopAppState, ErrorCode, Phase, SessionState } from "../electron/contracts.js";
+import type { AgentChoice, ChangedFile, ChatFile, ChatMessage, ChatState, DesktopAppState, ErrorCode, Phase, ProjectSummary, SessionState } from "../electron/contracts.js";
 import { isAuthRequiredError } from "../electron/authState.js";
+import { applyAgentEvent, baseName, capMessages, dropSummaryRepeat, emptyAssistant, newId, userMessage } from "./chat.js";
+import type { ChatStore } from "./chatStore.js";
+import { describeFolders, listChangedFiles } from "./changes.js";
 import { defaultWorkspaceDir, parseFigmaLink, resolveProjectFolder, validateWorkspace, type FigmaLink, type WorkspaceGuard } from "./workspace.js";
 
 /** Short fixed context for every prompt: nothing is ever written into the project to carry it. */
 export const PROMPT_PREFACE =
-  "This is a Figma Make project: a React app. Edit only files under src and styles. Do not touch config files, lockfiles or node_modules. Keep the dev server running. When done, reply with one plain sentence describing what changed.";
+  "This is a Figma Make project: a React app. Edit only files under src and styles. Do not touch config files, lockfiles or node_modules. Keep the dev server running. You are talking with a designer, not a developer: write in plain, friendly language and avoid commands, file paths and technical terms unless they ask. If they ask a question instead of for a change, just answer it briefly. After making a change, reply with one plain sentence describing what changed.";
 
 export const AGENT_NAMES: Record<AgentChoice, string> = { claude: "Claude", codex: "ChatGPT" };
 
@@ -20,6 +23,8 @@ export interface SessionDeps {
   sync: Pick<FigmakeSyncService, "init" | "pull" | "push" | "status" | "auth">;
   harness: Pick<HarnessService, "ensureProjectRunning" | "ensureAgentReady" | "startRun" | "pendingLoginUrl" | "stopDevExcept" | "updateSettings">;
   appState: { load(): Promise<DesktopAppState>; update(patch: Partial<DesktopAppState>): Promise<DesktopAppState> };
+  /** Per-project transcripts (userData/chats). */
+  chatStore: Pick<ChatStore, "load" | "save" | "archive" | "remove">;
   documentsDir: string;
   guard: WorkspaceGuard;
   chooseFolder(): Promise<string | null>;
@@ -29,19 +34,30 @@ export interface SessionDeps {
   /** Runs a Figma browser action, installing the browser first when needed. */
   withBrowser<T>(run: () => Promise<T>): Promise<T>;
   /** Resolves once the person says they are done signing in to Figma. */
-  waitForFigmaSignin(): Promise<void>;
+  waitForFigmaSignin(signal: AbortSignal): Promise<void>;
   log(message: string, error?: unknown): void;
 }
 
 type Patch = { [K in keyof SessionState]?: SessionState[K] | undefined };
 type Resolution = "mine" | "figma";
 interface Entry {
+  /** Stable id of this change; the chat card for it carries the same id. */
+  id: string;
   sentence: string;
   backupDir: string | null;
+  /** How many files this change touched, counted once when it finished. */
+  files?: number;
 }
 
 /** Thrown from the push confirm hook: nothing has been written yet, the person decides. */
 class Diverged extends Error {}
+
+/** The file paths inside the parentheses of the diverged prompt, without the trailing "...". */
+export function conflictFiles(message: string): string[] {
+  const inner = /last pull \((.*)\)\. Overwrite/su.exec(message)?.[1];
+  if (!inner) return [];
+  return inner.split(", ").map((f) => f.trim()).filter((f) => f && f !== "...");
+}
 
 /** The first plain sentence of the agent's final reply, without markdown. */
 export function parseChange(text: string): string | null {
@@ -88,6 +104,12 @@ const START: SessionState = {
   projectName: null,
   previewUrl: null,
   changes: [],
+  changeFiles: [],
+  changeIds: [],
+  projects: [],
+  activeKey: null,
+  syncedAt: null,
+  updatesEnabled: true,
   canSend: false,
   canUndo: false,
   agent: null,
@@ -105,9 +127,23 @@ export class Session {
   private agentReady: AgentChoice | null = null;
   private resume: (() => Promise<void>) | null = null;
   private known: Record<string, string> = {};
+  private links: Record<string, string> = {};
+  private stacks = new Map<string, Entry[]>();
+  private activeKey: string | null = null;
+  private syncedAtByKey: Record<string, string | null> = {};
+  private messages: ChatMessage[] = [];
+  /** The next turn starts a new AI conversation instead of resuming the last one. */
+  private fresh = false;
+  private turnId: string | null = null;
+  private readonly chatListeners = new Set<(chat: ChatState) => void>();
+  private chatTimer: NodeJS.Timeout | null = null;
 
   constructor(private readonly deps: SessionDeps) {
     this.workspaceDir = defaultWorkspaceDir(deps.documentsDir);
+  }
+
+  private startState(): SessionState {
+    return { ...START, agent: this.s.agent, workspace: this.s.workspace, projects: this.s.projects, ...(this.s.workspaceError ? { workspaceError: this.s.workspaceError } : {}) };
   }
 
   get state(): SessionState {
@@ -124,13 +160,85 @@ export class Session {
     return () => this.listeners.delete(listener);
   }
 
+  // ---- chat ----
+
+  get chat(): ChatState {
+    return { projectKey: this.activeKey, messages: this.messages, active: this.turnId !== null, fresh: this.fresh };
+  }
+
+  onChat(listener: (chat: ChatState) => void): () => void {
+    this.chatListeners.add(listener);
+    return () => this.chatListeners.delete(listener);
+  }
+
+  private emitChat(): void {
+    if (this.chatTimer) clearTimeout(this.chatTimer);
+    this.chatTimer = null;
+    const chat = this.chat;
+    for (const listener of this.chatListeners) listener(chat);
+  }
+
+  /** Streaming text arrives in bursts: tell the window at most every 50 ms. */
+  private scheduleChat(): void {
+    if (this.chatTimer) return;
+    this.chatTimer = setTimeout(() => this.emitChat(), 50);
+    this.chatTimer.unref();
+  }
+
+  private patchMessage(id: string, change: (m: ChatMessage) => ChatMessage): void {
+    this.messages = this.messages.map((m) => (m.id === id ? change(m) : m));
+  }
+
+  private saving: Promise<void> = Promise.resolve();
+
+  private saveChat(): Promise<void> {
+    const key = this.activeKey;
+    if (!key) return Promise.resolve();
+    this.saving = this.deps.chatStore.save(key, { messages: this.messages, fresh: this.fresh }).catch((e: unknown) => this.deps.log("chat save failed", e));
+    return this.saving;
+  }
+
+  /** Resolves once the latest transcript write has finished (used when quitting). */
+  flush(): Promise<void> {
+    return this.saving;
+  }
+
+  /** Marks the cards of these changes (or every live card) as undone or sent. */
+  private settle(fate: "undone" | "sent", ids?: readonly string[]): void {
+    let touched = false;
+    this.messages = this.messages.map((m) => {
+      if (!m.change || m.change.fate !== "active" || (ids && !ids.includes(m.change.turnId))) return m;
+      touched = true;
+      return { ...m, change: { ...m.change, fate } };
+    });
+    if (touched) {
+      this.emitChat();
+      void this.saveChat();
+    }
+  }
+
+  /** Starts a fresh AI conversation. The old one is archived (only the newest archive is kept). */
+  async newChat(): Promise<void> {
+    const key = this.activeKey;
+    if (!key || this.busy || this.turnId) return;
+    if (this.messages.length > 0) await this.deps.chatStore.archive(key).catch((e: unknown) => this.deps.log("chat archive failed", e));
+    this.messages = [];
+    this.fresh = true;
+    this.emitChat();
+    await this.saveChat();
+  }
+
   /** Loads preferences, prepares the workspace, and reopens the last project straight into "preparing". */
   async start(): Promise<void> {
     const saved = await this.deps.appState.load();
     this.known = saved.projects;
-    this.set({ agent: saved.agent });
+    this.links = { ...saved.links };
+    const seed = saved.lastLink ? parseFigmaLink(saved.lastLink) : null;
+    if (saved.lastLink && seed && Object.keys(this.links).length === 0) this.links[seed.key] = saved.lastLink;
+    this.set({ agent: saved.agent, updatesEnabled: saved.updates.enabled });
     await this.useWorkspace(saved.workspace);
-    const info = saved.lastLink ? parseFigmaLink(saved.lastLink) : null;
+    await this.refreshProjects();
+    const info = seed;
     const root = info ? this.known[info.key] : undefined;
     if (saved.lastLink && info && root && (await fs.pathExists(root))) {
       await this.open(saved.lastLink, info, true);
@@ -159,7 +267,7 @@ export class Session {
     if (!info) {
       this.set({ phase: "error", message: "That doesn't look like a Figma Make link. Try again.", code: "invalid_link", failedIn: this.s.phase });
       this.resume = () => {
-        this.set({ ...START, agent: this.s.agent, workspace: this.s.workspace });
+        this.set(this.startState());
         return Promise.resolve();
       };
       return;
@@ -167,49 +275,116 @@ export class Session {
     await this.open(link.trim(), info, false);
   }
 
-  async ask(prompt: string): Promise<void> {
+  async ask(prompt: string, retryOf?: string): Promise<void> {
     const text = prompt.trim();
     const agent = this.s.agent;
-    if (!text || this.busy || !this.root || !this.s.previewUrl || !agent || this.s.phase !== "ready") return;
+    // A failed turn leaves a calm error in the chat; typing again simply carries on.
+    const turnError = this.s.phase === "error" && this.messages.at(-1)?.status === "error";
+    if (!text || this.busy || !this.root || !this.s.previewUrl || !agent || (this.s.phase !== "ready" && !turnError)) return;
+    if (turnError) {
+      this.resume = null;
+      this.set({ phase: "ready", message: undefined });
+    }
     const root = this.root;
     await this.exclusive(async (signal) => {
+      const mine = this.beginTurn(text, retryOf);
+      const end = (status: "done" | "stopped" | "error", extra: Partial<ChatMessage> & { resultText?: string } = {}): void => this.endTurn(mine.assistant, status, extra);
       try {
         this.set({ phase: "preparing", message: undefined });
-        if (this.agentReady !== agent && !(await this.ensureAgent(agent, signal))) return;
+        if (this.agentReady !== agent && !(await this.ensureAgent(agent, signal))) {
+          if (this.s.phase === "error") this.resume = () => this.ask(text, mine.user);
+          if (this.s.phase === "error") return end("error", { error: { message: this.s.message ?? "Something went wrong.", code: this.s.code ?? "unknown" } });
+          return end("stopped");
+        }
         this.set({ phase: "working", message: undefined });
-        const { done } = await this.deps.harness.startRun({ rootDir: root, prompt: `${PROMPT_PREFACE}\n\n${text}`, agent }, signal);
+        const { done } = await this.deps.harness.startRun({ rootDir: root, prompt: `${PROMPT_PREFACE}\n\n${text}`, agent, ...(this.fresh ? { newSession: true } : {}) }, signal);
         const outcome = await done;
+        if (outcome.sessionId) this.fresh = false;
         if (outcome.cancelled || !outcome.success) {
           // The app made the backup itself; put the files back so a stopped or failed run leaves nothing half-done.
           if (outcome.backupDir) await this.restore(outcome.backupDir).catch((e: unknown) => this.deps.log("restore failed", e));
           this.deps.reloadPreview();
-          if (outcome.cancelled) return this.ready();
-          return this.fail(plainError(new Error(outcome.error ?? ""), "agent", agent), () => this.ask(text), errorCode(new Error(outcome.error ?? ""), "agent"));
+          if (outcome.cancelled) {
+            end("stopped");
+            return this.ready();
+          }
+          const sentence = plainError(new Error(outcome.error ?? ""), "agent", agent);
+          const code = errorCode(new Error(outcome.error ?? ""), "agent");
+          end("error", { error: { message: sentence, code } });
+          return this.fail(sentence, () => this.ask(text, mine.user), code);
         }
         const sentence = parseChange(outcome.resultText) ?? "Made a change";
-        this.stack.push({ sentence, backupDir: outcome.backupDir });
-        this.deps.reloadPreview();
+        const files = await this.changedFiles(root, outcome.backupDir);
+        let change: ChatMessage["change"];
+        if (files === null || files.length > 0) {
+          const entry: Entry = { id: newId(), sentence, backupDir: outcome.backupDir, files: files?.length ?? 0 };
+          this.stack.push(entry);
+          this.deps.reloadPreview();
+          change = { turnId: entry.id, summary: sentence, files: files ?? [], previewUpdated: true, fate: "active" };
+        }
+        end("done", { resultText: outcome.resultText, ...(change ? { change } : {}) });
         await this.ready();
       } catch (error) {
-        if (signal.aborted) return this.ready();
+        if (signal.aborted) {
+          end("stopped");
+          return this.ready();
+        }
         this.deps.log("ask failed", error);
-        this.fail(plainError(error, "agent", agent), () => this.ask(text), errorCode(error, "agent"));
+        const sentence = plainError(error, "agent", agent);
+        const code = errorCode(error, "agent");
+        end("error", { error: { message: sentence, code } });
+        this.fail(sentence, () => this.ask(text, mine.user), code);
       }
     });
   }
 
-  async undo(): Promise<void> {
-    const top = this.stack.at(-1);
-    if (this.busy || this.s.phase !== "ready" || !top?.backupDir) return;
+  /** Adds the person's message and an empty assistant message that the agent's events fill in. */
+  private beginTurn(text: string, retryOf?: string): { user: string; assistant: string } {
+    let user = retryOf ? this.messages.find((m) => m.id === retryOf && m.role === "user") : undefined;
+    if (user) {
+      const at = this.messages.indexOf(user);
+      this.messages = this.messages.slice(0, at + 1);
+    } else {
+      user = userMessage(text);
+      this.messages = capMessages([...this.messages, user]);
+    }
+    const assistant = emptyAssistant();
+    this.messages = capMessages([...this.messages, assistant]);
+    this.turnId = assistant.id;
+    this.emitChat();
+    void this.saveChat();
+    return { user: user.id, assistant: assistant.id };
+  }
+
+  private endTurn(id: string, status: "done" | "stopped" | "error", extra: Partial<ChatMessage> & { resultText?: string } = {}): void {
+    const { resultText, ...rest } = extra;
+    this.patchMessage(id, (m) => {
+      let parts = m.parts;
+      // Nothing streamed (a quiet CLI): show the closing reply once.
+      if (status === "done" && !parts.some((p) => p.type === "text") && resultText?.trim()) parts = [...parts, { type: "text" as const, text: resultText.trim() }];
+      if (rest.change) parts = dropSummaryRepeat(parts, rest.change.summary);
+      return { ...m, ...rest, parts, status };
+    });
+    this.turnId = null;
+    this.emitChat();
+    void this.saveChat();
+  }
+
+  async undo(index?: number): Promise<void> {
+    const at = index ?? this.stack.length - 1;
+    const target = Number.isInteger(at) ? this.stack[at] : undefined;
+    if (this.busy || this.s.phase !== "ready" || !target?.backupDir) return;
     await this.exclusive(async () => {
       try {
-        await this.restore(top.backupDir as string);
-        this.stack.pop();
+        await this.restore(target.backupDir as string);
+        const removed = this.stack.slice(at).map((e) => e.id);
+        this.stack.splice(at);
+        this.settle("undone", removed);
         this.deps.reloadPreview();
         await this.ready();
       } catch (error) {
         this.deps.log("undo failed", error);
-        this.fail("Couldn't undo that. Try again.", () => this.undo(), "undo_failed");
+        this.fail("Couldn't undo that. Try again.", () => this.undo(index), "undo_failed");
       }
     });
   }
@@ -244,11 +419,12 @@ export class Session {
             return this.fail("Some changes couldn't be sent. Try again.", () => this.send(), "push_failed");
           }
         }
+        this.settle(resolution === "figma" ? "undone" : "sent");
         this.stack = [];
         await this.ready(resolution === "figma" ? undefined : "Sent to Figma");
       } catch (error) {
         if (signal.aborted) return this.ready();
-        if (error instanceof Diverged) return this.set({ phase: "conflict", message: "Figma has newer changes." });
+        if (error instanceof Diverged) return this.set({ phase: "conflict", message: "Figma has newer changes.", conflictFiles: conflictFiles(error.message) });
         if (isAuthRequiredError(error)) return this.needSignin(() => this.send(resolution));
         this.deps.log("send failed", error);
         this.fail(plainError(error, "figma"), () => this.send(resolution), errorCode(error, "figma"));
@@ -259,7 +435,7 @@ export class Session {
   cancel(): Promise<void> {
     if (this.s.phase === "conflict") return this.ready();
     if (this.busy) this.ctl?.abort();
-    else if (!this.s.previewUrl && this.s.phase !== "start") this.set({ ...START, agent: this.s.agent, workspace: this.s.workspace, workspaceError: this.s.workspaceError });
+    else if (!this.s.previewUrl && this.s.phase !== "start") this.set(this.startState());
     return Promise.resolve();
   }
 
@@ -271,13 +447,20 @@ export class Session {
     if (this.s.phase === "error" && this.s.previewUrl) this.set({ phase: "ready", message: undefined });
     if (this.s.phase === "needs-figma-signin" && this.root) {
       const root = this.root;
-      const ok = await this.exclusive(async () => {
-        this.set({ phase: "connecting", message: undefined });
+      const ok = await this.exclusive(async (signal) => {
+        this.set({ phase: "needs-figma-signin", message: "Waiting for sign-in in your browser" });
         try {
-          await this.deps.withBrowser(() => this.deps.sync.auth({ projectRoot: root, waitForManualAction: () => this.deps.waitForFigmaSignin() }));
-          if (this.s.previewUrl) this.set({ phase: "ready" });
+          await this.deps.withBrowser(() =>
+            this.deps.sync.auth({ projectRoot: root, autoDetectLogin: true, waitForManualAction: () => this.deps.waitForFigmaSignin(signal) }),
+          );
+          if (this.s.previewUrl) this.set({ phase: "ready", message: undefined });
           return true;
         } catch (error) {
+          if (signal.aborted) {
+            this.resume = resume;
+            this.set({ phase: "needs-figma-signin", message: undefined });
+            return false;
+          }
           this.deps.log("sign-in failed", error);
           this.fail("Couldn't sign in to Figma. Try again.", resume, "figma_signin_required");
           return false;
@@ -294,6 +477,12 @@ export class Session {
     if (this.agentReady !== agent) this.agentReady = null;
     this.set({ agent });
     if (this.s.phase === "needs-ai-choice" && !this.busy) await this.prepareAgent();
+  }
+
+  async setUpdates(enabled: boolean): Promise<void> {
+    if (typeof enabled !== "boolean") return;
+    await this.deps.appState.update({ updates: { enabled } });
+    this.set({ updatesEnabled: enabled });
   }
 
   async chooseWorkspace(): Promise<void> {
@@ -317,6 +506,13 @@ export class Session {
   handleHarnessEvent(event: HarnessEvent): void {
     if (event.kind === "agent-ensure" && event.stage === "needs-browser-signin") {
       this.set({ phase: "needs-ai-signin", message: `Sign in to ${AGENT_NAMES[event.agent]} in your browser` });
+    } else if (event.kind === "run-agent") {
+      const id = this.turnId;
+      if (!id || !this.root || path.resolve(event.rootDir) !== path.resolve(this.root)) return;
+      const edit = event.event.type === "file_edit" ? event.event : null;
+      const existed = edit ? fs.existsSync(path.resolve(this.root, edit.path)) : true;
+      this.patchMessage(id, (m) => applyAgentEvent(m, event.event, { existed }));
+      this.scheduleChat();
     } else if (event.kind === "agent-login-url") {
       const url = this.deps.harness.pendingLoginUrl(event.agent);
       if (url && isAllowedLoginUrl(url)) this.deps.openExternal(url);
@@ -327,10 +523,28 @@ export class Session {
 
   /** The app never sends on its own: auto-push set earlier (CLI or old app) is switched off. */
   private async open(url: string, info: FigmaLink, restore: boolean): Promise<void> {
+    await this.openLocked(url, info, restore);
+    await this.refreshProjects();
+  }
+
+  private async openLocked(url: string, info: FigmaLink, restore: boolean): Promise<void> {
     await this.exclusive(async (signal) => {
-      this.stack = [];
+      if (this.activeKey) {
+        this.stacks.set(this.activeKey, this.stack);
+        if (this.activeKey !== info.key) await this.saveChat();
+      }
+      const switching = this.activeKey !== info.key;
+      this.activeKey = info.key;
+      this.stack = this.stacks.get(info.key) ?? [];
+      if (switching || this.messages.length === 0) {
+        const stored = await this.deps.chatStore.load(info.key).catch(() => ({ messages: [] as ChatMessage[], fresh: false }));
+        this.messages = stored.messages;
+        this.fresh = stored.fresh;
+        this.turnId = null;
+        this.emitChat();
+      }
       this.agentReady = null;
-      this.set({ phase: restore ? "preparing" : "connecting", projectName: info.name, previewUrl: null, changes: [], canSend: false, canUndo: false, message: undefined });
+      this.set({ phase: restore ? "preparing" : "connecting", projectName: info.name, activeKey: info.key, previewUrl: null, changes: [], changeFiles: [], changeIds: [], canSend: false, canUndo: false, message: undefined });
       try {
         const root = await resolveProjectFolder(this.workspaceDir, info, this.known);
         this.root = root;
@@ -340,7 +554,8 @@ export class Session {
         await new ProjectStateStore(root).loadProjectConfig().then(async (c) => {
           if (c.harness.autoPush) await this.deps.harness.updateSettings(root, { autoPush: false });
         });
-        await this.deps.appState.update({ lastLink: url, projects: this.known });
+        this.links = { ...this.links, [info.key]: url };
+        await this.deps.appState.update({ lastLink: url, projects: this.known, links: this.links });
         void this.deps.harness.stopDevExcept(root);
 
         const status = await this.deps.sync.status({ projectRoot: root });
@@ -366,6 +581,111 @@ export class Session {
         this.fail(plainError(error, "figma"), () => this.open(url, info, restore), errorCode(error, "figma"));
       }
     });
+  }
+
+  /** Opens another project from the list without pulling again. */
+  async switchProject(key: string): Promise<void> {
+    const link = this.links[key];
+    const info = link ? parseFigmaLink(link) : null;
+    if (this.isBusy() || !link || !info || key === this.activeKey) return;
+    await this.open(link, info, true);
+  }
+
+  /** Takes a project off the list. Files stay unless `deleteFiles` is true and the folder is one this app made in the workspace. */
+  async removeProject(key: string, deleteFiles = false): Promise<void> {
+    if (this.isBusy() || !(key in this.links)) return;
+    const root = this.known[key];
+    const wasActive = key === this.activeKey;
+    await this.exclusive(async () => {
+      try {
+        if (wasActive) await this.deps.harness.stopDevExcept(null, true).catch(() => undefined);
+        const links = Object.fromEntries(Object.entries(this.links).filter(([k]) => k !== key));
+        const known = Object.fromEntries(Object.entries(this.known).filter(([k]) => k !== key));
+        this.links = links;
+        this.known = known;
+        this.stacks.delete(key);
+        await this.deps.chatStore.remove(key).catch(() => undefined);
+        if (wasActive) {
+          this.messages = [];
+          this.fresh = false;
+          this.emitChat();
+          this.stack = [];
+          this.root = null;
+          this.activeKey = null;
+          this.agentReady = null;
+          this.resume = null;
+        }
+        await this.deps.appState.update({ projects: known, links, ...(wasActive ? { lastLink: null } : {}) });
+        if (wasActive) this.set(this.startState());
+        if (deleteFiles && root && (await this.safeToDelete(root))) await fs.remove(root);
+      } catch (error) {
+        this.deps.log("remove failed", error);
+      }
+    });
+    await this.refreshProjects();
+  }
+
+  private async safeToDelete(root: string): Promise<boolean> {
+    const dir = path.resolve(root);
+    const base = path.resolve(this.workspaceDir);
+    const inside = dir.startsWith(base + path.sep);
+    return inside && (await fs.pathExists(path.join(dir, STATE_DIRECTORY_NAME)));
+  }
+
+  /** Before/after of the files one change touched. Never throws. */
+  async describeChange(index: number): Promise<ChangedFile[]> {
+    try {
+      const root = this.root;
+      const entry = Number.isInteger(index) ? this.stack[index] : undefined;
+      if (!root || !entry?.backupDir) return [];
+      const next = this.stack[index + 1];
+      if (next && !next.backupDir) return [];
+      const after = next?.backupDir ? path.join(next.backupDir, "workspace") : root;
+      const config = await new ProjectStateStore(root).loadProjectConfig();
+      return await describeFolders(path.join(entry.backupDir, "workspace"), after, config.sync.ignore);
+    } catch {
+      return [];
+    }
+  }
+
+  /** The files this turn touched (names only), or null when that couldn't be worked out. */
+  private async changedFiles(root: string, backupDir: string | null): Promise<ChatFile[] | null> {
+    if (!backupDir) return null;
+    try {
+      const config = await new ProjectStateStore(root).loadProjectConfig();
+      const list = await listChangedFiles(path.join(backupDir, "workspace"), root, config.sync.ignore);
+      return list.map((f) => ({ name: baseName(f.path), status: f.status }));
+    } catch {
+      return null;
+    }
+  }
+
+  /** Recomputes the sidebar rows; one broken project never affects the others. */
+  private async refreshProjects(): Promise<void> {
+    const active = this.s.activeKey;
+    const projects: ProjectSummary[] = [];
+    for (const [key, link] of Object.entries(this.links)) {
+      const name = parseFigmaLink(link)?.name ?? key;
+      let status: ProjectSummary["status"] = "attention";
+      let syncedAt: string | null = null;
+      try {
+        const root = this.known[key];
+        if (root && (await fs.pathExists(path.join(root, STATE_DIRECTORY_NAME)))) {
+          const meta = await new ProjectStateStore(root).readMetadata();
+          syncedAt = [meta.lastPullAt, meta.lastPushAt].filter((t): t is string => Boolean(t)).sort().at(-1) ?? null;
+          const failing = key === active && (this.s.phase === "error" || this.s.phase === "needs-figma-signin");
+          if (!failing) {
+            if (key === active) status = this.s.canSend ? "changes" : "synced";
+            else status = (await this.deps.sync.status({ projectRoot: root })).summary.total > 0 ? "changes" : "synced";
+          }
+        }
+      } catch (error) {
+        this.deps.log("project status failed", error);
+      }
+      this.syncedAtByKey[key] = syncedAt;
+      projects.push({ key, name, status, syncedAt });
+    }
+    this.set({ projects, syncedAt: (active && this.syncedAtByKey[active]) || null });
   }
 
   private prepareAgent(): Promise<void> {
@@ -430,19 +750,25 @@ export class Session {
         canSend = this.stack.length > 0;
       }
     }
-    if (!canSend) this.stack = [];
+    if (!canSend) {
+      this.stack = [];
+      this.settle("undone");
+    }
     this.set({
       phase: this.s.previewUrl ? "ready" : "start",
       changes: this.stack.map((e) => e.sentence),
+      changeFiles: this.stack.map((e) => e.files ?? 0),
+      changeIds: this.stack.map((e) => e.id),
       canSend,
       canUndo: Boolean(this.stack.at(-1)?.backupDir),
       message,
     });
+    await this.refreshProjects();
   }
 
   private cancelled(): Promise<void> {
     if (this.s.previewUrl) return this.ready();
-    this.set({ ...START, agent: this.s.agent, workspace: this.s.workspace, workspaceError: this.s.workspaceError });
+    this.set(this.startState());
     return Promise.resolve();
   }
 
@@ -458,6 +784,7 @@ export class Session {
 
   private set(patch: Patch): void {
     const next = { ...this.s, ...patch } as Record<string, unknown>;
+    if (next["phase"] !== "conflict") delete next["conflictFiles"];
     if (next["phase"] !== "error") {
       delete next["code"];
       delete next["failedIn"];

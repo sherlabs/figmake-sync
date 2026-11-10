@@ -53,6 +53,14 @@ const TOKEN_PATTERNS: RegExp[] = [
   /\bnpm_[A-Za-z0-9]{20,}/gu,
 ];
 
+/** Masks only secret-shaped tokens (keys, JWTs, bearer headers). For local transcripts, where names and paths are fine. */
+export function redactSecrets(input: string): string {
+  let t = input.replace(/\bBearer\s+[\w.~+/=-]+/giu, "Bearer <token>");
+  t = t.replace(/(["']?)\b([\w-]*(?:token|secret|passw(?:or)?d|api[_-]?key|apikey|credential)[\w-]*)\1(\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^\s,;&}]+)/giu, "$2$3<redacted>");
+  for (const re of TOKEN_PATTERNS) t = t.replace(re, "<token>");
+  return t;
+}
+
 /** Removes anything that could identify the person, their files, their Figma file or their text. */
 export function sanitizeText(input: string, ctx: SanitizeContext = {}): string {
   let t = input.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/gu, "").replace(/[\u0000-\u0008\u000b-\u001f\u007f]/gu, " ");

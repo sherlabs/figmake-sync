@@ -20,6 +20,8 @@ export interface BrowserSessionOptions {
 export interface AuthenticateBrowserSessionOptions {
   waitForCompletion?: (message: string) => Promise<void>;
   headless?: boolean;
+  /** Also finish on its own once the browser shows a signed-in Figma page. */
+  autoDetect?: boolean;
 }
 
 export interface BrowserLaunchOverrides {
@@ -253,14 +255,57 @@ export class BrowserSessionManager {
         ((message: string) =>
           waitForEnter(`${message}\nPress Enter here once you're done.`));
 
-      await waitForCompletion(
-        "Browser session is ready for manual authentication. Log in to Figma Make in the opened browser, complete MFA or captcha if prompted, then confirm here to save the local session.",
-      );
+      const prompt =
+        "Browser session is ready for manual authentication. Log in to Figma Make in the opened browser, complete MFA or captcha if prompted, then confirm here to save the local session.";
+      if (options.autoDetect) {
+        const stop = new AbortController();
+        try {
+          await Promise.race([
+            waitForCompletion(prompt),
+            this.pollSignedIn(handle, stop.signal),
+          ]);
+        } finally {
+          stop.abort();
+        }
+      } else {
+        await waitForCompletion(prompt);
+      }
 
       await this.verifyLoggedIn(handle);
     } finally {
       await handle.close();
     }
+  }
+
+  /** Resolves when the opened page is a signed-in Figma page; never rejects, stops when `signal` aborts. */
+  private async pollSignedIn(
+    handle: PersistentBrowserHandle,
+    signal: AbortSignal,
+  ): Promise<void> {
+    while (!signal.aborted) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 1_500);
+        signal.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(timer);
+            resolve();
+          },
+          { once: true },
+        );
+      });
+      if (signal.aborted) return;
+      try {
+        const page = handle.page;
+        if (page.isClosed() || isLoginUrl(page.url())) continue;
+        const cookies = await handle.context.cookies("https://www.figma.com");
+        if (cookies.length > 0 && !(await looksLoggedOut(page))) return;
+      } catch {
+        // keep polling
+      }
+    }
+    // Aborted: stay pending so the race is decided by the other side.
+    await new Promise<void>(() => undefined);
   }
 
   private async verifyLoggedIn(handle: PersistentBrowserHandle): Promise<void> {

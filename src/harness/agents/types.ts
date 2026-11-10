@@ -5,7 +5,8 @@ export type AgentId = "claude" | "codex";
 /** Normalized event streamed from an agent run (CLI-specific formats are parsed by adapters). */
 export type AgentEvent =
   | { type: "session"; sessionId: string }
-  | { type: "text"; text: string }
+  /** `delta: true` continues the previous text; otherwise it is a whole new block of text. */
+  | { type: "text"; text: string; delta?: boolean }
   | { type: "tool"; name: string; summary: string }
   | { type: "file_edit"; path: string; tool: string }
   | {

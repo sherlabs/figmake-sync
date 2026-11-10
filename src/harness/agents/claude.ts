@@ -84,6 +84,8 @@ export function createClaudeAdapter(): AgentAdapter {
         "--output-format",
         "stream-json",
         "--verbose",
+        // Text arrives as it is written (stream_event deltas), not only once per message.
+        "--include-partial-messages",
         "--permission-mode",
         "acceptEdits",
         "--allowedTools",
@@ -98,6 +100,11 @@ export function createClaudeAdapter(): AgentAdapter {
       return { command: "claude", args, stdin: input.prompt };
     },
     createLineParser() {
+      // Messages whose text already arrived as deltas: their full `assistant` block must not repeat it.
+      const streamed = new Set<string>();
+      let currentMessage = "";
+      let wroteText = false;
+      let breakBeforeText = false;
       return (line: string): AgentEvent[] => {
         let msg: Record<string, unknown>;
         try {
@@ -110,14 +117,37 @@ export function createClaudeAdapter(): AgentAdapter {
         const events: AgentEvent[] = [];
         const type = msg["type"];
 
+        if (type === "stream_event") {
+          const ev = (msg["event"] ?? {}) as Record<string, unknown>;
+          if (ev["type"] === "message_start") {
+            currentMessage = str((ev["message"] as { id?: unknown } | undefined)?.id) ?? "";
+            if (wroteText) breakBeforeText = true;
+          } else if (ev["type"] === "content_block_start") {
+            const block = (ev["content_block"] ?? {}) as Record<string, unknown>;
+            if (block["type"] === "text" && wroteText) breakBeforeText = true;
+          } else if (ev["type"] === "content_block_delta") {
+            const delta = (ev["delta"] ?? {}) as Record<string, unknown>;
+            const text = delta["type"] === "text_delta" ? str(delta["text"]) : undefined;
+            if (text) {
+              streamed.add(currentMessage);
+              events.push({ type: "text", text: breakBeforeText ? `\n\n${text}` : text, delta: true });
+              breakBeforeText = false;
+              wroteText = true;
+            }
+          }
+          return events;
+        }
         if (type === "system" && msg["subtype"] === "init") {
           const sid = str(msg["session_id"]);
           if (sid) events.push({ type: "session", sessionId: sid });
         } else if (type === "assistant") {
-          const content = (msg["message"] as { content?: unknown } | undefined)?.content;
+          const message = msg["message"] as { content?: unknown; id?: unknown } | undefined;
+          const content = message?.content;
+          const alreadyStreamed = streamed.has(str(message?.id) ?? "\u0000");
           if (Array.isArray(content)) {
             for (const block of content as Array<Record<string, unknown>>) {
               if (block["type"] === "text" && str(block["text"])) {
+                if (alreadyStreamed) continue;
                 events.push({ type: "text", text: str(block["text"]) as string });
               } else if (block["type"] === "tool_use") {
                 const name = str(block["name"]) ?? "tool";

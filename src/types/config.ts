@@ -99,6 +99,8 @@ export interface CommandRuntimeOptions {
   progress?: (message: string) => void;
   confirm?: (message: string, defaultValue?: boolean) => Promise<boolean>;
   waitForManualAction?: (message: string) => Promise<void>;
+  /** Finish sign-in by itself once the browser shows a signed-in Figma page. */
+  autoDetectLogin?: boolean;
 }
 
 export function createProjectConfig(

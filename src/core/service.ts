@@ -266,9 +266,12 @@ export class FigmakeSyncService {
 
       await adapter.authenticate(
         context.config.figmaMakeUrl,
-        options.waitForManualAction
+        options.waitForManualAction || options.autoDetectLogin
           ? {
-              waitForCompletion: options.waitForManualAction,
+              ...(options.waitForManualAction
+                ? { waitForCompletion: options.waitForManualAction }
+                : {}),
+              ...(options.autoDetectLogin ? { autoDetect: true } : {}),
             }
           : undefined,
       );
