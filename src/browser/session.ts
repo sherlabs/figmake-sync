@@ -145,9 +145,10 @@ async function looksLoggedOut(page: Page): Promise<boolean> {
     return true;
   }
   try {
+    // A shared Make file opens for a signed-out guest too: Figma shows a "Continue with Google" prompt there.
     return (
       (await page
-        .locator('input[type="password"], form[action*="login"]')
+        .locator('input[type="password"], form[action*="login"], [data-testid="google-btn"]')
         .count()) > 0
     );
   } catch {
@@ -244,7 +245,9 @@ export class BrowserSessionManager {
     manualUrl: string,
     options: AuthenticateBrowserSessionOptions = {},
   ): Promise<void> {
-    const handle = await this.openHandle("auth", manualUrl, {
+    // Sign in from Figma's own login page: the project link alone opens as a signed-out guest and would look "signed in".
+    void manualUrl;
+    const handle = await this.openHandle("auth", "https://www.figma.com/login", {
       headless: options.headless ?? false,
       skipLoginCheck: true,
     });

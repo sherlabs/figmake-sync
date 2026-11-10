@@ -1391,17 +1391,31 @@ export class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSessio
       return null;
     }
 
-    const { text, hasPasswordInput, hasGuestPrompt } = await page.evaluate(() => ({
-      text: (document.body?.innerText ?? "").slice(0, 4_000),
-      hasPasswordInput: Boolean(
-        document.querySelector(
-          'input[type="password"], input[name="password"], form[action*="login"]',
+    const read = async (): Promise<PageState | null> => {
+      const { text, hasPasswordInput, hasGuestPrompt } = await page.evaluate(() => ({
+        text: (document.body?.innerText ?? "").slice(0, 4_000),
+        hasPasswordInput: Boolean(
+          document.querySelector(
+            'input[type="password"], input[name="password"], form[action*="login"]',
+          ),
         ),
-      ),
-      hasGuestPrompt: Boolean(document.querySelector('[data-testid="google-btn"]')),
-    }));
+        hasGuestPrompt: Boolean(document.querySelector('[data-testid="google-btn"]')),
+      }));
 
-    return classifyPageState({ url: page.url(), text, hasPasswordInput, hasGuestPrompt });
+      return classifyPageState({ url: page.url(), text, hasPasswordInput, hasGuestPrompt });
+    };
+
+    let state = await read();
+
+    // A signed-in page shows the guest prompt for a moment while Figma loads. Only a prompt that stays is real.
+    for (let again = 0; again < 4 && state?.kind === "auth" && state.detail === "login form detected"; again++) {
+      await page.waitForTimeout(2_500);
+      if (page.isClosed()) return null;
+      if (await this.isAnyVisibleNow("codeEditorRoot")) return null;
+      state = await read();
+    }
+
+    return state;
   }
 
   // -------------------------------------------------------------------------
