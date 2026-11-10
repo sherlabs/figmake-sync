@@ -38,5 +38,6 @@ contextBridge.exposeInMainWorld("figmake", {
   changedFiles: call("figmake:changed-files"),
   stopProcess: call("figmake:stop-process"),
   restartProcess: call("figmake:restart-process"),
+  cleanup: call("figmake:cleanup"),
   previewRect: (rect) => ipcRenderer.send("figmake:preview-rect", rect),
 });

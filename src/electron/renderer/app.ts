@@ -21,7 +21,7 @@ const DOT: Record<ProjectStatus, string> = { synced: "ok", changes: "chg", atten
 const BUSY: readonly Phase[] = ["connecting", "preparing", "working", "sending"];
 const STEPS = ["Getting your project", "Setting up", "Starting preview", "Ready"];
 
-type UserSheet = { kind: "add" } | { kind: "settings" } | { kind: "remove"; key: string } | { kind: "undo"; index: number };
+type UserSheet = { kind: "add" } | { kind: "settings" } | { kind: "remove"; key: string } | { kind: "undo"; index: number } | { kind: "confirm"; action: "start-over" | "reset-app" };
 
 let state: SessionState | null = null;
 let updateReady = false;
@@ -35,6 +35,8 @@ let prepSince = 0;
 let prepTimer = 0;
 
 const busyNow = (s: SessionState): boolean => BUSY.includes(s.phase);
+/** Anything in flight, including a question waiting to be answered: Clean up waits for it. */
+const cleanupBusy = (s: SessionState): boolean => busyNow(s) || s.phase === "conflict";
 const report = (s: SessionState): void => void api.reportIssue({ errorCode: s.code ?? "unknown", message: s.message ?? "", phase: s.failedIn ?? s.phase });
 const reportProblem = (): void => void api.reportIssue({ errorCode: "unknown", message: "Reported from the app", phase: state?.phase ?? "start" });
 
@@ -374,6 +376,7 @@ function buildSheet(kind: string, s: SessionState): HTMLDialogElement {
       if (other) aiButtons.push(btn(`Switch to ${other.name}`, () => void api.setAgent(other.id)));
       if (!s.agent) aiButtons.splice(0, aiButtons.length, ...AGENTS.map((x) => btn(`Connect ${x.name}`, () => void api.setAgent(x.id))));
       const updates = h("button", { type: "button", class: "sw", role: "switch", "aria-checked": String(s.updatesEnabled), "aria-label": "Keep the app up to date", onclick: () => void api.setUpdates(!s.updatesEnabled) });
+      const canClean = !cleanupBusy(s) && Boolean(s.activeKey) && (s.phase === "ready" || s.phase === "error");
       const updateRow = h("div", { class: "row upd" });
       fillUpdateRow(updateRow, s.updatesEnabled);
       liveUpdateRow = updateRow;
@@ -391,6 +394,14 @@ function buildSheet(kind: string, s: SessionState): HTMLDialogElement {
             h("div", { class: "row" }, h("div", { class: "l" }, h("b", {}, "Automatic updates"), h("span", {}, "Install new versions quietly")), h("div", { class: "r" }, updates)),
             updateRow,
           ),
+          h("h3", { class: "setttl" }, "Clean up"),
+          h(
+            "div",
+            { class: "setrows clean" },
+            h("div", { class: "row" }, h("div", { class: "l" }, h("b", {}, "Preview not showing?"), h("span", {}, "Sets up the preview again if it won't show")), h("div", { class: "r" }, btn("Fix the preview", () => { closeSheet(); void api.cleanup("fix-preview"); }, "", { disabled: !canClean }))),
+            h("div", { class: "row" }, h("div", { class: "l" }, h("b", {}, "Start this project over"), h("span", {}, "Latest from Figma, with a backup first")), h("div", { class: "r" }, btn("Start over…", () => openSheet({ kind: "confirm", action: "start-over" }), "", { disabled: !canClean }))),
+            h("div", { class: "row" }, h("div", { class: "l" }, h("b", {}, "Reset the app"), h("span", {}, "Signs you out and forgets your projects list")), h("div", { class: "r" }, btn("Reset…", () => openSheet({ kind: "confirm", action: "reset-app" }), "danger", { disabled: cleanupBusy(s) }))),
+          ),
         ],
         acts: [h("button", { type: "button", class: "plain", onclick: () => { closeSheet(); reportProblem(); } }, "Report a problem"), btn("Done", closeSheet, "primary")],
       });
@@ -402,6 +413,18 @@ function buildSheet(kind: string, s: SessionState): HTMLDialogElement {
       const go = btn("Remove from list", () => { closeSheet(); void api.removeProject(key, del.checked); }, "primary");
       del.addEventListener("change", () => { go.textContent = del.checked ? "Remove and delete files" : "Remove from list"; go.classList.toggle("danger-solid", del.checked); go.classList.toggle("primary", !del.checked); });
       return sheetFrame({ label: "Remove from list", glyph: icon("trash"), tone: "bad", title: `Remove “${p?.name ?? "this project"}”?`, sub: "It leaves your list, and your files stay where they are.", body: [h("label", { class: "sheet-confirm" }, del, "Also delete its files from this Mac")], acts: [btn("Cancel", closeSheet), go] });
+    }
+    case "confirm": {
+      const reset = (userSheet as { action: string }).action === "reset-app";
+      const go = btn(reset ? "Reset the app" : "Start over", () => { closeSheet(); void api.cleanup(reset ? "reset-app" : "start-over"); }, reset ? "danger-solid" : "primary");
+      return sheetFrame({
+        label: reset ? "Reset the app" : "Start this project over",
+        glyph: icon(reset ? "trash" : "undo"),
+        tone: reset ? "bad" : "warn",
+        title: reset ? "Reset the app?" : "Start this project over?",
+        sub: reset ? "Signs you out of Figma and your AI helper, and forgets your projects list. Your project folders stay on your computer." : "This replaces your local copy with the latest from Figma. Your current files are backed up first.",
+        acts: [btn("Cancel", closeSheet), go],
+      });
     }
     default: {
       const index = (userSheet as { index: number }).index;
@@ -434,7 +457,7 @@ function phaseSheet(s: SessionState): string | null {
 
 function renderSheets(s: SessionState): void {
   const kind = phaseSheet(s) ?? userSheet?.kind ?? null;
-  const sig = kind === null ? "" : [kind, kind === "settings" ? [s.agent, s.agentConnected, s.workspace, s.workspaceError, s.updatesEnabled].join("|") : "", kind === "figma-signin" ? Boolean(s.message) : "", kind === "conflict" ? (s.conflictFiles ?? []).join(",") : "", kind === "ai-signin" || kind === "ai-setup" ? s.agent : "", kind === "remove" ? (userSheet as { key: string }).key : "", kind === "undo" ? (userSheet as { index: number }).index : ""].join("#");
+  const sig = kind === null ? "" : [kind, kind === "settings" ? [s.agent, s.agentConnected, s.workspace, s.workspaceError, s.updatesEnabled, s.phase, s.activeKey].join("|") : "", kind === "figma-signin" ? Boolean(s.message) : "", kind === "conflict" ? (s.conflictFiles ?? []).join(",") : "", kind === "ai-signin" || kind === "ai-setup" ? s.agent : "", kind === "remove" ? (userSheet as { key: string }).key : "", kind === "undo" ? (userSheet as { index: number }).index : "", kind === "confirm" ? (userSheet as { action: string }).action : ""].join("#");
   if (sig === shownSheet) return syncPreview();
   shownSheet = sig;
   const previous = dialog;

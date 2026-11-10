@@ -4,5 +4,7 @@ import { z } from "zod";
 
 export const projectPathArg = z.string().max(1024);
 export const processIdArg = z.enum(["preview", "agent", "install"]);
+export const cleanupActionArg = z.enum(["fix-preview", "start-over", "reset-app"]);
 
+export type CleanupAction = z.infer<typeof cleanupActionArg>;
 export type ProjectPathArg = z.infer<typeof projectPathArg>;

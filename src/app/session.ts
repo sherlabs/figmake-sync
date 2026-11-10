@@ -592,14 +592,27 @@ export class Session {
 
   /** Restarts the preview (the only restartable thing). Never overlaps another action. */
   async restartProcess(id: ProcessId): Promise<void> {
+    if (id !== "preview") return;
+    await this.relaunchPreview(false);
+  }
+
+  /** "Fix the preview": the project's installed files are thrown away and set up again. Nothing else is touched. */
+  async fixPreview(): Promise<void> {
+    await this.relaunchPreview(true);
+  }
+
+  private async relaunchPreview(clean: boolean): Promise<void> {
     const root = this.root;
-    if (id !== "preview" || !root || this.busy || (this.s.phase !== "ready" && this.s.phase !== "error")) return;
+    if (!root || this.isBusy() || (this.s.phase !== "ready" && this.s.phase !== "error")) return;
+    const again = (): Promise<void> => (clean ? this.fixPreview() : this.restartProcess("preview"));
     await this.exclusive(async (signal) => {
       this.resume = null;
       this.previewStopped = false;
+      this.dev = null;
       this.set({ phase: "preparing", previewUrl: null, message: undefined });
       try {
         await this.deps.harness.stopDev(root).catch(() => undefined);
+        if (clean) await this.removeInstalledFiles(root);
         const project = await this.deps.harness.ensureProjectRunning(root, signal);
         if (project.ok) {
           this.set({ previewUrl: project.url });
@@ -607,12 +620,93 @@ export class Session {
           return await this.ready();
         }
         if (signal.aborted) return this.stoppedPreview();
-        this.fail("Couldn't start the preview. Try again.", () => this.restartProcess("preview"), "preview_failed");
+        this.fail("Couldn't start the preview. Try again.", again, "preview_failed");
       } catch (error) {
-        this.deps.log("restart preview failed", error);
+        this.deps.log(clean ? "fix preview failed" : "restart preview failed", error);
         if (signal.aborted) return this.stoppedPreview();
-        this.fail("Couldn't start the preview. Try again.", () => this.restartProcess("preview"), "preview_failed");
+        this.fail("Couldn't start the preview. Try again.", again, "preview_failed");
       }
+    });
+  }
+
+  /** Deletes the open project's own node_modules folder (and the setup stamp inside it). Refuses anything outside the project. */
+  private async removeInstalledFiles(root: string): Promise<void> {
+    const dir = path.resolve(root);
+    if (!(await fs.pathExists(path.join(dir, STATE_DIRECTORY_NAME)))) throw new Error("not a project folder");
+    const modules = path.join(dir, "node_modules");
+    const stat = await fs.lstat(modules).catch(() => null);
+    if (!stat) return;
+    // A link is removed as a link; its target is never followed.
+    if (stat.isSymbolicLink() || !stat.isDirectory()) return void (await fs.unlink(modules));
+    if (path.dirname(await fs.realpath(modules)) !== (await fs.realpath(dir))) throw new Error("unsafe path");
+    await fs.remove(modules);
+  }
+
+  /** "Start this project over": back up, bring the latest from Figma, set everything up again. */
+  async startOver(): Promise<void> {
+    const root = this.root;
+    if (!root || this.isBusy() || (this.s.phase !== "ready" && this.s.phase !== "error")) return;
+    await this.exclusive(async (signal) => {
+      this.resume = null;
+      this.previewStopped = false;
+      this.dev = null;
+      this.set({ phase: "connecting", previewUrl: null, message: undefined });
+      try {
+        await this.deps.harness.stopDev(root).catch(() => undefined);
+        const store = new ProjectStateStore(root);
+        const config = await store.loadProjectConfig();
+        await store.createBackup("pre-start-over", config.sync.ignore);
+        await this.deps.withBrowser(() => this.deps.sync.pull({ projectRoot: root, strategy: "backup", confirm: () => Promise.resolve(true), signal }));
+        if (signal.aborted) return this.cancelled();
+        this.stack = [];
+        this.settle("undone");
+        this.set({ phase: "preparing" });
+        const project = await this.deps.harness.ensureProjectRunning(root, signal);
+        if (signal.aborted) return this.cancelled();
+        if (!project.ok) return this.fail("Couldn't start the project. Try again.", () => this.startOver(), "preview_failed");
+        this.set({ previewUrl: project.url });
+        this.deps.reloadPreview();
+        await this.ready();
+      } catch (error) {
+        if (signal.aborted) return this.cancelled();
+        if (isAuthRequiredError(error)) return this.needSignin(() => this.startOver());
+        this.deps.log("start over failed", error);
+        this.fail(plainError(error, "figma"), () => this.startOver(), errorCode(error, "figma"));
+      }
+    });
+  }
+
+  /** "Reset the app": forgets accounts and the projects list. Project folders and saved chats stay on disk. */
+  async resetApp(): Promise<void> {
+    if (this.isBusy()) return;
+    await this.exclusive(async () => {
+      try {
+        await this.deps.harness.stopDevExcept(null, true).catch(() => undefined);
+        await this.deps.signOutFigma();
+        await this.deps.appState.update({ agent: null, agentConnected: false, projects: {}, links: {}, lastLink: null });
+      } catch (error) {
+        this.deps.log("reset failed", error);
+        return this.fail("Couldn't reset the app. Try again.", () => this.resetApp(), "unknown");
+      }
+      this.known = {};
+      this.links = {};
+      this.stacks.clear();
+      this.stack = [];
+      this.messages = [];
+      this.fresh = false;
+      this.turnId = null;
+      this.emitChat();
+      this.root = null;
+      this.activeKey = null;
+      this.agentReady = null;
+      this.pendingReopen = null;
+      this.resume = null;
+      this.dev = null;
+      this.installing = false;
+      this.previewStopped = false;
+      this.syncedAtByKey = {};
+      this.set({ agent: null, agentConnected: false, projects: [], activeKey: null, syncedAt: null });
+      this.set(this.startState());
     });
   }
 

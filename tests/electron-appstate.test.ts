@@ -23,6 +23,15 @@ describe("DesktopAppStateStore", () => {
     await fs.remove(dir);
   });
 
+  it("a reset patch clears accounts and projects but keeps the updates setting and workspace", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "appstate-"));
+    const store = new DesktopAppStateStore(path.join(dir, "app-state.json"));
+    await store.update({ agent: "claude", agentConnected: true, lastLink: "l", workspace: "/w", projects: { a: "/p" }, links: { a: "l" }, updates: { enabled: false } });
+    await store.update({ agent: null, agentConnected: false, projects: {}, links: {}, lastLink: null });
+    expect(await store.load()).toEqual({ ...DEFAULTS, workspace: "/w", updates: { enabled: false } });
+    await fs.remove(dir);
+  });
+
   it("recovers from corrupt JSON and writes atomically", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "appstate-"));
     const file = path.join(dir, "app-state.json");

@@ -87,6 +87,7 @@ async function open(state: object, size: { width: number; height: number }, sche
       readFile: (p: string) => Promise.resolve({ kind: "text", path: p, text: a.cart, lines: a.cart.split("\n").length - 1 }),
       changedFiles: () => Promise.resolve(["src/pages/Cart.tsx"]),
       stopProcess: noop, restartProcess: noop,
+      cleanup: (a: string) => { (window as unknown as { __cleanup: string[] }).__cleanup = [...((window as unknown as { __cleanup?: string[] }).__cleanup ?? []), a]; return Promise.resolve(); },
       newChat: noop, copyText: noop, openProject: noop, ask: noop, undo: noop, send: noop, cancel: noop, retry: noop, setAgent: noop,
       chooseWorkspace: noop, signOutFigma: noop, setUpdates: noop, switchProject: noop, removeProject: noop, reportIssue: noop, installUpdate: noop,
     };
@@ -183,6 +184,22 @@ describe("renderer layout", () => {
       const row = page.locator("dialog.sheet .row.upd");
       expect(await row.innerText()).toMatch(/Updates[\s\S]*Version v0\.1\.18[\s\S]*Check for updates/u);
       await shot(page, `settings-${scheme}`);
+      const clean = page.locator("dialog.sheet .setrows.clean");
+      expect(await clean.innerText()).toMatch(/Preview not showing\?[\s\S]*Start this project over[\s\S]*Reset the app/u);
+      expect(await page.locator("dialog.sheet .bd").evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+      await clean.getByRole("button", { name: "Reset…" }).click();
+      await page.waitForSelector("dialog.sheet h2:has-text('Reset the app?')");
+      expect(await page.locator("dialog.sheet .hd p").innerText()).toBe("Signs you out of Figma and your AI helper, and forgets your projects list. Your project folders stay on your computer.");
+      await shot(page, `reset-confirm-${scheme}`);
+      expect(await overflowX(page)).toBeLessThanOrEqual(0);
+      await page.getByRole("button", { name: "Cancel" }).click();
+      await page.keyboard.press("Control+,");
+      await page.waitForSelector("dialog.sheet .setrows.clean");
+      await page.locator("dialog.sheet .setrows.clean").getByRole("button", { name: "Start over…" }).click();
+      expect(await page.locator("dialog.sheet .hd p").innerText()).toBe("This replaces your local copy with the latest from Figma. Your current files are backed up first.");
+      await page.getByRole("button", { name: "Start over", exact: true }).click();
+      expect(await page.evaluate(() => (window as unknown as { __cleanup: string[] }).__cleanup)).toEqual(["start-over"]);
+      await page.keyboard.press("Control+,");
       await row.getByRole("button", { name: "Check for updates" }).click();
       await page.waitForFunction(() => document.querySelector("dialog.sheet .row.upd")?.textContent?.includes("You're up to date (v0.1.18)"));
       expect(await page.evaluate(() => (window as unknown as { __checks: number }).__checks)).toBe(1);
@@ -192,6 +209,28 @@ describe("renderer layout", () => {
       await page.context().close();
     });
   }
+
+  it("settings: Clean up buttons wait while busy and without a project", async (ctx) => {
+    if (!browser) return ctx.skip();
+    const cases: [object, boolean, boolean][] = [
+      [{ ...READY, phase: "working" }, false, false],
+      [{ ...START, phase: "start" }, false, true],
+      [READY, true, true],
+    ];
+    for (const [st, project, reset] of cases) {
+      const page = await open(st as typeof READY, { width: 900, height: 560 }, "light");
+      await page.keyboard.press("Control+,");
+      await page.waitForSelector("dialog.sheet .setrows.clean");
+      const clean = page.locator("dialog.sheet .setrows.clean");
+      expect(await clean.getByRole("button", { name: "Fix the preview" }).isEnabled()).toBe(project);
+      expect(await clean.getByRole("button", { name: "Start over…" }).isEnabled()).toBe(project);
+      expect(await clean.getByRole("button", { name: "Reset…" }).isEnabled()).toBe(reset);
+      const box = await rect(page, "dialog.sheet");
+      expect(box && box.y + box.h).toBeLessThanOrEqual(560);
+      expect(await overflowX(page)).toBeLessThanOrEqual(0);
+      await page.context().close();
+    }
+  }, 30_000);
 
   it("settings: an AI that was never connected says so and offers Connect", async (ctx) => {
     if (!browser) return ctx.skip();

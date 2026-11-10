@@ -9,7 +9,7 @@ import { ChatStore } from "../src/app/chatStore.js";
 import { PROMPT_PREFACE, Session, conflictFiles, errorCode, parseChange, plainError, type SessionDeps } from "../src/app/session.js";
 import { AuthRequiredError } from "../src/browser/session.js";
 import { FigmakeSyncService } from "../src/core/service.js";
-import { ProjectStateStore } from "../src/core/state.js";
+import { ProjectStateStore, STATE_DIRECTORY_NAME } from "../src/core/state.js";
 import { DesktopAppStateStore } from "../src/electron/appState.js";
 import type { ChatState, SessionState } from "../src/electron/contracts.js";
 import type { AgentEvent } from "../src/harness/agents/types.js";
@@ -985,6 +985,107 @@ describe("session: files and running things", () => {
     await r.session.stopProcess("preview");
     await r.session.restartProcess("preview");
     expect(r.harness.stopDev).not.toHaveBeenCalled();
+    await r.session.cancel();
+    await turn;
+  });
+});
+
+describe("session: clean up", () => {
+  it("fix the preview removes only the project's node_modules, then reopens the preview", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    const modules = path.join(r.project, "node_modules");
+    await fs.outputFile(path.join(modules, ".figmake-deps-stamp"), "x");
+    await fs.outputFile(path.join(modules, "vite", "index.js"), "x");
+    const sibling = path.join(r.workspace, "other", "node_modules", "keep.js");
+    await fs.outputFile(sibling, "x");
+    r.harness.ensureProjectRunning.mockClear();
+    await r.session.fixPreview();
+    expect(await fs.pathExists(modules)).toBe(false);
+    expect(await fs.pathExists(sibling)).toBe(true);
+    expect(await fs.pathExists(path.join(r.project, "src", "app.ts"))).toBe(true);
+    expect(r.harness.stopDev).toHaveBeenCalledWith(r.project);
+    expect(r.harness.ensureProjectRunning).toHaveBeenCalledTimes(1);
+    expect(r.session.state).toMatchObject({ phase: "ready", previewUrl: "http://localhost:5173/" });
+  });
+
+  it("fix the preview never follows a node_modules link out of the project", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    const outside = path.join(r.workspace, "outside");
+    await fs.outputFile(path.join(outside, "keep.js"), "x");
+    await fs.symlink(outside, path.join(r.project, "node_modules"));
+    await r.session.fixPreview();
+    expect(await fs.pathExists(path.join(outside, "keep.js"))).toBe(true);
+    expect(await fs.pathExists(path.join(r.project, "node_modules"))).toBe(false);
+  });
+
+  it("fix the preview does nothing while busy or with no project, and a failure offers a retry", async () => {
+    const r = await rig();
+    await r.session.fixPreview();
+    expect(r.harness.stopDev).not.toHaveBeenCalled();
+    await r.session.openProject(LINK);
+    r.harness.ensureProjectRunning.mockResolvedValueOnce({ ok: false } as never);
+    await r.session.fixPreview();
+    expect(r.session.state).toMatchObject({ phase: "error", message: "Couldn't start the preview. Try again.", code: "preview_failed" });
+    await r.session.retry();
+    expect(r.session.state.phase).toBe("ready");
+  });
+
+  it("start over backs up unsent work, then pulls from Figma and restarts", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    await fs.outputFile(path.join(r.project, "src", "app.ts"), "export const v = 99;\n");
+    const real = r.sync.pull.getMockImplementation() as (o: never) => Promise<unknown>;
+    const seen: number[] = [];
+    r.sync.pull.mockImplementation(async (o: never) => {
+      seen.push((await fs.readdir(path.join(r.project, STATE_DIRECTORY_NAME, "backups")).catch(() => [] as string[])).length);
+      return real(o);
+    });
+    await r.session.startOver();
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toBeGreaterThan(0); // the backup existed before the pull began
+    expect(r.sync.pull).toHaveBeenCalledWith(expect.objectContaining({ strategy: "backup" }));
+    expect(await read(path.join(r.project, "src", "app.ts"))).toContain("v = 1");
+    const backups = await fs.readdir(path.join(r.project, STATE_DIRECTORY_NAME, "backups"));
+    const saved = (await Promise.all(backups.map((b) => read(path.join(r.project, STATE_DIRECTORY_NAME, "backups", b, "workspace", "src", "app.ts")).catch(() => "")))).join("");
+    expect(saved).toContain("v = 99");
+    expect(r.session.state).toMatchObject({ phase: "ready", canSend: false, previewUrl: "http://localhost:5173/" });
+    expect(r.deps.reloadPreview).toHaveBeenCalled();
+  });
+
+  it("start over says so plainly when Figma can't be reached, and retry works", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    r.sync.pull.mockRejectedValueOnce(new Error("net::ERR_FAILED"));
+    await r.session.startOver();
+    expect(r.session.state).toMatchObject({ phase: "error", message: "Couldn't reach Figma. Try again." });
+    await r.session.retry();
+    expect(r.session.state.phase).toBe("ready");
+  });
+
+  it("reset the app clears accounts and the projects list, keeps files, chats and the updates setting", async () => {
+    const r = await rig();
+    await r.session.setUpdates(false);
+    await r.session.openProject(LINK);
+    await r.session.resetApp();
+    expect(r.deps.signOutFigma).toHaveBeenCalledTimes(1);
+    expect(r.harness.stopDevExcept).toHaveBeenCalledWith(null, true);
+    const saved = await r.store.load();
+    expect(saved).toMatchObject({ agent: null, agentConnected: false, projects: {}, links: {}, lastLink: null, updates: { enabled: false } });
+    expect(saved.workspace ?? r.workspace).toBeTruthy();
+    expect(await fs.pathExists(path.join(r.project, "src", "app.ts"))).toBe(true);
+    expect(r.session.state).toMatchObject({ phase: "needs-ai-choice", agent: null, agentConnected: false, projects: [], activeKey: null, previewUrl: null });
+  });
+
+  it("reset the app is ignored while busy", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    r.edit.hold = new Promise(() => undefined);
+    const turn = r.session.ask("x");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await r.session.resetApp();
+    expect(r.deps.signOutFigma).not.toHaveBeenCalled();
     await r.session.cancel();
     await turn;
   });

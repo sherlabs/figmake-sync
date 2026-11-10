@@ -34,7 +34,7 @@ import { UPDATE_CHECK_CHANNEL, UPDATE_GET_CHANNEL, UPDATE_INSTALL_CHANNEL, UPDAT
 import { trackEvent } from "./analytics.js";
 import { DesktopAppStateStore } from "./appState.js";
 import type { MenuCommand, PreviewRect } from "./contracts.js";
-import { processIdArg, projectPathArg } from "./ipc.js";
+import { cleanupActionArg, processIdArg, projectPathArg } from "./ipc.js";
 import { PreviewView } from "./preview.js";
 
 const APP_ID = "com.figmake.sync";
@@ -265,6 +265,11 @@ function registerIpc(s: Session): void {
     const parsed = processIdArg.safeParse(id);
     return parsed.success ? s.restartProcess(parsed.data) : undefined;
   });
+  ipcMain.handle("figmake:cleanup", (_e, action: unknown) => {
+    const parsed = cleanupActionArg.safeParse(action);
+    if (!parsed.success) return undefined;
+    return parsed.data === "fix-preview" ? s.fixPreview() : parsed.data === "start-over" ? s.startOver() : s.resetApp();
+  });
   ipcMain.handle("figmake:cancel", () => s.cancel());
   ipcMain.handle("figmake:retry", () => s.retry());
   ipcMain.handle("figmake:set-agent", (_e, agent: unknown) => (agent === "claude" || agent === "codex" ? s.setAgent(agent) : undefined));
@@ -331,6 +336,7 @@ async function bootstrap(): Promise<void> {
   if (process.platform === "darwin") await app.dock?.show();
   buildMenu();
   registerIpc(live);
+  registerUpdateIpc();
   mainWindow = await createWindow();
   preview = new PreviewView(mainWindow);
   let lastUrl: string | null = null;
@@ -346,13 +352,17 @@ async function bootstrap(): Promise<void> {
   await startUpdater(live, (await store.load()).updates.enabled);
 }
 
-/** Self-update. Automatic checks follow the Settings switch; "Check for updates" always works in a packaged app. */
-async function startUpdater(live: Session, automatic: boolean): Promise<void> {
-  const supported = updatesSupported({ isPackaged: app.isPackaged, platform: process.platform, env: process.env, appImage: Boolean(process.env["APPIMAGE"]) });
+/** Registered before the window exists, so the first render never calls a missing handler. */
+function registerUpdateIpc(): void {
   const unsupported: UpdateState = { phase: "idle", currentVersion: app.getVersion(), supported: false, upToDate: false };
   ipcMain.handle(UPDATE_GET_CHANNEL, () => updater?.getState() ?? unsupported);
   ipcMain.handle(UPDATE_CHECK_CHANNEL, () => updater?.checkNow() ?? unsupported);
   ipcMain.handle(UPDATE_INSTALL_CHANNEL, () => void updater?.installNow());
+}
+
+/** Self-update. Automatic checks follow the Settings switch; "Check for updates" always works in a packaged app. */
+async function startUpdater(live: Session, automatic: boolean): Promise<void> {
+  const supported = updatesSupported({ isPackaged: app.isPackaged, platform: process.platform, env: process.env, appImage: Boolean(process.env["APPIMAGE"]) });
   if (!supported) return;
   try {
     const note = (level: "info" | "warn" | "error") => (message: string) => void log(`updater ${level}: ${message}`);

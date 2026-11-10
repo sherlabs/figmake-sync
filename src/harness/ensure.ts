@@ -120,7 +120,8 @@ export async function ensureProjectRunning(
     } catch (e) {
       return fail("no_dev_script", e instanceof Error ? e.message : String(e));
     }
-    const deadline = Date.now() + (opts.urlTimeoutMs ?? 90_000);
+    // Generous: on slow disks the first start reads thousands of fresh files and can take minutes. The person can always Stop.
+    const deadline = Date.now() + (opts.urlTimeoutMs ?? 600_000);
     for (;;) {
       const s = port.devStatus(rootDir);
       if (s.state === "running" && s.url) {

@@ -261,6 +261,8 @@ export interface FigmakeApi {
   changedFiles(): Promise<string[]>;
   stopProcess(id: ProcessId): Promise<void>;
   restartProcess(id: ProcessId): Promise<void>;
+  /** Settings > Clean up. The window confirms the destructive ones first. */
+  cleanup(action: "fix-preview" | "start-over" | "reset-app"): Promise<void>;
   /** Where the preview sits in the window (null hides it). */
   previewRect(rect: PreviewRect | null): void;
 }
