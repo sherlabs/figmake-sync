@@ -314,7 +314,7 @@ export function createChatPanel(host: ChatHost): ChatPanel {
       "div",
       { class: "msg assistant working", role: "status", "data-id": "working" },
       h("span", { class: "av", "aria-hidden": "true" }, icon("mark")),
-      h("div", { class: "mbody lv-wrap" }, h("div", { class: "lv-main" }, h("span", { class: "dots", "aria-hidden": "true" }, h("i"), h("i"), h("i")), h("span", { class: "lv-now" }, label), time, h("button", { type: "button", class: "plain quiet sm", onclick: () => void api.cancel() }, icon("stop", true), "Stop")), steps),
+      h("div", { class: "mbody lv-wrap" }, h("div", { class: "lv-main" }, h("span", { class: "dots", "aria-hidden": "true" }, h("i"), h("i"), h("i")), h("span", { class: "lv-now" }, label), time), steps),
     );
   }
 

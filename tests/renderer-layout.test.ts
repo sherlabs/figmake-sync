@@ -649,7 +649,7 @@ describe("renderer layout", () => {
   describe("live progress while the AI works", () => {
     for (const size of [{ width: 1180, height: 760 }, { width: 900, height: 640 }]) {
       for (const scheme of ["light", "dark"] as const) {
-        it(`working row shows the live line, clock, Stop and plan inside the panel (${size.width}px, ${scheme})`, async (ctx) => {
+        it(`working row shows the live line, clock and plan inside the panel (no second Stop) (${size.width}px, ${scheme})`, async (ctx) => {
           if (!browser) return ctx.skip();
           const page = await open(READY, size, scheme);
           const long = "Editing a-really-long-component-file-name-that-keeps-going-and-going-and-going-Header.tsx";
@@ -667,17 +667,16 @@ describe("renderer layout", () => {
           const panel = await rect(page, ".chat");
           const now = await rect(page, ".lv-now");
           const time = await rect(page, ".lv-time");
-          const stop = await rect(page, ".lv-main .plain");
           const plan = await rect(page, ".lv-plan");
           expect(await page.locator(".lv-time").innerText()).toMatch(/^1m \d\ds$/u);
           expect(await page.locator(".lv-step").count()).toBe(3);
           expect(await page.locator(".lv-acts-list li").count()).toBe(3);
-          for (const r of [now, time, stop, plan]) {
+          for (const r of [now, time, plan]) {
             expect(r).not.toBeNull();
             expect((r?.x ?? 0) + (r?.w ?? 0)).toBeLessThanOrEqual((panel?.x ?? 0) + (panel?.w ?? 0) + 0.5);
           }
-          // Stop stays on the same row as the live line and the clock.
-          expect(Math.abs((stop?.y ?? 0) - (now?.y ?? 99))).toBeLessThan(20);
+          // The composer's stop button is the only Stop while working: the status row has none.
+          expect(await page.locator(".lv-main button").count()).toBe(0);
           expect(await overflowX(page)).toBeLessThanOrEqual(0);
           // Generic names are not used, and reduced motion stops the shimmer.
           expect(await page.locator(".lv-now").evaluate((el) => getComputedStyle(el).animationName)).toBe("none");
