@@ -389,3 +389,7 @@ Current automated coverage includes:
 ## Status
 
 This is a macOS-first local desktop tool intended to make Figma Make workflows less manual and less fragile. It is not an official Figma integration, and the browser automation layer may need selector updates as the Figma Make UI changes.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
