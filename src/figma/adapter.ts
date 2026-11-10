@@ -184,6 +184,8 @@ export function classifyPageState(input: {
   url: string;
   text: string;
   hasPasswordInput: boolean;
+  /** Figma's guest sign-up prompt is on the page (a signed-out visitor can view a shared file but has no Code tab). */
+  hasGuestPrompt?: boolean;
 }): PageState | null {
   let host = "";
   let pathname = "";
@@ -207,7 +209,8 @@ export function classifyPageState(input: {
 
   if (
     input.hasPasswordInput ||
-    /\b(log ?in|sign ?in) to (your )?figma\b|\blog in or sign up\b|\bcontinue with (google|sso)\b/i.test(
+    input.hasGuestPrompt === true ||
+    /\b(log ?in|sign ?in) to (your )?figma\b|\blog in or sign up\b|\bcontinue with (google|sso)\b|\bsign up to use\b/i.test(
       text,
     )
   ) {
@@ -1388,16 +1391,17 @@ export class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSessio
       return null;
     }
 
-    const { text, hasPasswordInput } = await page.evaluate(() => ({
+    const { text, hasPasswordInput, hasGuestPrompt } = await page.evaluate(() => ({
       text: (document.body?.innerText ?? "").slice(0, 4_000),
       hasPasswordInput: Boolean(
         document.querySelector(
           'input[type="password"], input[name="password"], form[action*="login"]',
         ),
       ),
+      hasGuestPrompt: Boolean(document.querySelector('[data-testid="google-btn"]')),
     }));
 
-    return classifyPageState({ url: page.url(), text, hasPasswordInput });
+    return classifyPageState({ url: page.url(), text, hasPasswordInput, hasGuestPrompt });
   }
 
   // -------------------------------------------------------------------------

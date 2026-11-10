@@ -95,6 +95,15 @@ describe("resolveTreeChain", () => {
   });
 });
 
+describe("classifyPageState guest view", () => {
+  it("a signed-out visitor on a shared Make file counts as needing sign-in", () => {
+    const url = "https://www.figma.com/make/abc/Name";
+    expect(classifyPageState({ url, text: "What do you want to build? Sign up to use", hasPasswordInput: false })?.kind).toBe("auth");
+    expect(classifyPageState({ url, text: "", hasPasswordInput: false, hasGuestPrompt: true })?.kind).toBe("auth");
+    expect(classifyPageState({ url, text: "Preview Share Reload", hasPasswordInput: false })).toBeNull();
+  });
+});
+
 describe("classifyPageState", () => {
   it("detects login redirects", () => {
     expect(
