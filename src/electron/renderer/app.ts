@@ -5,6 +5,7 @@ import { createChatPanel } from "./chat.js";
 import { createFilesPanel } from "./files.js";
 import { createOutputPanel } from "./outputTab.js";
 import { createIgnoredList, createReview, filesNotSentText } from "./review.js";
+import { createMergeView } from "./sync.js";
 import { ago, h, icon, nodes, plural, type Child } from "./dom.js";
 import { copyButton, formatElapsed, logView, slowHints, tailView, type LogView, type TailView } from "./output.js";
 
@@ -22,10 +23,10 @@ const AGENTS: { id: AgentChoice; name: string; blurb: string; mark: string; glyp
 const agentName = (id: AgentChoice | null): string => AGENTS.find((a) => a.id === id)?.name ?? "Your AI helper";
 const STATUS_TEXT: Record<ProjectStatus, string> = { synced: "Up to date", changes: "Changes waiting", attention: "Needs attention" };
 const DOT: Record<ProjectStatus, string> = { synced: "ok", changes: "chg", attention: "bad" };
-const BUSY: readonly Phase[] = ["connecting", "preparing", "working", "sending"];
+const BUSY: readonly Phase[] = ["connecting", "preparing", "working", "sending", "syncing"];
 const STEPS = ["Getting your project", "Setting up", "Starting preview", "Ready"];
 
-type UserSheet = { kind: "review" } | { kind: "ignored" } | { kind: "add" } | { kind: "settings" } | { kind: "remove"; key: string } | { kind: "undo"; index: number } | { kind: "confirm"; action: "start-over" | "reset-app" };
+type UserSheet = { kind: "review" } | { kind: "ignored" } | { kind: "add" } | { kind: "settings" } | { kind: "remove"; key: string } | { kind: "rename"; key: string } | { kind: "undo"; index: number } | { kind: "confirm"; action: "start-over" | "reset-app" } | { kind: "sync-replace"; count: number };
 
 let state: SessionState | null = null;
 let updateReady = false;
@@ -42,7 +43,7 @@ let bannerDetails = false;
 
 const busyNow = (s: SessionState): boolean => BUSY.includes(s.phase);
 /** Anything in flight, including a question waiting to be answered: Clean up waits for it. */
-const cleanupBusy = (s: SessionState): boolean => busyNow(s) || s.phase === "conflict";
+const cleanupBusy = (s: SessionState): boolean => busyNow(s) || s.phase === "conflict" || s.phase === "resolving";
 const report = (s: SessionState): void => void api.reportIssue({ errorCode: s.code ?? "unknown", message: s.message ?? "", phase: s.failedIn ?? s.phase });
 const reportProblem = (): void => void api.reportIssue({ errorCode: "unknown", message: "Reported from the app", phase: state?.phase ?? "start" });
 
@@ -51,15 +52,17 @@ const reportProblem = (): void => void api.reportIssue({ errorCode: "unknown", m
 const plist = h("ul", { class: "plist", role: "listbox", "aria-labelledby": "projects-h" });
 const sideEmpty = h("p", { class: "side-empty" }, "No projects yet. Paste a Figma Make link to start.");
 const addBtn = h("button", { type: "button", class: "sbtn", onclick: () => openSheet({ kind: "add" }) }, icon("plus"), "Add project");
-const side = h("aside", { class: "side", "aria-label": "Projects" }, h("div", { class: "side-top", "aria-hidden": "true" }), h("h2", { id: "projects-h", class: "side-h" }, "Projects"), plist, sideEmpty, addBtn, h("div", { class: "spacer" }));
+const side = h("aside", { class: "side", id: "fm-side", "aria-label": "Projects" }, h("div", { class: "side-top", "aria-hidden": "true" }), h("h2", { id: "projects-h", class: "side-h" }, "Projects"), plist, sideEmpty, addBtn, h("div", { class: "spacer" }));
 
 const title = h("h1", {}, "figmake-sync");
 const chip = h("span", { class: "chip status", role: "status" });
 const updateBtn = h("button", { type: "button", class: "plain update", hidden: true, onclick: () => void api.installUpdate() }, icon("refresh", true), "Restart to update");
 const sendBtn = h("button", { type: "button", class: "btn primary send", "aria-keyshortcuts": "", onclick: () => openSheet({ kind: "review" }) });
 const gearBtn = h("button", { type: "button", class: "btn icon gear", "aria-label": "Settings", title: `Settings (${MOD},)`, onclick: () => openSheet({ kind: "settings" }) }, icon("gear"));
+const syncBtn = h("button", { type: "button", class: "btn sy-btn", "aria-haspopup": "menu", onclick: () => showSyncMenu() }, icon("refresh", true), h("span", { class: "bl" }, "Sync with Figma"));
 const chatBtn = h("button", { type: "button", class: "btn icon chat-toggle", "aria-label": "Side panel", "aria-pressed": "true", "aria-keyshortcuts": "Meta+J Control+J", title: `Side panel (${MOD}J)`, onclick: () => setChatOpen(!chatOpen) }, icon("panel"), h("span", { class: "pip", hidden: true }));
-const toolbar = h("header", { class: "toolbar" }, h("div", { class: "ttl row-ttl" }, title, chip), h("div", { class: "tright" }, updateBtn, chatBtn, sendBtn, gearBtn));
+const sideToggle = h("button", { type: "button", class: "btn icon fm-sidetoggle", "aria-controls": "fm-side", "aria-expanded": "true", "aria-label": "Hide sidebar", "aria-keyshortcuts": "Meta+B Control+B", title: `Hide sidebar (${MOD}B)`, onclick: () => setSideOpen(!sideOpen) }, icon("sidebar"));
+const toolbar = h("header", { class: "toolbar" }, h("div", { class: "ttl row-ttl" }, sideToggle, title, chip), h("div", { class: "tright" }, updateBtn, chatBtn, syncBtn, sendBtn, gearBtn));
 
 const banner = h("div", { class: "errbanner", role: "alert", hidden: true });
 
@@ -108,21 +111,23 @@ const rail = h("section", { class: "rail", id: "rail-body", "aria-label": "Side 
 const resizer = h("div", { class: "resizer", role: "separator", "aria-orientation": "vertical", "aria-label": "Resize side panel", tabindex: "0" });
 const work = h("div", { class: "work" }, stage, resizer, rail);
 const main = h("div", { class: "main" }, toolbar, banner, work, statusBar);
+const appEl = h("div", { class: "app" }, side, main);
 
 const sheetHost = h("div", { class: "sheet-host" });
 const menuHost = h("div", { class: "menu-host" });
 const toasts = h("div", { class: "toasts", "aria-live": "polite" });
-document.getElementById("app")?.append(h("div", { class: "app" }, side, main), sheetHost, menuHost, toasts);
+document.getElementById("app")?.append(appEl, sheetHost, menuHost, toasts);
 
 // ================= actions =================
 
-function submitLink(input: HTMLInputElement, button: HTMLButtonElement): void {
+function submitLink(input: HTMLInputElement, button: HTMLButtonElement, nameInput?: HTMLInputElement): void {
   const value = input.value.trim();
   if (!value) return;
+  const name = nameInput?.value.trim().slice(0, 80);
   input.value = "";
   button.disabled = true;
   closeSheet();
-  void api.openProject(value);
+  void (name ? api.openProject(value, name) : api.openProject(value));
 }
 
 function toast(text: string): void {
@@ -140,7 +145,7 @@ function projectRow(p: SessionState["projects"][number], s: SessionState): HTMLE
   const tail = working ? h("span", { class: "spin s", "aria-hidden": "true" }) : h("span", { class: `dot ${DOT[status]}`, title: STATUS_TEXT[status], "aria-hidden": "true" });
   const row = h(
     "button",
-    { type: "button", class: "prow", role: "option", "aria-selected": selected ? "true" : "false", "aria-label": `${p.name}, ${working ? "working" : STATUS_TEXT[status].toLowerCase()}`, onclick: () => !selected && void api.switchProject(p.key) },
+    { type: "button", class: "prow", role: "option", "aria-selected": selected ? "true" : "false", "aria-label": `${p.name}, ${working ? "working" : STATUS_TEXT[status].toLowerCase()}`, onclick: () => !selected && void api.switchProject(p.key), ondblclick: () => openSheet({ kind: "rename", key: p.key }) },
     icon("folder"),
     h("span", { class: "nm" }, p.name),
     h("span", { class: "ptail" }, tail),
@@ -158,13 +163,32 @@ function renderSidebar(s: SessionState): void {
 function showMenu(key: string, name: string, x: number, y: number): void {
   closeMenu();
   menuOpen = true;
+  const rename = h("button", { type: "button", role: "menuitem", onclick: () => { closeMenu(); openSheet({ kind: "rename", key }); } }, icon("pencil"), "Rename…");
   const item = h("button", { type: "button", class: "danger", role: "menuitem", onclick: () => { closeMenu(); openSheet({ kind: "remove", key }); } }, icon("trash"), "Remove from list…");
-  const menu = h("div", { class: "menu", role: "menu", "aria-label": name }, item);
+  const menu = h("div", { class: "menu", role: "menu", "aria-label": name }, rename, item);
   menu.style.left = `${Math.min(x, window.innerWidth - 220)}px`;
-  menu.style.top = `${Math.min(y, window.innerHeight - 60)}px`;
+  menu.style.top = `${Math.min(y, window.innerHeight - 90)}px`;
   menuHost.replaceChildren(menu);
-  item.focus();
+  rename.focus();
   syncPreview();
+}
+/** The small menu under "Sync with Figma". */
+function showSyncMenu(): void {
+  if (menuOpen) return closeMenu();
+  menuOpen = true;
+  const merge = h("button", { type: "button", role: "menuitem", onclick: () => { closeMenu(); void api.syncWithFigma("merge"); } }, icon("refresh"), "Merge Figma's changes into mine");
+  const replace = h("button", { type: "button", role: "menuitem", onclick: () => { closeMenu(); askReplace(); } }, icon("undo"), "Discard my changes and use Figma's");
+  const menu = h("div", { class: "menu sy-menu", role: "menu", "aria-label": "Sync with Figma" }, merge, replace);
+  const r = syncBtn.getBoundingClientRect();
+  menu.style.top = `${r.bottom + 6}px`;
+  menu.style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
+  menuHost.replaceChildren(menu);
+  merge.focus();
+  syncPreview();
+}
+/** Asks how many files would be discarded, then opens the confirm sheet. */
+function askReplace(): void {
+  void api.localChangeCount().catch(() => 0).then((count) => openSheet({ kind: "sync-replace", count }));
 }
 function closeMenu(): void {
   if (!menuOpen) return;
@@ -179,7 +203,7 @@ document.addEventListener("pointerdown", (e) => {
 // ================= toolbar / banner / status =================
 
 function statusChip(s: SessionState): { text: string; tone: string; spin: boolean } {
-  if (s.phase === "error" || s.phase === "needs-figma-signin" || s.phase === "needs-ai-signin" || s.phase === "conflict" || s.phase === "needs-ai-choice") return { text: s.phase === "error" ? "Needs attention" : "Waiting for you", tone: s.phase === "error" ? "bad" : "chg", spin: false };
+  if (s.phase === "error" || s.phase === "needs-figma-signin" || s.phase === "needs-ai-signin" || s.phase === "conflict" || s.phase === "resolving" || s.phase === "needs-ai-choice") return { text: s.phase === "error" ? "Needs attention" : "Waiting for you", tone: s.phase === "error" ? "bad" : "chg", spin: false };
   if (busyNow(s)) return { text: "Working", tone: "busy", spin: true };
   return s.canSend ? { text: "Changes waiting", tone: "chg", spin: false } : { text: "Up to date", tone: "ok", spin: false };
 }
@@ -194,6 +218,8 @@ function renderToolbar(s: SessionState): void {
     chip.replaceChildren(c.spin ? h("span", { class: "spin", "aria-hidden": "true" }) : h("span", { class: `dot ${c.tone === "busy" ? "" : c.tone}` }), c.text);
   }
   sendBtn.hidden = !hasProject;
+  syncBtn.hidden = !hasProject;
+  syncBtn.disabled = s.phase !== "ready";
   const enabled = s.phase === "ready" && s.canSend;
   sendBtn.disabled = !enabled;
   const count = s.changes.length;
@@ -230,6 +256,7 @@ const WORKING_TEXT: Partial<Record<Phase, (s: SessionState) => string>> = {
   preparing: (s) => (s.previewUrl || !s.projectName ? `Getting ${agentName(s.agent)} ready…` : "Setting things up…"),
   working: (s) => `${agentName(s.agent)} is making your change…`,
   sending: () => "Sending to Figma…",
+  syncing: () => "Syncing with Figma…",
 };
 
 function renderStatus(s: SessionState): void {
@@ -460,15 +487,43 @@ function buildSheet(kind: string, s: SessionState): HTMLDialogElement {
         sub: "Someone edited this project since you last synced.",
         body: [h("p", { class: "lead" }, "Which version do you want to keep?"), s.conflictFiles?.length ? filesList(s.conflictFiles) : null],
         hint: "Either way, a backup is saved first.",
-        acts: [btn("Use Figma's", () => void api.send("figma")), btn("Keep mine", () => void api.send("mine"), "primary")],
+        acts: [btn("Use Figma's", () => void api.send("figma")), btn("Merge", () => void api.syncWithFigma("merge")), btn("Keep mine", () => void api.send("mine"), "primary")],
       });
+    case "merge": {
+      const view = createMergeView(api, s.mergeConflicts ?? []);
+      sheetCleanup = () => view.dispose();
+      sheetClass = "sy-sheet";
+      return sheetFrame({
+        label: "Choose the version to keep",
+        glyph: icon("warn"),
+        tone: "warn",
+        title: "Some files need your choice",
+        sub: "You and Figma both changed these.",
+        body: [view.body],
+        hint: "A backup was saved first.",
+        acts: [btn("Keep all mine", () => void api.cancel()), btn("Done", () => void api.resolveMerge(view.choices()), "primary")],
+      });
+    }
+    case "sync-replace": {
+      const count = (userSheet as { count: number }).count;
+      return sheetFrame({
+        label: "Discard my changes",
+        glyph: icon("undo"),
+        tone: "warn",
+        title: "Discard your changes and use Figma's?",
+        sub: count > 0 ? `${plural(count, "file")} you changed will go back to Figma's version.` : "Your files will be replaced with Figma's latest.",
+        body: [h("p", { class: "lead" }, "A backup of your current files is kept.")],
+        acts: [btn("Cancel", closeSheet), btn("Discard my changes", () => { closeSheet(); void api.syncWithFigma("replace"); }, "primary")],
+      });
+    }
     case "add": {
       const input = h("input", { class: "field", type: "text", placeholder: "https://www.figma.com/make/…", "aria-label": "Figma Make link", spellcheck: "false", autocomplete: "off" });
-      const open = btn("Open", () => submitLink(input, open), "primary", { disabled: true });
+      const nameField = h("input", { class: "field fm-namefield", type: "text", placeholder: "Name (from link)", "aria-label": "Project name", maxlength: "80", spellcheck: "false", autocomplete: "off" });
+      const open = btn("Open", () => submitLink(input, open, nameField), "primary", { disabled: true });
       input.addEventListener("input", () => (open.disabled = !input.value.trim()));
-      input.addEventListener("keydown", (e) => e.key === "Enter" && !e.isComposing && submitLink(input, open));
+      for (const f of [input, nameField]) f.addEventListener("keydown", (e) => e.key === "Enter" && !e.isComposing && submitLink(input, open, nameField));
       queueMicrotask(() => input.focus());
-      return sheetFrame({ label: "Add a project", glyph: icon("plus"), tone: "accent", title: "Add a project", sub: "Paste the link to your Figma Make file.", body: [input, h("p", { class: "help" }, "Copy it from the address bar while the file is open.")], acts: [btn("Cancel", closeSheet), open] });
+      return sheetFrame({ label: "Add a project", glyph: icon("plus"), tone: "accent", title: "Add a project", sub: "Paste the link to your Figma Make file.", body: [input, nameField, h("p", { class: "help" }, "Copy it from the address bar while the file is open.")], acts: [btn("Cancel", closeSheet), open] });
     }
     case "settings": {
       const other = AGENTS.find((x) => x.id !== s.agent) ?? AGENTS[1];
@@ -520,6 +575,22 @@ function buildSheet(kind: string, s: SessionState): HTMLDialogElement {
     case "ignored":
       sheetClass = "rv-sheet";
       return sheetFrame({ label: "Files not sent", glyph: icon("doc"), title: "Files not sent", body: [createIgnoredList(api)], acts: [btn("Done", closeSheet, "primary")] });
+    case "rename": {
+      const p = s.projects.find((x) => x.key === (userSheet as { key: string }).key);
+      const key = p?.key ?? "";
+      const field = h("input", { class: "field", type: "text", value: p?.name ?? "", maxlength: "80", "aria-label": "Project name", spellcheck: "false", autocomplete: "off" });
+      const save = btn("Save", () => commit(), "primary", { disabled: !(p?.name ?? "").trim() });
+      const commit = (): void => {
+        const name = field.value.replace(/\s+/gu, " ").trim();
+        if (!name || name.length > 80) return;
+        closeSheet();
+        if (name !== p?.name) void api.renameProject(key, name);
+      };
+      field.addEventListener("input", () => { const v = field.value.trim(); save.disabled = !v || v.length > 80; field.setAttribute("aria-invalid", String(v.length > 80)); });
+      field.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); commit(); } });
+      queueMicrotask(() => { field.focus(); field.select(); });
+      return sheetFrame({ label: "Rename project", glyph: icon("pencil"), tone: "accent", title: "Rename project", body: [field], acts: [btn("Cancel", closeSheet), save] });
+    }
     case "remove": {
       const p = s.projects.find((x) => x.key === (userSheet as { key: string }).key);
       const key = p?.key ?? "";
@@ -576,12 +647,13 @@ function phaseSheet(s: SessionState): string | null {
   if (s.phase === "preparing" && !s.projectName && !s.previewUrl && s.agent) return "ai-setup";
   if (s.phase === "needs-figma-signin") return "figma-signin";
   if (s.phase === "conflict") return "conflict";
+  if (s.phase === "resolving") return "merge";
   return null;
 }
 
 function renderSheets(s: SessionState): void {
   const kind = phaseSheet(s) ?? userSheet?.kind ?? null;
-  const sig = kind === null ? "" : [kind, kind === "settings" ? [s.agent, s.agentConnected, s.workspace, s.workspaceError, s.updatesEnabled, s.phase, s.activeKey].join("|") : "", kind === "figma-signin" ? Boolean(s.message) : "", kind === "conflict" ? (s.conflictFiles ?? []).join(",") : "", kind === "ai-signin" || kind === "ai-setup" ? s.agent : "", kind === "remove" ? (userSheet as { key: string }).key : "", kind === "undo" ? (userSheet as { index: number }).index : "", kind === "confirm" ? (userSheet as { action: string }).action : ""].join("#");
+  const sig = kind === null ? "" : [kind, kind === "settings" ? [s.agent, s.agentConnected, s.workspace, s.workspaceError, s.updatesEnabled, s.phase, s.activeKey].join("|") : "", kind === "figma-signin" ? Boolean(s.message) : "", kind === "conflict" ? (s.conflictFiles ?? []).join(",") : "", kind === "merge" ? (s.mergeConflicts ?? []).join(",") : "", kind === "sync-replace" ? (userSheet as { count: number }).count : "", kind === "ai-signin" || kind === "ai-setup" ? s.agent : "", kind === "remove" || kind === "rename" ? (userSheet as { key: string }).key : "", kind === "undo" ? (userSheet as { index: number }).index : "", kind === "confirm" ? (userSheet as { action: string }).action : ""].join("#");
   if (sig === shownSheet) return syncPreview();
   shownSheet = sig;
   const previous = dialog;
@@ -600,7 +672,7 @@ function renderSheets(s: SessionState): void {
     dlg.addEventListener("cancel", (e) => {
       e.preventDefault();
       if (!isPhase) closeSheet();
-      else if (kind === "conflict" || kind === "ai-signin" || kind === "ai-setup" || (kind === "figma-signin" && s.message)) void api.cancel();
+      else if (kind === "conflict" || kind === "merge" || kind === "ai-signin" || kind === "ai-setup" || (kind === "figma-signin" && s.message)) void api.cancel();
     });
     sheetHost.append(dlg);
     dlg.showModal();
@@ -618,7 +690,10 @@ function commands(s: SessionState): Cmd[] {
   const list: Cmd[] = [
     { group: "Do", label: "Open project…", glyph: "plus", keys: [`${MOD}N`], run: () => openSheet({ kind: "add" }) },
     { group: "Do", label: "Send to Figma", glyph: "up", off: !(s.phase === "ready" && s.canSend), run: () => openSheet({ kind: "review" }) },
+    { group: "Do", label: "Merge Figma's changes into mine", glyph: "refresh", off: s.phase !== "ready", run: () => void api.syncWithFigma("merge") },
+    { group: "Do", label: "Discard my changes and use Figma's", glyph: "undo", off: s.phase !== "ready", run: () => askReplace() },
     { group: "Do", label: "New chat", glyph: "compose", off: !(s.phase === "ready" && chatState.messages.length > 0), run: () => void api.newChat() },
+    { group: "Do", label: "Toggle sidebar", glyph: "sidebar", keys: [`${MOD}B`], run: () => setSideOpen(!sideOpen) },
     { group: "Do", label: "Toggle side panel", glyph: "panel", keys: [`${MOD}J`], off: !hasChat(s), run: () => setChatOpen(!chatOpen) },
     { group: "Do", label: "Show project files", glyph: "folder", off: !hasChat(s), run: () => { chatOpen = true; store.set("chat.open", "1"); setTab("files", true); layoutChat(); } },
     { group: "Do", label: "Undo last change", glyph: "undo", off: !(s.phase === "ready" && s.canUndo), run: () => void api.undo() },
@@ -686,6 +761,21 @@ const store = {
     try { window.localStorage.setItem(`figmake.${key}`, value); } catch { /* private mode: layout just isn't remembered */ }
   },
 };
+let sideOpen = store.get("side.open") !== "0";
+function setSideOpen(open: boolean): void {
+  sideOpen = open;
+  store.set("side.open", open ? "1" : "0");
+  paintSide();
+}
+function paintSide(): void {
+  appEl.classList.toggle("fm-side-off", !sideOpen);
+  side.toggleAttribute("inert", !sideOpen);
+  sideToggle.setAttribute("aria-expanded", String(sideOpen));
+  sideToggle.setAttribute("aria-label", sideOpen ? "Hide sidebar" : "Show sidebar");
+  sideToggle.title = `${sideOpen ? "Hide" : "Show"} sidebar (${MOD}B)`;
+  sideToggle.classList.toggle("on", !sideOpen);
+  layoutChat();
+}
 const MIN_CHAT = 300;
 const MAX_CHAT = 640;
 const MIN_STAGE = 340;
@@ -844,7 +934,8 @@ function render(s: SessionState): void {
 
 document.addEventListener("keydown", (e) => {
   const mod = e.metaKey || e.ctrlKey;
-  if (mod && e.key.toLowerCase() === "j") { e.preventDefault(); closePalette(); setChatOpen(!chatOpen); }
+  if (mod && e.key.toLowerCase() === "b") { e.preventDefault(); closePalette(); setSideOpen(!sideOpen); }
+  else if (mod && e.key.toLowerCase() === "j") { e.preventDefault(); closePalette(); setChatOpen(!chatOpen); }
   else if (mod && e.key.toLowerCase() === "k") { e.preventDefault(); if (paletteOpen) closePalette(); else openPalette(); }
   else if (mod && e.key.toLowerCase() === "n") { e.preventDefault(); closePalette(); openSheet({ kind: "add" }); }
   else if (mod && e.key === ",") { e.preventDefault(); closePalette(); openSheet({ kind: "settings" }); }
@@ -880,5 +971,6 @@ void api.updateState().then((u) => {
   if (state) renderToolbar(state);
 });
 window.setInterval(() => state && renderStatus(state), 30_000);
+paintSide();
 api.onState(render);
 void api.state().then(render);

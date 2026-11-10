@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 import type { Logger } from "pino";
 
 import { createTextPatchPreview } from "../diff/changes.js";
+import { mergeText } from "../diff/mergeText.js";
 import {
   buildThreeWayMergeFoundation,
   createManifest,
@@ -84,6 +85,8 @@ export interface PullResult {
   backupDir: string | undefined;
   dryRun: boolean;
   conflicts: string[];
+  /** Files both sides edited that were combined line by line (merge strategy). */
+  merged: string[];
   remoteSummary: ReturnType<typeof summarizeManifestDiff>;
 }
 
@@ -1223,6 +1226,7 @@ export class FigmakeSyncService {
           backupDir: undefined,
           dryRun: true,
           conflicts: [],
+          merged: [],
           remoteSummary,
         };
       }
@@ -1231,6 +1235,7 @@ export class FigmakeSyncService {
 
       let backupDir: string | undefined;
       const conflicts: string[] = [];
+      const merged: string[] = [];
 
       if (hasLocalChanges) {
         const confirmAction = getConfirm(options);
@@ -1248,7 +1253,7 @@ export class FigmakeSyncService {
         }
       }
 
-      if (hasLocalChanges && strategy === "backup") {
+      if (hasLocalChanges && (strategy === "backup" || (strategy === "merge" && baselineManifest))) {
         backupDir = await context.store.createBackup(
           "pre-pull",
           context.config.sync.ignore,
@@ -1267,6 +1272,7 @@ export class FigmakeSyncService {
         );
 
         conflicts.push(...mergeResult.conflicts);
+        merged.push(...mergeResult.merged);
       } else {
         if (hasLocalChanges && !backupDir) {
           backupDir = await context.store.createBackup(
@@ -1319,6 +1325,7 @@ export class FigmakeSyncService {
         backupDir,
         dryRun: false,
         conflicts,
+        merged,
         remoteSummary,
       };
     } finally {
@@ -1338,6 +1345,7 @@ export class FigmakeSyncService {
     logger: Logger,
   ): Promise<{
     conflicts: string[];
+    merged: string[];
   }> {
     const decisions = buildThreeWayMergeFoundation(
       baseManifest,
@@ -1350,6 +1358,7 @@ export class FigmakeSyncService {
       new Date().toISOString().replaceAll(":", "-"),
     );
     const conflicts: string[] = [];
+    const merged: string[] = [];
 
     for (const decision of decisions) {
       const localPath = path.join(paths.rootDir, decision.path);
@@ -1367,6 +1376,18 @@ export class FigmakeSyncService {
           break;
         }
         case "conflict": {
+          if (decision.base && decision.local && decision.remote) {
+            const text = mergeText(
+              await fs.readFile(path.join(paths.lastPullSnapshotDir, decision.path)).catch(() => Buffer.alloc(0)),
+              await fs.readFile(localPath),
+              await fs.readFile(path.join(remoteTempDir, decision.path)),
+            );
+            if (text.ok) {
+              await fs.outputFile(localPath, text.text);
+              merged.push(decision.path);
+              break;
+            }
+          }
           conflicts.push(decision.path);
           logger.warn(
             { path: decision.path, reason: decision.reason },
@@ -1390,7 +1411,7 @@ export class FigmakeSyncService {
       }
     }
 
-    return { conflicts };
+    return { conflicts, merged };
   }
 
   private async loadProjectContext(

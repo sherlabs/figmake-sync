@@ -129,6 +129,14 @@ html.is-win { --top-inset: 0px; }
   min-height: 0;
 }
 .side-top { height: var(--top-inset); flex: none; }
+.side { overflow: hidden; min-width: 0; }
+.app { transition: grid-template-columns 0.2s ease; }
+.app.fm-side-off { grid-template-columns: 0 minmax(0, 1fr); }
+.app.fm-side-off .side { visibility: hidden; border-right-color: transparent; transition: visibility 0s 0.2s; }
+.fm-sidetoggle { flex: none; }
+.toolbar { transition: padding-left 0.2s ease; }
+html.is-mac .app.fm-side-off .toolbar { padding-left: 84px; }
+.fm-namefield { margin-top: 8px; }
 html.is-mac .side-top, html.is-mac .toolbar { -webkit-app-region: drag; -webkit-user-select: none; user-select: none; }
 html.is-mac .toolbar button, html.is-mac .toolbar input { -webkit-app-region: no-drag; }
 .side-h { font-size: 11px; font-weight: 600; color: var(--text-2); padding: 12px 12px 4px; }
@@ -913,3 +921,31 @@ dialog.sheet.rv-sheet { width: min(760px, calc(100vw - 32px)); }
 /* Code viewers (Files tab, review diffs) */
 .mv-host { flex: 1 1 0; min-height: 180px; min-width: 0; position: relative; overflow: hidden; background: var(--inset); border-top: 1px solid var(--sep); }
 .mv-plain { margin: 0; padding: 8px 12px; height: 100%; overflow: auto; font-family: var(--mono); font-size: 12px; line-height: 1.55; color: var(--text); white-space: pre; }
+@media (prefers-reduced-motion: reduce) {
+  .app, .toolbar, .app.fm-side-off .side { transition: none; }
+}
+
+/* ---- Sync with Figma (sy-*) ---- */
+.sy-btn[hidden] { display: none; }
+.sy-btn:disabled { opacity: 0.5; }
+.sy-menu { min-width: 250px; }
+dialog.sheet.sy-sheet { width: min(760px, calc(100vw - 32px)); }
+.sy-wrap { min-width: 0; }
+.sy-note { padding: 14px 4px; color: var(--text-2); font-size: 12.5px; }
+.sy-list { border: 1px solid var(--sep); border-radius: 10px; background: var(--raised); max-height: calc(100vh - 260px); overflow: auto; }
+.sy-item + .sy-item { border-top: 1px solid var(--sep); }
+.sy-row { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 5px 8px 5px 12px; min-width: 0; }
+.sy-path { flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; gap: 8px; overflow: hidden; white-space: nowrap; }
+.sy-name { color: var(--text); font-size: 12.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
+.sy-dir { color: var(--text-3); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+.sy-seg { flex: none; display: inline-flex; padding: 2px; gap: 2px; border-radius: 8px; background: var(--seg); }
+.sy-opt { height: 22px; padding: 0 10px; border-radius: 6px; font-size: 12px; color: var(--text-2); background: none; }
+.sy-opt[aria-pressed="true"] { background: var(--seg-knob); color: var(--text); font-weight: 600; box-shadow: var(--seg-knob-shadow); }
+.sy-more { flex: none; width: 24px; height: 24px; }
+.sy-diff { border-top: 1px solid var(--sep); background: var(--inset); }
+.sy-diff[hidden] { display: none; }
+.sy-heads { display: flex; padding: 4px 12px 0; color: var(--text-3); font-size: 11.5px; font-weight: 600; }
+.sy-heads[hidden] { display: none; }
+.sy-heads span { flex: 1 1 50%; }
+.sy-editor { height: 300px; min-width: 0; position: relative; overflow: hidden; }
+.sy-editor .sy-note { padding: 14px; }

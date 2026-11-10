@@ -14,6 +14,8 @@ export const PHASES = [
   "needs-ai-choice",
   "needs-ai-signin",
   "conflict",
+  "syncing",
+  "resolving",
   "error",
 ] as const;
 export type Phase = (typeof PHASES)[number];
@@ -158,6 +160,8 @@ export interface SessionState {
   message?: string;
   /** Present only in the "conflict" phase: files changed in Figma since the last pull (may be a partial list). */
   conflictFiles?: string[];
+  /** Present only in the "resolving" phase: files both sides changed that could not be combined (local version kept for now). */
+  mergeConflicts?: string[];
   /** Present only in the "error" phase: stable code of the failure, and the phase it happened in. */
   code?: ErrorCode;
   failedIn?: Phase;
@@ -253,6 +257,8 @@ export interface DesktopAppState {
   projects: Record<string, string>;
   /** Figma Make file key -> the link it was added with (names and the project list come from here). */
   links: Record<string, string>;
+  /** Figma Make file key -> the display name the person chose (the link and folder never change). */
+  names: Record<string, string>;
   updates: { enabled: boolean };
 }
 
@@ -272,7 +278,10 @@ export interface FigmakeApi {
   state(): Promise<SessionState>;
   onState(listener: (state: SessionState) => void): () => void;
   onCommand(listener: (command: MenuCommand) => void): () => void;
-  openProject(link: string): Promise<void>;
+  /** `name` is an optional display name for the project. */
+  openProject(link: string, name?: string): Promise<void>;
+  /** Changes only the name shown for a project (1 to 80 characters). */
+  renameProject(key: string, name: string): Promise<void>;
   ask(prompt: string): Promise<void>;
   chat(): Promise<ChatState>;
   onChat(listener: (chat: ChatState) => void): () => void;
@@ -311,6 +320,13 @@ export interface FigmakeApi {
   /** Marks a file as not sent (true) or sent again (false). Resolves with the files now not sent. */
   setFileIgnored(path: string, ignored: boolean): Promise<string[]>;
   ignoredFiles(): Promise<string[]>;
+  /** Sync with Figma: "merge" brings Figma's changes into the local files, "replace" discards local changes (backed up first). */
+  syncWithFigma(mode: "merge" | "replace"): Promise<void>;
+  /** How many files "replace" would put back to Figma's version. */
+  localChangeCount(): Promise<number>;
+  /** Figma's version (before) and the local one (after) of a file waiting for a choice. */
+  mergeDiff(path: string): Promise<ReviewDiff>;
+  resolveMerge(choices: Array<{ path: string; choice: "mine" | "figma" }>): Promise<void>;
   /** Project files (not folders) the AI changed since the last pull. */
   changedFiles(): Promise<string[]>;
   stopProcess(id: ProcessId): Promise<void>;

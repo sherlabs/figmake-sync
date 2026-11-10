@@ -4,6 +4,8 @@ import fs from "fs-extra";
 
 import type { FigmakeSyncService } from "../core/service.js";
 import { ProjectStateStore, STATE_DIRECTORY_NAME } from "../core/state.js";
+import { MAX_MERGE_BYTES } from "../diff/mergeText.js";
+import { resolveRelativePath } from "../utils/path.js";
 import { REMOTE_DIVERGED_PROMPT, isAllowedLoginUrl } from "../harness/index.js";
 import type { HarnessEvent, HarnessService } from "../harness/index.js";
 import type { DevStatus } from "../harness/types.js";
@@ -57,6 +59,9 @@ interface Entry {
   files?: number;
 }
 
+/** A file too big to show side by side. */
+class Large extends Error {}
+
 /** Thrown from the push confirm hook: nothing has been written yet, the person decides. */
 class Diverged extends Error {}
 
@@ -105,7 +110,14 @@ export function errorCode(error: unknown, kind: Failing): ErrorCode {
   return known ? "figma_unreachable" : "unknown";
 }
 
-const BUSY_PHASES: readonly Phase[] = ["connecting", "preparing", "working", "sending", "conflict"];
+/** A display name: whitespace tidied, 1 to 80 characters, otherwise null. */
+function cleanProjectName(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const name = raw.replace(/\s+/gu, " ").trim();
+  return name.length >= 1 && name.length <= 80 ? name : null;
+}
+
+const BUSY_PHASES: readonly Phase[] = ["connecting", "preparing", "working", "sending", "conflict", "syncing", "resolving"];
 
 const START: SessionState = {
   phase: "start",
@@ -141,6 +153,7 @@ export class Session {
   private resume: (() => Promise<void>) | null = null;
   private known: Record<string, string> = {};
   private links: Record<string, string> = {};
+  private names: Record<string, string> = {};
   private stacks = new Map<string, Entry[]>();
   private activeKey: string | null = null;
   private syncedAtByKey: Record<string, string | null> = {};
@@ -259,6 +272,7 @@ export class Session {
     const saved = await this.deps.appState.load();
     this.known = saved.projects;
     this.links = { ...saved.links };
+    this.names = { ...saved.names };
     const seed = saved.lastLink ? parseFigmaLink(saved.lastLink) : null;
     if (saved.lastLink && seed && Object.keys(this.links).length === 0) this.links[seed.key] = saved.lastLink;
     const connected = saved.agent !== null && saved.agentConnected;
@@ -293,7 +307,7 @@ export class Session {
 
   // ---- calls ----
 
-  async openProject(link: string): Promise<void> {
+  async openProject(link: string, name?: string): Promise<void> {
     if (this.busy) return;
     const info = parseFigmaLink(link);
     if (!info) {
@@ -305,6 +319,8 @@ export class Session {
       return;
     }
     this.pendingReopen = null;
+    const given = cleanProjectName(name);
+    if (given) this.names = { ...this.names, [info.key]: given };
     await this.open(link.trim(), info, false);
   }
 
@@ -466,7 +482,7 @@ export class Session {
   }
 
   cancel(): Promise<void> {
-    if (this.s.phase === "conflict") return this.ready();
+    if (this.s.phase === "conflict" || this.s.phase === "resolving") return this.ready();
     if (this.busy) this.ctl?.abort();
     else if (!this.s.previewUrl && this.s.phase !== "start") this.set(this.startState());
     return Promise.resolve();
@@ -789,7 +805,7 @@ export class Session {
   /** "Start this project over": back up, bring the latest from Figma, set everything up again. */
   async startOver(): Promise<void> {
     const root = this.root;
-    if (!root || this.isBusy() || (this.s.phase !== "ready" && this.s.phase !== "error")) return;
+    if (!root || this.busy || (this.s.phase !== "ready" && this.s.phase !== "error" && this.s.phase !== "conflict")) return;
     await this.exclusive(async (signal) => {
       this.resume = null;
       this.previewStopped = false;
@@ -821,6 +837,110 @@ export class Session {
     });
   }
 
+  // ---- sync with Figma ----
+
+  /** How many files differ from Figma's last version: what "Discard my changes" would throw away. */
+  async localChangeCount(): Promise<number> {
+    if (!this.root) return 0;
+    try {
+      return (await this.deps.sync.status({ projectRoot: this.root })).summary.total;
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * "replace": drop every local change and take Figma's version (the same backed-up reset as Start over).
+   * "merge": bring Figma's newer changes into the local files. Files both sides edited are combined line by
+   * line; any that can't be combined keep the local version and wait for a choice. A backup is made first.
+   */
+  async syncWithFigma(mode: "merge" | "replace"): Promise<void> {
+    if (mode === "replace") return this.startOver();
+    const root = this.root;
+    if (!root || this.busy || (this.s.phase !== "ready" && this.s.phase !== "conflict")) return;
+    await this.exclusive(async (signal) => {
+      this.resume = null;
+      this.beginActivity("Merging Figma's changes");
+      this.set({ phase: "syncing", message: undefined });
+      try {
+        const result = await this.deps.withBrowser(() =>
+          this.deps.sync.pull({ projectRoot: root, strategy: "merge", confirm: () => Promise.resolve(true), signal, progress: (m) => this.feed(m) }),
+        );
+        // Old undo points would put back files from before the merge, so they are retired.
+        this.stack = [];
+        this.settle("undone");
+        this.deps.reloadPreview();
+        if (result.conflicts.length > 0) return this.set({ phase: "resolving", mergeConflicts: [...result.conflicts].sort() });
+        await this.ready("Merged with Figma");
+      } catch (error) {
+        if (signal.aborted) return this.ready();
+        if (isAuthRequiredError(error)) return this.needSignin(() => this.syncWithFigma("merge"));
+        this.deps.log("merge failed", error);
+        this.fail(plainError(error, "figma"), () => this.syncWithFigma("merge"), errorCode(error, "figma"));
+      }
+    });
+  }
+
+  /** Figma's version (before) and the local one (after) of a file that could not be merged. */
+  async mergeDiff(rel: string): Promise<ReviewDiff> {
+    const root = this.root;
+    if (!root || this.s.phase !== "resolving" || !this.s.mergeConflicts?.includes(rel)) return { kind: "missing" };
+    try {
+      const read = async (base: string): Promise<Buffer | null> => {
+        const file = resolveRelativePath(base, rel);
+        const stat = await fs.stat(file).catch(() => null);
+        if (!stat?.isFile()) return null;
+        if (stat.size > MAX_MERGE_BYTES) throw new Large();
+        return fs.readFile(file);
+      };
+      const figma = await read(new ProjectStateStore(root).paths.lastPullSnapshotDir);
+      const mine = await read(root);
+      if ([figma, mine].some((b) => b?.subarray(0, 8000).includes(0))) return { kind: "binary" };
+      return { kind: "text", before: figma?.toString("utf8") ?? "", after: mine?.toString("utf8") ?? "" };
+    } catch (error) {
+      if (error instanceof Large) return { kind: "large" };
+      this.deps.log("merge diff failed", error);
+      return { kind: "missing" };
+    }
+  }
+
+  /** Applies the per-file choices. Files not mentioned keep the local version. Figma's version is what the last pull saved. */
+  async resolveMerge(choices: ReadonlyArray<{ path: string; choice: "mine" | "figma" }>): Promise<void> {
+    const root = this.root;
+    const pending = this.s.mergeConflicts;
+    if (!root || this.busy || this.s.phase !== "resolving" || !pending) return;
+    await this.exclusive(async () => {
+      this.set({ phase: "syncing" });
+      try {
+        const store = new ProjectStateStore(root);
+        const config = await store.loadProjectConfig();
+        await store.createBackup("pre-resolve", config.sync.ignore);
+        for (const { path: rel, choice } of choices) {
+          if (choice !== "figma" || !pending.includes(rel)) continue;
+          const target = resolveRelativePath(root, rel);
+          const source = resolveRelativePath(store.paths.lastPullSnapshotDir, rel);
+          if (await fs.pathExists(source)) {
+            await fs.ensureDir(path.dirname(target));
+            await fs.copyFile(source, target);
+          } else {
+            await fs.remove(target);
+          }
+        }
+        this.deps.reloadPreview();
+        await this.ready("Merged with Figma");
+      } catch (error) {
+        this.deps.log("resolve failed", error);
+        this.set({ phase: "resolving", mergeConflicts: pending });
+        this.fail("Couldn't save your choices. Try again.", () => this.resumeResolving(pending), "unknown");
+      }
+    });
+  }
+
+  private resumeResolving(pending: string[]): Promise<void> {
+    this.set({ phase: "resolving", mergeConflicts: pending });
+    return Promise.resolve();
+  }
+
   /** "Reset the app": a clean slate. Signs out, forgets projects, removes saved chats and moves the project folders to the Trash. */
   async resetApp(): Promise<void> {
     if (this.isBusy()) return;
@@ -832,13 +952,14 @@ export class Session {
         for (const root of Object.values(this.known)) {
           if (await this.safeToDelete(root)) await this.deps.trashFolder(root);
         }
-        await this.deps.appState.update({ agent: null, agentConnected: false, projects: {}, links: {}, lastLink: null });
+        await this.deps.appState.update({ agent: null, agentConnected: false, projects: {}, links: {}, names: {}, lastLink: null });
       } catch (error) {
         this.deps.log("reset failed", error);
         return this.fail("Couldn't reset the app. Try again.", () => this.resetApp(), "unknown");
       }
       this.known = {};
       this.links = {};
+      this.names = {};
       this.stacks.clear();
       this.stack = [];
       this.messages = [];
@@ -893,7 +1014,7 @@ export class Session {
       this.installing = false;
       this.previewStopped = false;
       this.beginActivity(restore ? undefined : "Getting your project from Figma");
-      this.set({ phase: restore ? "preparing" : "connecting", projectName: info.name, activeKey: info.key, previewUrl: null, changes: [], changeFiles: [], changeIds: [], canSend: false, canUndo: false, message: undefined });
+      this.set({ phase: restore ? "preparing" : "connecting", projectName: this.names[info.key] ?? info.name, activeKey: info.key, previewUrl: null, changes: [], changeFiles: [], changeIds: [], canSend: false, canUndo: false, message: undefined });
       try {
         const root = await resolveProjectFolder(this.workspaceDir, info, this.known);
         this.root = root;
@@ -904,7 +1025,7 @@ export class Session {
           if (c.harness.autoPush) await this.deps.harness.updateSettings(root, { autoPush: false });
         });
         this.links = { ...this.links, [info.key]: url };
-        await this.deps.appState.update({ lastLink: url, projects: this.known, links: this.links });
+        await this.deps.appState.update({ lastLink: url, projects: this.known, links: this.links, names: this.names });
         void this.deps.harness.stopDevExcept(root);
 
         const status = await this.deps.sync.status({ projectRoot: root });
@@ -941,6 +1062,20 @@ export class Session {
     await this.open(link, info, true);
   }
 
+  /** Changes only the name shown for a project. The folder and the Figma link stay as they are. */
+  async renameProject(key: string, name: string): Promise<void> {
+    const clean = cleanProjectName(name);
+    const link = this.links[key];
+    if (!clean || !link) return;
+    const names = { ...this.names };
+    if (clean === parseFigmaLink(link)?.name) delete names[key];
+    else names[key] = clean;
+    this.names = names;
+    await this.deps.appState.update({ names });
+    if (key === this.activeKey) this.set({ projectName: clean });
+    await this.refreshProjects();
+  }
+
   /** Takes a project off the list. Files stay unless `deleteFiles` is true and the folder is one this app made in the workspace. */
   async removeProject(key: string, deleteFiles = false): Promise<void> {
     if (this.isBusy() || !(key in this.links)) return;
@@ -953,6 +1088,8 @@ export class Session {
         const known = Object.fromEntries(Object.entries(this.known).filter(([k]) => k !== key));
         this.links = links;
         this.known = known;
+        const names = Object.fromEntries(Object.entries(this.names).filter(([k]) => k !== key));
+        this.names = names;
         this.stacks.delete(key);
         await this.deps.chatStore.remove(key).catch(() => undefined);
         if (wasActive) {
@@ -968,7 +1105,7 @@ export class Session {
           this.installing = false;
           this.previewStopped = false;
         }
-        await this.deps.appState.update({ projects: known, links, ...(wasActive ? { lastLink: null } : {}) });
+        await this.deps.appState.update({ projects: known, links, names, ...(wasActive ? { lastLink: null } : {}) });
         if (wasActive) this.set(this.startState());
         if (deleteFiles && root && (await this.safeToDelete(root))) await fs.remove(root);
       } catch (error) {
@@ -1018,7 +1155,7 @@ export class Session {
     const active = this.s.activeKey;
     const projects: ProjectSummary[] = [];
     for (const [key, link] of Object.entries(this.links)) {
-      const name = parseFigmaLink(link)?.name ?? key;
+      const name = this.names[key] ?? parseFigmaLink(link)?.name ?? key;
       let status: ProjectSummary["status"] = "attention";
       let syncedAt: string | null = null;
       try {
@@ -1147,6 +1284,7 @@ export class Session {
   private set(patch: Patch): void {
     const next = { ...this.s, ...patch } as Record<string, unknown>;
     if (next["phase"] !== "conflict") delete next["conflictFiles"];
+    if (next["phase"] !== "resolving") delete next["mergeConflicts"];
     if (next["phase"] !== "error") {
       delete next["code"];
       delete next["failedIn"];

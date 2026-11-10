@@ -469,6 +469,7 @@ export function extractTreeRows(root: Element): {
   const nest: number[] = [];
   const box: number[] = [];
   const txt: number[] = [];
+  const ico: number[] = [];
 
   const partial = els.map((el) => {
     let nesting = 0;
@@ -501,6 +502,11 @@ export function extractTreeRows(root: Element): {
         break;
       }
     }
+
+    // Current Figma markup: rows are a flat virtualised list, the label is only in aria-label (no text node),
+    // and the indent is the position of the first icon (chevron or file icon), 16px per level.
+    const icon = el.querySelector("span, svg");
+    ico.push(icon ? icon.getBoundingClientRect().left : textLeft);
 
     nest.push(nesting);
     box.push(rect.left + pad);
@@ -563,13 +569,16 @@ export function extractTreeRows(root: Element): {
 
   const useNest = new Set(nest).size > 1;
   const usePx = new Set(box.map((v) => Math.round(v / 2))).size > 1;
+  const useIco = new Set(ico.map((v) => Math.round(v / 2))).size > 1;
   const rows = partial.map((row, i) => ({
     ...row,
     depth: useNest
       ? nest[i]!
       : usePx
         ? Math.round(box[i]! / 2)
-        : Math.round(txt[i]! / 2),
+        : useIco
+          ? Math.round(ico[i]! / 2)
+          : Math.round(txt[i]! / 2),
   }));
 
   return { rows, els };

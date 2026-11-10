@@ -9,7 +9,7 @@ import { DesktopAppStateStore } from "../src/electron/appState.js";
 import { AuthRequiredError as SessionAuthError } from "../src/browser/session.js";
 import { AuthRequiredError as AutomationAuthError } from "../src/figma/adapter.js";
 
-const DEFAULTS = { lastLink: null, agent: null, agentConnected: false, workspace: null, projects: {}, links: {}, updates: { enabled: true } };
+const DEFAULTS = { lastLink: null, agent: null, agentConnected: false, workspace: null, projects: {}, links: {}, names: {}, updates: { enabled: true } };
 
 describe("DesktopAppStateStore", () => {
   it("a state saved before the connected flag existed counts as not connected", async () => {
@@ -50,7 +50,20 @@ describe("DesktopAppStateStore", () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "appstate-"));
     const store = new DesktopAppStateStore(path.join(dir, "app-state.json"));
     await store.update({ lastLink: "https://www.figma.com/make/abc/x", projects: { abc: "/w/x" }, workspace: "/w" });
-    expect(await store.load()).toEqual({ lastLink: "https://www.figma.com/make/abc/x", agent: null, agentConnected: false, workspace: "/w", projects: { abc: "/w/x" }, links: {}, updates: { enabled: true } });
+    expect(await store.load()).toEqual({ lastLink: "https://www.figma.com/make/abc/x", agent: null, agentConnected: false, workspace: "/w", projects: { abc: "/w/x" }, links: {}, names: {}, updates: { enabled: true } });
+    await fs.remove(dir);
+  });
+});
+
+describe("DesktopAppStateStore names", () => {
+  it("round-trips display names and drops a malformed value alone", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "appstate-"));
+    const file = path.join(dir, "app-state.json");
+    const store = new DesktopAppStateStore(file);
+    await store.update({ names: { abc: "My shop" } });
+    expect((await store.load()).names).toEqual({ abc: "My shop" });
+    await fs.writeJson(file, { agent: "codex", names: "oops" });
+    expect(await store.load()).toMatchObject({ agent: "codex", names: {} });
     await fs.remove(dir);
   });
 });

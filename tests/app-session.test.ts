@@ -506,6 +506,41 @@ describe("plain language", () => {
 const LINK2 = "https://www.figma.com/make/Zed999/Other-App";
 
 describe("session: multiple projects", () => {
+  it("renames only the shown name, persists it, and rejects empty or too-long names", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    await r.session.renameProject("AbC123", "  My   shop ");
+    expect(r.session.state.projectName).toBe("My shop");
+    expect(r.session.state.projects[0]?.name).toBe("My shop");
+    expect((await r.store.load()).names).toEqual({ AbC123: "My shop" });
+    expect((await r.store.load()).links["AbC123"]).toBe(LINK);
+    expect(await fs.pathExists(r.project)).toBe(true);
+    await r.session.renameProject("AbC123", "   ");
+    await r.session.renameProject("AbC123", "x".repeat(81));
+    await r.session.renameProject("Nope", "Other");
+    expect(r.session.state.projectName).toBe("My shop");
+    expect((await r.store.load()).names).toEqual({ AbC123: "My shop" });
+    // A reopened session keeps the name, and switching back shows it too.
+    const again = new Session(r.deps);
+    sessions.push(again);
+    await again.start();
+    expect(again.state.projects[0]?.name).toBe("My shop");
+    await r.session.renameProject("AbC123", "Checkout Flow");
+    expect((await r.store.load()).names).toEqual({});
+  });
+
+  it("uses the name given when adding a project, and forgets it on remove", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK, "  Storefront ");
+    expect(r.session.state.projectName).toBe("Storefront");
+    expect(r.session.state.projects[0]?.name).toBe("Storefront");
+    expect((await r.store.load()).names).toEqual({ AbC123: "Storefront" });
+    await r.session.openProject(LINK2, "x".repeat(81));
+    expect(r.session.state.projectName).toBe("Other App");
+    await r.session.removeProject("AbC123");
+    expect((await r.store.load()).names).toEqual({});
+  });
+
   it("lists projects with statuses and keeps one active", async () => {
     const r = await rig();
     await r.session.openProject(LINK);
@@ -1069,12 +1104,12 @@ describe("session: clean up", () => {
   it("reset the app clears accounts, projects, chats and project folders, keeps the updates setting", async () => {
     const r = await rig();
     await r.session.setUpdates(false);
-    await r.session.openProject(LINK);
+    await r.session.openProject(LINK, "Mine");
     await r.session.resetApp();
     expect(r.deps.signOutFigma).toHaveBeenCalledTimes(1);
     expect(r.harness.stopDevExcept).toHaveBeenCalledWith(null, true);
     const saved = await r.store.load();
-    expect(saved).toMatchObject({ agent: null, agentConnected: false, projects: {}, links: {}, lastLink: null, updates: { enabled: false } });
+    expect(saved).toMatchObject({ agent: null, agentConnected: false, projects: {}, links: {}, names: {}, lastLink: null, updates: { enabled: false } });
     expect(saved.workspace ?? r.workspace).toBeTruthy();
     expect(r.deps.trashFolder).toHaveBeenCalledWith(r.project);
     expect(await fs.pathExists(r.project)).toBe(false);

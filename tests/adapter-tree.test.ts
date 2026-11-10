@@ -145,3 +145,31 @@ describe("runPageScript", () => {
     }
   });
 });
+
+describe("extractTreeRows on the flat virtualised Figma tree", () => {
+  it("reads nesting from the first icon's position when rows have no text nodes or padding", async (ctx) => {
+    const { chromium } = await import("playwright");
+    const { extractTreeRows, resolveTreeChain, runPageScript } = await import("../src/figma/adapter.js");
+    let browser;
+    try {
+      browser = await chromium.launch();
+    } catch {
+      return ctx.skip();
+    }
+    try {
+      const page = await browser.newPage();
+      const row = (kind: "file" | "folder", name: string, indent: number): string =>
+        kind === "file"
+          ? `<div><button data-testid="code-file-item" aria-label='File "${name}"' style="display:flex;border:0;padding:0"><span style="margin-left:${indent}px;width:16px;display:inline-block"><svg width="16" height="16"></svg></span></button></div>`
+          : `<div data-folder-item="true"><button aria-expanded="true" aria-label='Folder "${name}"' style="display:flex;border:0;padding:0"><span style="margin-left:${indent}px;width:16px;display:inline-block"><svg width="16" height="16"></svg></span></button></div>`;
+      await page.setContent(`<div id="tree">${row("folder", "src", 0)}${row("file", "App.tsx", 16)}${row("file", "mailData.ts", 16)}${row("file", "AGENTS.md", 0)}</div>`);
+      const script = `(root, args) => { const out = (${extractTreeRows.toString()})(root); return (${resolveTreeChain.toString()})(out.rows, args); }`;
+      const found = await runPageScript<{ status: string }>(page.locator("#tree"), script, { segments: ["src", "mailData.ts"], kind: "file", expandLast: false, list: false, assumeExpandedAt: [] });
+      expect(found.status).toBe("found");
+      const rootLevel = await runPageScript<{ status: string }>(page.locator("#tree"), script, { segments: ["mailData.ts"], kind: "file", expandLast: false, list: false, assumeExpandedAt: [] });
+      expect(rootLevel.status).toBe("missing");
+    } finally {
+      await browser.close();
+    }
+  });
+});

@@ -100,6 +100,10 @@ async function open(state: object, size: { width: number; height: number }, sche
       reviewDiff: (p: string) => Promise.resolve(p.endsWith(".svg") ? { kind: "binary" } : { kind: "text", before: "const a = 1;\nconst b = 2;\n", after: "const a = 1;\nconst b = 3;\nconst c = 4;\n" }),
       setFileIgnored: (p: string, on: boolean) => { const w = window as unknown as { __ign?: [string, boolean][] }; w.__ign = [...(w.__ign ?? []), [p, on]]; return Promise.resolve(on ? [p] : []); },
       ignoredFiles: () => Promise.resolve(["public/old-logo.svg"]),
+      syncWithFigma: (m: string) => { const w = window as unknown as { __sync?: string[] }; w.__sync = [...(w.__sync ?? []), m]; return Promise.resolve(); },
+      localChangeCount: () => Promise.resolve(2),
+      mergeDiff: (p: string) => Promise.resolve(p.endsWith(".svg") ? { kind: "binary" } : { kind: "text", before: "const a = 1;\nconst b = 'figma';\n", after: "const a = 1;\nconst b = 'mine';\n" }),
+      resolveMerge: (c: unknown) => { (window as unknown as { __resolved: unknown }).__resolved = c; return Promise.resolve(); },
       stopProcess: noop, restartProcess: noop,
       cleanup: (a: string) => { (window as unknown as { __cleanup: string[] }).__cleanup = [...((window as unknown as { __cleanup?: string[] }).__cleanup ?? []), a]; return Promise.resolve(); },
       newChat: noop, copyText: noop, openProject: noop, ask: noop, undo: noop, send: noop, cancel: noop, retry: noop, setAgent: noop,
@@ -151,6 +155,77 @@ describe("renderer layout", () => {
     expect(input && input.w).toBeGreaterThanOrEqual(240);
     expect(title && input && title.y).toBeLessThan((input as { y: number }).y);
     expect(await overflowX(page)).toBeLessThanOrEqual(0);
+    await page.context().close();
+  });
+
+  it("add-project sheet has an optional name field that stays compact", async (ctx) => {
+    if (!browser) return ctx.skip();
+    const page = await open(READY, { width: 1180, height: 760 }, "light");
+    await page.keyboard.press("Control+n");
+    await page.waitForSelector("dialog.sheet[open]");
+    const link = await rect(page, "dialog.sheet input");
+    const name = await rect(page, "dialog.sheet .fm-namefield");
+    expect(name && name.w).toBeGreaterThanOrEqual(240);
+    expect(name && link && name.y).toBeGreaterThan((link as { y: number }).y);
+    expect(await page.locator("dialog.sheet .fm-namefield").getAttribute("placeholder")).toBe("Name (from link)");
+    expect(await overflowX(page)).toBeLessThanOrEqual(0);
+    await page.context().close();
+  });
+
+  it("rename sheet: double-click opens it, Esc cancels, empty is not saved", async (ctx) => {
+    if (!browser) return ctx.skip();
+    const page = await open(READY, { width: 1180, height: 760 }, "light");
+    await page.locator(".prow").dblclick();
+    await page.waitForSelector("dialog.sheet[open]");
+    expect(await page.locator("dialog.sheet input").inputValue()).toBe("Checkout Flow");
+    await page.locator("dialog.sheet input").fill("");
+    expect(await page.getByRole("button", { name: "Save" }).isDisabled()).toBe(true);
+    await page.keyboard.press("Escape");
+    await page.waitForSelector("dialog.sheet[open]", { state: "detached" });
+    await page.locator(".prow-wrap").click({ button: "right" });
+    expect(await page.locator(".menu button").allInnerTexts()).toEqual(["Rename…", "Remove from list…"]);
+    await page.context().close();
+  });
+
+  it("sidebar collapses with the toggle and Ctrl+B, widens the content and tells the preview", async (ctx) => {
+    if (!browser) return ctx.skip();
+    for (const width of [1180, 640]) {
+      const page = await open(READY, { width, height: 760 }, "light");
+      const before = await rect(page, ".main");
+      expect(await page.locator(".side").isVisible()).toBe(true);
+      await page.getByRole("button", { name: "Hide sidebar" }).click();
+      await page.waitForFunction(() => document.querySelector(".main")!.getBoundingClientRect().x === 0);
+      const after = await rect(page, ".main");
+      expect(await page.locator(".side").isVisible()).toBe(false);
+      expect(after && after.x).toBe(0);
+      expect(after && before && after.w).toBeGreaterThan((before as { w: number }).w);
+      expect(await overflowX(page)).toBeLessThanOrEqual(0);
+      expect(await page.evaluate(() => window.localStorage.getItem("figmake.side.open"))).toBe("0");
+      expect(await page.getByRole("button", { name: "Show sidebar" }).getAttribute("aria-expanded")).toBe("false");
+      await page.keyboard.press("Control+b");
+      await page.waitForFunction(() => document.querySelector(".main")!.getBoundingClientRect().x > 100);
+      expect(await page.locator(".side").isVisible()).toBe(true);
+      await page.reload();
+      await page.waitForSelector(".app");
+      expect(await page.locator(".side").isVisible()).toBe(true);
+      await page.context().close();
+    }
+  });
+
+  it("the preview rect follows the sidebar collapsing", async (ctx) => {
+    if (!browser) return ctx.skip();
+    const page = await open(READY, { width: 1180, height: 760 }, "light");
+    await page.evaluate(() => {
+      const w = window as unknown as { figmake: { previewRect: (r: unknown) => void }; __rects: ({ x: number; width: number } | null)[] };
+      w.__rects = [];
+      w.figmake.previewRect = (r) => w.__rects.push(r as { x: number; width: number } | null);
+    });
+    await page.keyboard.press("Control+b");
+    await page.waitForFunction(() => (window as unknown as { __rects: unknown[] }).__rects.length > 0);
+    const rects = await page.evaluate(() => (window as unknown as { __rects: ({ x: number; width: number } | null)[] }).__rects);
+    const last = rects.at(-1);
+    expect(last && last.x).toBeLessThan(10);
+    expect(last && last.width).toBeGreaterThan(700);
     await page.context().close();
   });
 
@@ -743,4 +818,79 @@ describe("renderer layout", () => {
     expect(await page.evaluate(() => (window as unknown as { __ign: unknown }).__ign)).toEqual([["public/old-logo.svg", false]]);
     await page.context().close();
   });
+});
+
+describe("sync with Figma", () => {
+  for (const size of [{ width: 1180, height: 760 }, { width: 900, height: 640 }]) {
+    for (const scheme of ["light", "dark"] as const) {
+      it(`toolbar menu and discard confirm (${size.width}px, ${scheme})`, async (ctx) => {
+        if (!browser) return ctx.skip();
+        const page = await open(READY, size, scheme);
+        const sync = await rect(page, ".sy-btn");
+        const send = await rect(page, "button.send");
+        expect(sync && send && sync.x + sync.w <= send.x).toBe(true);
+        expect(await overflowX(page)).toBeLessThanOrEqual(0);
+        await page.click(".sy-btn");
+        await page.waitForSelector(".sy-menu button");
+        expect(await page.locator(".sy-menu button").allInnerTexts()).toEqual(["Merge Figma's changes into mine", "Discard my changes and use Figma's"]);
+        const menu = await rect(page, ".sy-menu");
+        expect(menu && menu.x >= 0 && menu.x + menu.w <= size.width).toBe(true);
+        await page.click('.sy-menu button:has-text("Discard")');
+        await page.waitForSelector("dialog.sheet[open]");
+        expect(await page.locator("dialog.sheet[open]").innerText()).toContain("2 files you changed will go back to Figma's version");
+        expect(await page.locator("dialog.sheet[open]").innerText()).toContain("backup");
+        await page.click('dialog.sheet[open] button:has-text("Cancel")');
+        expect(await page.evaluate(() => (window as unknown as { __sync?: string[] }).__sync)).toBeUndefined();
+        await page.click(".sy-btn");
+        await page.click('.sy-menu button:has-text("Discard")');
+        await page.click('dialog.sheet[open] button:has-text("Discard my changes")');
+        expect(await page.evaluate(() => (window as unknown as { __sync?: string[] }).__sync)).toEqual(["replace"]);
+        await page.click(".sy-btn");
+        await page.click('.sy-menu button:has-text("Merge")');
+        expect(await page.evaluate(() => (window as unknown as { __sync?: string[] }).__sync)).toEqual(["replace", "merge"]);
+        await page.context().close();
+      });
+    }
+  }
+
+  it("is off while the project is busy and the conflict sheet offers Merge", async (ctx) => {
+    if (!browser) return ctx.skip();
+    const busy = await open({ ...READY, phase: "syncing" }, { width: 1180, height: 760 }, "light");
+    expect(await busy.locator(".sy-btn").isDisabled()).toBe(true);
+    await busy.context().close();
+    const page = await open({ ...READY, phase: "conflict", conflictFiles: ["src/app.ts"] }, { width: 1180, height: 760 }, "light");
+    await page.waitForSelector('dialog.sheet[open] button:has-text("Merge")');
+    expect(await page.locator("dialog.sheet[open] .acts .btn").allInnerTexts()).toEqual(["Use Figma's", "Merge", "Keep mine"]);
+    await page.click('dialog.sheet[open] button:has-text("Merge")');
+    expect(await page.evaluate(() => (window as unknown as { __sync?: string[] }).__sync)).toEqual(["merge"]);
+    await page.context().close();
+  });
+
+  for (const scheme of ["light", "dark"] as const) {
+    it(`merge choices: per-file pick, Monaco diff, Done (${scheme})`, async (ctx) => {
+      if (!browser) return ctx.skip();
+      const page = await open({ ...READY, phase: "resolving", mergeConflicts: ["src/pages/Cart.tsx", "public/old-logo.svg"] }, { width: 1180, height: 760 }, scheme);
+      const violations: string[] = [];
+      page.on("console", (m) => { if (/Content Security Policy|Refused to/u.test(m.text())) violations.push(m.text()); });
+      page.on("pageerror", (e) => violations.push(String(e)));
+      await page.waitForSelector("dialog.sy-sheet[open] .sy-row");
+      expect(await page.locator(".sy-row").count()).toBe(2);
+      expect(await page.locator('.sy-opt[aria-pressed="true"]').allInnerTexts()).toEqual(["Keep mine", "Keep mine"]);
+      const sheet = await rect(page, "dialog.sy-sheet");
+      expect(sheet && sheet.x + sheet.w).toBeLessThanOrEqual(1180);
+      await page.locator(".sy-row").nth(0).locator('.sy-opt:has-text("Use Figma")').click();
+      await page.locator(".sy-more").nth(0).click();
+      await page.waitForSelector(".sy-diff .monaco-diff-editor", { timeout: 15_000 });
+      expect(await page.locator(".sy-diff .vs-dark").count() > 0).toBe(scheme === "dark");
+      const ed = await rect(page, ".sy-diff:not([hidden]) .sy-editor");
+      expect(ed && sheet && ed.x + ed.w <= sheet.x + sheet.w + 1).toBe(true);
+      await page.locator(".sy-more").nth(1).click();
+      await page.waitForSelector('.sy-note:has-text("isn\'t text")');
+      expect(await overflowX(page)).toBeLessThanOrEqual(0);
+      await page.click('dialog.sy-sheet button:has-text("Done")');
+      expect(await page.evaluate(() => (window as unknown as { __resolved: unknown }).__resolved)).toEqual([{ path: "src/pages/Cart.tsx", choice: "figma" }, { path: "public/old-logo.svg", choice: "mine" }]);
+      expect(violations).toEqual([]);
+      await page.context().close();
+    });
+  }
 });

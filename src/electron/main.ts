@@ -35,7 +35,7 @@ import { trackEvent } from "./analytics.js";
 import { DesktopAppStateStore } from "./appState.js";
 import type { MenuCommand, PreviewRect } from "./contracts.js";
 import { APP_CSP } from "./csp.js";
-import { browserAddressArg, browserCommandArg, browserTabIdArg, cleanupActionArg, ignoreFileArgs, processIdArg, projectPathArg } from "./ipc.js";
+import { browserAddressArg, browserCommandArg, browserTabIdArg, cleanupActionArg, ignoreFileArgs, mergeChoicesArg, processIdArg, projectKeyArg, projectNameArg, projectPathArg, syncModeArg } from "./ipc.js";
 import { PreviewView } from "./preview.js";
 
 const APP_ID = "com.figmake.sync";
@@ -208,7 +208,16 @@ function buildMenu(): void {
 
 function registerIpc(s: Session): void {
   ipcMain.handle("figmake:state", () => s.state);
-  ipcMain.handle("figmake:open", (_e, link: unknown) => (typeof link === "string" ? s.openProject(link.slice(0, 2048)) : undefined));
+  ipcMain.handle("figmake:open", (_e, link: unknown, name: unknown) => {
+    if (typeof link !== "string") return undefined;
+    const given = projectNameArg.safeParse(name);
+    return s.openProject(link.slice(0, 2048), given.success ? given.data : undefined);
+  });
+  ipcMain.handle("figmake:rename-project", (_e, key: unknown, name: unknown) => {
+    const k = projectKeyArg.safeParse(key);
+    const n = projectNameArg.safeParse(name);
+    return k.success && n.success ? s.renameProject(k.data, n.data) : undefined;
+  });
   ipcMain.handle("figmake:ask", (_e, prompt: unknown) => {
     if (typeof prompt !== "string") return undefined;
     typed.push(prompt.trim().slice(0, 2000));
@@ -264,6 +273,19 @@ function registerIpc(s: Session): void {
   ipcMain.handle("figmake:set-file-ignored", (_e, rel: unknown, ignored: unknown) => {
     const parsed = ignoreFileArgs.safeParse([rel, ignored]);
     return parsed.success ? s.setFileIgnored(parsed.data[0], parsed.data[1]) : [];
+  });
+  ipcMain.handle("figmake:sync", (_e, mode: unknown) => {
+    const parsed = syncModeArg.safeParse(mode);
+    return parsed.success ? s.syncWithFigma(parsed.data) : undefined;
+  });
+  ipcMain.handle("figmake:sync-count", () => s.localChangeCount());
+  ipcMain.handle("figmake:merge-diff", (_e, rel: unknown) => {
+    const parsed = projectPathArg.safeParse(rel);
+    return parsed.success ? s.mergeDiff(parsed.data) : { kind: "missing" };
+  });
+  ipcMain.handle("figmake:merge-resolve", (_e, choices: unknown) => {
+    const parsed = mergeChoicesArg.safeParse(choices);
+    return parsed.success ? s.resolveMerge(parsed.data) : undefined;
   });
   ipcMain.handle("figmake:ignored-files", () => s.ignoredFiles());
   ipcMain.handle("figmake:stop-process", (_e, id: unknown) => {
