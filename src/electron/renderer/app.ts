@@ -59,7 +59,7 @@ const welcome = h(
   h("div", { class: "art" }, h("span", { class: "ghost g1" }, icon("doc")), h("img", { src: "./assets/icon-256.png", alt: "" }), h("span", { class: "ghost g2" }, icon("figma"))),
   h(
     "div",
-    { class: "body" },
+    { class: "wbody" },
     h("h2", {}, "Paste your Figma Make link"),
     h("p", { class: "lead" }, "Your project opens here so you can describe changes and send them back to Figma."),
     h("form", { onsubmit: (e: Event) => { e.preventDefault(); submitLink(welcomeInput, welcomeOpen); } }, welcomeInput, welcomeOpen),
@@ -85,8 +85,8 @@ const chatPanel = createChatPanel({
   toast: (text) => toast(text),
 });
 const resizer = h("div", { class: "resizer", role: "separator", "aria-orientation": "vertical", "aria-label": "Resize chat", tabindex: "0" });
-const body = h("div", { class: "body" }, stage, resizer, chatPanel.el);
-const main = h("div", { class: "main" }, toolbar, banner, body, statusBar);
+const work = h("div", { class: "work" }, stage, resizer, chatPanel.el);
+const main = h("div", { class: "main" }, toolbar, banner, work, statusBar);
 
 const sheetHost = h("div", { class: "sheet-host" });
 const menuHost = h("div", { class: "menu-host" });
@@ -474,23 +474,23 @@ let chatH = Math.round(Number(store.get("chat.h")) || 320);
 const hasChat = (s: SessionState | null): boolean => Boolean(s && s.phase !== "start" && s.projectName);
 
 function clampChat(): void {
-  const box = body.getBoundingClientRect();
+  const box = work.getBoundingClientRect();
   if (compactQuery.matches) chatH = Math.max(200, Math.min(chatH, Math.max(200, box.height - 160)));
   else chatW = Math.max(MIN_CHAT, Math.min(chatW, MAX_CHAT, Math.max(MIN_CHAT, box.width - MIN_STAGE)));
 }
 
 function layoutChat(): void {
   const show = hasChat(state) && chatOpen;
-  body.classList.toggle("compact", compactQuery.matches);
-  body.classList.toggle("chat-off", !show);
+  work.classList.toggle("compact", compactQuery.matches);
+  work.classList.toggle("chat-off", !show);
   chatPanel.el.hidden = !show;
   resizer.hidden = !show;
   chatBtn.hidden = !hasChat(state);
   chatBtn.setAttribute("aria-pressed", String(show));
   chatBtn.classList.toggle("on", show);
   clampChat();
-  body.style.setProperty("--chat-w", `${chatW}px`);
-  body.style.setProperty("--chat-h", `${chatH}px`);
+  work.style.setProperty("--chat-w", `${chatW}px`);
+  work.style.setProperty("--chat-h", `${chatH}px`);
   resizer.setAttribute("aria-orientation", compactQuery.matches ? "horizontal" : "vertical");
   resizer.setAttribute("aria-valuenow", String(compactQuery.matches ? chatH : chatW));
   syncPreview();
@@ -509,7 +509,7 @@ resizer.addEventListener("pointerdown", (e) => {
   resizer.setPointerCapture(e.pointerId);
   resizer.classList.add("drag");
   const move = (ev: PointerEvent): void => {
-    const box = body.getBoundingClientRect();
+    const box = work.getBoundingClientRect();
     if (compactQuery.matches) chatH = Math.round(box.bottom - ev.clientY);
     else chatW = Math.round(box.right - ev.clientX);
     layoutChat();

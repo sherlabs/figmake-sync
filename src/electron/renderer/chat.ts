@@ -288,6 +288,8 @@ export function createChatPanel(host: ChatHost): ChatPanel {
       h("p", {}, name ? `Tell me what to do with ${name}, the way you'd tell a teammate. I'll make the change and show you the result.` : "Describe a change the way you'd tell a teammate. I'll make it and show you the result."),
       setup
         ? h("p", { class: "setup", role: "status" }, h("span", { class: "spin", "aria-hidden": "true" }), "Getting things ready…")
+        : s?.phase !== "ready"
+        ? null
         : h("div", { class: "chips", role: "group", "aria-label": "Suggestions" }, ...SUGGESTIONS.map((t) => h("button", { type: "button", class: "sugg", onclick: () => { ta.value = t; recall = -1; grow(); syncComposer(); ta.focus(); } }, icon("sparkle", true), t))),
     );
   }

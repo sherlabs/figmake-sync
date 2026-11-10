@@ -11,11 +11,12 @@ import { isAuthRequiredError } from "../electron/authState.js";
 import { applyAgentEvent, baseName, capMessages, dropSummaryRepeat, emptyAssistant, newId, userMessage } from "./chat.js";
 import type { ChatStore } from "./chatStore.js";
 import { describeFolders, listChangedFiles } from "./changes.js";
+import { FIGMA_MAKE_GUIDE } from "./figmaMakeGuide.js";
 import { defaultWorkspaceDir, parseFigmaLink, resolveProjectFolder, validateWorkspace, type FigmaLink, type WorkspaceGuard } from "./workspace.js";
 
 /** Short fixed context for every prompt: nothing is ever written into the project to carry it. */
 export const PROMPT_PREFACE =
-  "This is a Figma Make project: a React app. Edit only files under src and styles. Do not touch config files, lockfiles or node_modules. Keep the dev server running. You are talking with a designer, not a developer: write in plain, friendly language and avoid commands, file paths and technical terms unless they ask. If they ask a question instead of for a change, just answer it briefly. After making a change, reply with one plain sentence describing what changed.";
+  `This is a Figma Make project: a React app. Follow the project rules below. You are talking with a designer, not a developer: write in plain, friendly language and avoid commands, file paths and technical terms unless they ask. If they ask a question instead of for a change, just answer it briefly. After making a change, reply with one plain sentence describing what changed.\n\n${FIGMA_MAKE_GUIDE}`;
 
 export const AGENT_NAMES: Record<AgentChoice, string> = { claude: "Claude", codex: "ChatGPT" };
 

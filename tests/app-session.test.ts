@@ -822,6 +822,12 @@ describe("session: chat", () => {
     expect(PROMPT_PREFACE).toMatch(/lockfiles/u);
   });
 
+  it("the prompt carries the Figma Make project guide", () => {
+    for (const rule of [/Vite/u, /Tailwind/u, /src\/main\.tsx/u, /index\.html/u, /vite\.config\.ts/u, /re-export/u, /new-file/u, /dependencies/u, /CLAUDE\.md/u]) {
+      expect(PROMPT_PREFACE).toMatch(rule);
+    }
+  });
+
   it("each project keeps its own conversation", async () => {
     const r = await rig();
     await r.session.openProject(LINK);

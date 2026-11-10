@@ -391,7 +391,7 @@ html.is-win .toolbar button, html.is-win .toolbar input { -webkit-app-region: no
 .errbanner .btn.primary { color: var(--on-accent); }
 
 .errbanner { margin-bottom: 12px; }
-.body { display: flex; min-height: 0; min-width: 0; border-top: 1px solid var(--sep); position: relative; }
+.work { display: flex; min-height: 0; min-width: 0; border-top: 1px solid var(--sep); position: relative; }
 .stage { position: relative; flex: 1 1 0; min-width: 0; min-height: 0; background: var(--inset); overflow: hidden; display: grid; place-items: center; }
 .slot { position: absolute; inset: 0; background: var(--inset); }
 .slot.paused::after { content: "Preview paused"; position: absolute; inset: 0; display: grid; place-items: center; color: var(--text-3); font-size: 12px; background: var(--inset); }
@@ -403,7 +403,7 @@ html.is-win .toolbar button, html.is-win .toolbar input { -webkit-app-region: no
 .welcome .art .g1 { left: 68px; top: 52px; transform: rotate(-8deg); }
 .welcome .art .g2 { right: 68px; top: 60px; transform: rotate(7deg); }
 .welcome .art .ghost svg { width: 36px; height: 36px; }
-.welcome .body { padding: 20px 24px 22px; }
+.welcome .wbody { padding: 20px 24px 22px; }
 .welcome h2 { font-size: 17px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.25; }
 .welcome p.lead { color: var(--text-2); margin-top: 6px; line-height: 1.45; }
 .welcome form { margin-top: 16px; display: flex; gap: 8px; }
@@ -685,13 +685,13 @@ html.is-win .toolbar button, html.is-win .toolbar input { -webkit-app-region: no
 .sendbtn.stop:hover { filter: none; opacity: 0.85; }
 
 /* chat below the preview (narrow windows) */
-.body.compact { flex-direction: column; }
-.body.compact .chat { width: auto; height: var(--chat-h, 320px); border-top: 0; }
-.body.compact .resizer { width: auto; height: 1px; cursor: row-resize; }
-.body.compact .resizer::before { inset: -4px 0; }
-.body.compact .resizer::after { top: -1px; bottom: auto; left: 0; right: 0; width: auto; height: 3px; }
-.body.compact .stage { flex: 1 1 0; min-height: 120px; }
-.body.compact .cdiff .dl { grid-template-columns: 1fr; }
+.work.compact { flex-direction: column; }
+.work.compact .chat { width: auto; height: var(--chat-h, 320px); border-top: 0; }
+.work.compact .resizer { width: auto; height: 1px; cursor: row-resize; }
+.work.compact .resizer::before { inset: -4px 0; }
+.work.compact .resizer::after { top: -1px; bottom: auto; left: 0; right: 0; width: auto; height: 3px; }
+.work.compact .stage { flex: 1 1 0; min-height: 120px; }
+.work.compact .cdiff .dl { grid-template-columns: 1fr; }
 @media (max-width: 900px) {
   .thread { padding: 8px 14px 16px; }
   .chat-h { height: 38px; }
@@ -708,7 +708,7 @@ html.is-win .toolbar button, html.is-win .toolbar input { -webkit-app-region: no
 
 .main > .toolbar { grid-row: 1; }
 .main > .errbanner { grid-row: 2; }
-.main > .body { grid-row: 3; }
+.main > .work { grid-row: 3; }
 .main > .status { grid-row: 4; }
 .cnote { padding-left: 0; }
 .chcard .diffcols { display: none; }
@@ -717,3 +717,4 @@ html.is-win .toolbar button, html.is-win .toolbar input { -webkit-app-region: no
 .chcard .dl.same > div + div, .chcard .dl > div:has(> .emp) { display: none; }
 .chcard .dl .c { white-space: pre-wrap; overflow-wrap: anywhere; }
 .chcard .dfile .diffbody { overflow-x: hidden; }
+.toasts { right: auto; left: 244px; justify-items: start; }
