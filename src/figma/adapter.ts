@@ -585,6 +585,22 @@ const TREE_QUERY_SCRIPT = `(root, args) => {
   return result;
 }`;
 
+/**
+ * Runs a function-source string in the page against `root` and returns its (awaited) result.
+ * Playwright no longer invokes a function written as a string (it returns undefined), so the
+ * element is tagged, the source is called explicitly, and the tag is removed again.
+ */
+export async function runPageScript<T>(root: Locator, script: string, arg: unknown): Promise<T> {
+  await root.evaluate((el) => el.setAttribute("data-fm-root", "1"));
+  try {
+    return (await root
+      .page()
+      .evaluate(`(${script})(document.querySelector('[data-fm-root]'), ${JSON.stringify(arg ?? null)})`)) as T;
+  } finally {
+    await root.evaluate((el) => el.removeAttribute("data-fm-root")).catch(() => undefined);
+  }
+}
+
 const TREE_SCROLL_SCRIPT = `async (root, args) => {
   const first = root.querySelector('button[data-testid="code-file-item"], [data-folder-item="true"] button');
   let sc = first ? first.parentElement : null;
@@ -2212,10 +2228,7 @@ export class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSessio
     treeRoot: Locator,
     args: TreeQueryArgs,
   ): Promise<TreeQueryResult> {
-    return (await treeRoot.evaluate(
-      TREE_QUERY_SCRIPT,
-      args,
-    ));
+    return runPageScript<TreeQueryResult>(treeRoot, TREE_QUERY_SCRIPT, args);
   }
 
   /**
@@ -2275,9 +2288,9 @@ export class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSessio
       }
 
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
-      const scroll = (await treeRoot.evaluate(TREE_SCROLL_SCRIPT, {
+      const scroll = await runPageScript<{ original: number; atEnd?: boolean; [k: string]: unknown }>(treeRoot, TREE_SCROLL_SCRIPT, {
         step: scrollStep + 1,
-      })) as { original: number; atEnd?: boolean; [k: string]: unknown };
+      });
 
       if (scrollStep < 0) {
         originalScroll = scroll.original;
@@ -2287,9 +2300,9 @@ export class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSessio
 
       if (scroll.done) {
         if (originalScroll !== null) {
-          await treeRoot
-            .evaluate(TREE_SCROLL_SCRIPT, { restore: originalScroll })
-            .catch(() => undefined);
+          await runPageScript(treeRoot, TREE_SCROLL_SCRIPT, { restore: originalScroll }).catch(
+            () => undefined,
+          );
         }
 
         return null;
@@ -2350,7 +2363,7 @@ export class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSessio
       );
     }
 
-    await treeRoot.evaluate(TREE_SCROLL_SCRIPT, { bottom: true }).catch(
+    await runPageScript(treeRoot, TREE_SCROLL_SCRIPT, { bottom: true }).catch(
       () => undefined,
     );
 

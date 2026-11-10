@@ -122,3 +122,26 @@ describe("classifyPageState", () => {
     expect(classifyPageState({ ...base, text: "Figma Make workspace" })).toBeNull();
   });
 });
+
+describe("runPageScript", () => {
+  it("calls a function-source string and returns its awaited result (Playwright returns undefined for bare strings)", async (ctx) => {
+    const { chromium } = await import("playwright");
+    const { runPageScript } = await import("../src/figma/adapter.js");
+    let browser;
+    try {
+      browser = await chromium.launch();
+    } catch {
+      return ctx.skip();
+    }
+    try {
+      const page = await browser.newPage();
+      await page.setContent('<div id="r"><b>x</b></div>');
+      const root = page.locator("#r");
+      expect(await runPageScript(root, "(el, a) => ({ tag: el.tagName, n: a.n })", { n: 3 })).toEqual({ tag: "DIV", n: 3 });
+      expect(await runPageScript(root, "async (el, a) => { await Promise.resolve(); return a.v; }", { v: "ok" })).toBe("ok");
+      expect(await page.locator("[data-fm-root]").count()).toBe(0);
+    } finally {
+      await browser.close();
+    }
+  });
+});
