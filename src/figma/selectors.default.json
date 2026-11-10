@@ -64,11 +64,17 @@
       "kind": "container",
       "healable": false,
       "selectors": [
+        "[data-testid=\"virtualized-file-tree-container\"]",
         "div:has(button[data-testid=\"code-file-item\"])",
         "div:has([data-folder-item=\"true\"])",
-        "div:has(h2:has-text(\"Files\"))",
-        "[data-testid=\"virtualized-file-tree-container\"]"
+        "div:has(h2:has-text(\"Files\"))"
       ]
+    },
+    "treeRow": {
+      "goal": "One row of the virtualised file explorer (carries aria-level / aria-posinset / aria-setsize / aria-label).",
+      "kind": "container",
+      "healable": false,
+      "selectors": ["[role=\"treeitem\"][aria-level]"]
     },
     "persistenceStatus": {
       "goal": "The autosave status wrapper around the code editor (carries data-code-layer-persistence-status).",
@@ -151,21 +157,41 @@
       "expectTerms": ["create file", "new file", "add file"],
       "selectors": [
         "[data-testid=\"create-file-header-button\"]",
+        "[data-testid=\"create-file-menu-item\"]",
         "[role=\"menuitem\"]:has-text(\"Create file\")",
         "button:has-text(\"Create file\")"
       ]
     },
+    "createFolderAction": {
+      "goal": "Find the menu item that creates a new folder (Create folder), inside an already opened menu.",
+      "kind": "menuitem",
+      "healable": true,
+      "expectTerms": ["create folder", "new folder", "add folder"],
+      "selectors": [
+        "[data-testid=\"create-folder-menu-item\"]",
+        "[role=\"menuitem\"]:has-text(\"Create folder\")"
+      ]
+    },
+    "showHiddenFilesToggle": {
+      "goal": "Find the checkbox menu item that shows hidden files (dot-files, lock files) in the file explorer, inside the opened file actions menu.",
+      "kind": "menuitem",
+      "healable": true,
+      "expectTerms": ["hidden"],
+      "selectors": [
+        "[role=\"menu\"] [role^=\"menuitem\"]:has-text(\"Show hidden files\")",
+        "[role=\"menu\"] [role^=\"menuitem\"]:has-text(\"hidden files\")"
+      ]
+    },
     "newFileInput": {
-      "goal": "The inline text input used to type a file name when creating or renaming a file.",
+      "goal": "The inline text input used to type a file name when creating or renaming a file (never the read-only name of an existing row).",
       "kind": "input",
       "healable": false,
       "selectors": [
+        "input[data-testid=\"code-file-name-input\"]:not([readonly])",
         "input[data-testid=\"code-file-name-input\"]:focus",
-        "input[data-testid=\"code-file-name-input\"][value=\"new-file.tsx\"]",
         "input[placeholder*=\"file\"]",
         "[role=\"dialog\"] input[type=\"text\"]",
-        "[data-testid=\"new-file-input\"]",
-        "input[data-testid=\"code-file-name-input\"]"
+        "[data-testid=\"new-file-input\"]"
       ]
     },
     "saveButton": {
@@ -220,6 +246,8 @@
       "kind": "destructive",
       "healable": false,
       "selectors": [
+        "[data-testid=\"delete-file-menu-item\"]",
+        "[data-testid=\"delete-folder-menu-item\"]",
         "[role=\"menuitem\"]:has-text(\"Delete\")",
         "button:has-text(\"Delete\")"
       ]
@@ -230,6 +258,7 @@
       "healable": true,
       "expectTerms": ["rename"],
       "selectors": [
+        "[data-testid=\"rename-folder-menu-item\"]",
         "[role=\"menuitem\"]:has-text(\"Rename\")",
         "button:has-text(\"Rename\")"
       ]
@@ -239,6 +268,7 @@
       "kind": "destructive",
       "healable": false,
       "selectors": [
+        "button[data-testid=\"confirmation-modal-confirm-action-button\"]",
         "[role=\"dialog\"] button:has-text(\"Delete\")",
         "[role=\"alertdialog\"] button:has-text(\"Delete\")",
         "[role=\"dialog\"] button:has-text(\"Confirm\")",

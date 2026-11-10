@@ -32,6 +32,8 @@ const syncMetadataSchema = z.object({
         operation: z.enum(["pull", "push", "verify"]),
         path: z.string(),
         reason: z.string(),
+        /** Stable code of a push stop (EXPLORER_MISMATCH, WRITE_NOT_VERIFIED, ...). */
+        code: z.string().optional(),
         recordedAt: z.string().datetime(),
       }),
     )
@@ -363,6 +365,38 @@ export class ProjectStateStore {
     });
 
     return { stale };
+  }
+
+  /** The snapshot bytes of a baseline path (what the last pull/push recorded), or null when absent. */
+  async readBaselineSnapshot(relativePath: string): Promise<Buffer | null> {
+    return fs.readFile(path.join(this.paths.lastPullSnapshotDir, relativePath)).catch(() => null);
+  }
+
+  /**
+   * Puts earlier baseline entries back (with their recorded bytes) and drops others: used after the final check of a
+   * push found that Figma does not hold what was sent, so those paths show as dirty / conflicting again.
+   */
+  async restoreBaselineEntries(
+    baseline: SnapshotManifest,
+    changes: { restores: Array<{ entry: ManifestEntry; content: Buffer }>; removals: string[] },
+  ): Promise<void> {
+    const entries = new Map(baseline.files.map((entry) => [entry.path, entry]));
+
+    for (const { entry, content } of changes.restores) {
+      await writeFileAtomic(path.join(this.paths.lastPullSnapshotDir, entry.path), content);
+      entries.set(entry.path, entry);
+    }
+
+    for (const removal of changes.removals) {
+      await fs.remove(path.join(this.paths.lastPullSnapshotDir, removal));
+      entries.delete(removal);
+    }
+
+    await this.writeBaselineManifest({
+      ...baseline,
+      createdAt: new Date().toISOString(),
+      files: [...entries.values()].sort((left, right) => left.path.localeCompare(right.path)),
+    });
   }
 
   async readMetadata(): Promise<SyncMetadata> {

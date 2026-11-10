@@ -16,15 +16,29 @@ import {
   hasManifestChanges,
   summarizeManifestDiff,
   type ManifestDiff,
+  type ManifestEntry,
   type SnapshotManifest,
 } from "../diff/manifest.js";
 import {
   createPlaywrightAdapter,
   type AdapterContext,
   type AdapterFactory,
+  type ExplorerSnapshot,
   type FigmaMakeAdapter,
   type FigmaMakeProjectSession,
 } from "../figma/adapter.js";
+import {
+  buildPushPlan,
+  pushMessage,
+  resolveDiverged,
+  touchedPaths,
+  validateLocalPlan,
+  type PlanInput,
+  type PlannedOp,
+  type PushBlock,
+  type ShownOp,
+} from "./push-plan.js";
+import { withRetry } from "../utils/retry.js";
 import { buildEnv } from "../harness/process.js";
 import { getManagedPnpm } from "../runtime/managed.js";
 import { createProjectLogger, flushLogger } from "../logging/logger.js";
@@ -97,11 +111,70 @@ export interface PushResult {
   unresolved: Array<{
     path: string;
     reason: string;
+    /** Stable code (EXPLORER_MISMATCH, WRITE_NOT_VERIFIED, STOPPED, ...). */
+    code?: string;
   }>;
   /** Paths changed remotely since last pull that push would overwrite (or skipped if not confirmed). */
   remoteDiverged?: string[];
-  /** "skipped" = remote could not be read, push proceeded without the divergence check. */
+  /** "skipped" = the push stopped before the remote zip was needed (local refusal); otherwise the zip was checked. */
   remoteCheck?: "ok" | "skipped";
+  /**
+   * The push stopped cleanly. "preflight": nothing was written to Figma. "sending": every file before this one is
+   * verified and in the baseline; `remaining` files are still waiting and the next push resumes with them.
+   */
+  stopped?: { phase: "preflight" | "sending"; code: string; message: string; remaining: number };
+  /** Files whose content the final zip download confirmed. */
+  verified?: number;
+  /** "ok" = the final zip compare ran; "skipped" = nothing was sent or the download failed (logged). */
+  verifyCheck?: "ok" | "skipped";
+  /** Files not part of this push that changed in Figma while it ran (reported, never touched). */
+  remoteChanged?: string[];
+}
+
+/** An operation that did not verifiably happen, with a stable code for the message map. */
+class PushOpError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "PushOpError";
+  }
+}
+
+function codeOf(error: unknown): string | undefined {
+  const code = (error as { code?: unknown } | null)?.code;
+
+  if (typeof code === "string") return code;
+
+  return error instanceof Error && error.name === "TimeoutError" ? "TIMEOUT" : undefined;
+}
+
+/** Retried from the precondition (never blindly): timeouts, overlays, a UI that briefly looks different, an unverified write. */
+function isTransientPushError(error: unknown): boolean {
+  const code = codeOf(error);
+
+  if (code === undefined) return !(error instanceof PushOpError);
+
+  return ["TIMEOUT", "UI_CHANGED", "SELECTOR_NOT_FOUND", "WRITE_NOT_VERIFIED", "AUTOMATION_ERROR"].includes(code);
+}
+
+function messageForError(error: unknown, relativePath: string): string {
+  const code = codeOf(error);
+
+  if (code === "LEFTOVER_FILE") {
+    const e = error as { folder?: string; leftover?: string };
+
+    return pushMessage(code, relativePath, { folder: e.folder ?? "", leftover: e.leftover ?? "new-file.tsx" });
+  }
+
+  if (code === "EXPLORER_MISMATCH" || code === "AMBIGUOUS_REMOTE_PATH") {
+    return pushMessage(code, (error as { relativePath?: string }).relativePath ?? relativePath);
+  }
+
+  if (code !== undefined) return pushMessage(code, relativePath);
+
+  return `${error instanceof Error ? error.message : String(error)} (${relativePath}). Nothing after it was sent.`;
 }
 
 export interface VerifyResult {
@@ -477,6 +550,11 @@ export class FigmakeSyncService {
     });
   }
 
+  /**
+   * Send local changes to Figma Make. Either everything verified lands, or the push stops BEFORE any write (preflight:
+   * `stopped.phase === "preflight"`) or at an operation boundary (`stopped.phase === "sending"`) with the baseline
+   * advanced only for verified operations, so the next push resumes exactly where this one stopped.
+   */
   async push(
     options: SignalOptions & { requireRemoteCheck?: boolean } = {},
   ): Promise<PushResult> {
@@ -493,8 +571,7 @@ export class FigmakeSyncService {
     }
 
     let session: FigmaMakeProjectSession | undefined;
-    let hasPendingEditorChanges = false;
-    let remoteTempDir: string | undefined;
+    const tempDirs: string[] = [];
     const onAbort = (): void => {
       void session?.close().catch(() => undefined);
     };
@@ -519,101 +596,111 @@ export class FigmakeSyncService {
       );
       const summary = summarizeManifestDiff(diff);
 
-      if (summary.total === 0) {
-        return {
-          dryRun: Boolean(options.dryRun),
-          summary,
-          unresolved: [],
-        };
+      if (summary.total === 0 || options.dryRun) {
+        return { dryRun: Boolean(options.dryRun), summary, unresolved: [] };
       }
 
-      if (options.dryRun) {
+      const local = new Map(localManifest.files.map((entry) => [entry.path, entry]));
+      const base = new Map(baselineManifest.files.map((entry) => [entry.path, entry]));
+      const touched = touchedPaths(diff);
+      const unresolved: PushResult["unresolved"] = [];
+      const startedAt = Date.now();
+      const recordUnresolved = (): Promise<SyncMetadata> =>
+        context.store.updateMetadata({
+          lastPushAt: new Date().toISOString(),
+          lastCommand: "push",
+          unresolved: unresolved.map((entry) => ({
+            operation: "push" as const,
+            path: entry.path,
+            reason: entry.reason,
+            ...(entry.code ? { code: entry.code } : {}),
+            recordedAt: new Date().toISOString(),
+          })),
+        });
+      /** Preflight refusal: nothing was written, every blocked path is listed, the first one is the headline. */
+      const stopBeforeWrites = async (blocked: PushBlock[], remoteCheck: "ok" | "skipped"): Promise<PushResult> => {
+        for (const b of blocked) unresolved.push({ path: b.path, reason: b.message, code: b.code });
+        await recordUnresolved();
+        reportPush(options, {
+          phase: "checking",
+          index: 1,
+          total: touched.length,
+          completed: 0,
+          percent: 0,
+          startedAt,
+          stopped: { code: blocked[0]!.code, message: blocked[0]!.message, remaining: touched.length },
+        });
+
         return {
-          dryRun: true,
+          dryRun: false,
           summary,
-          unresolved: [],
+          unresolved,
+          remoteCheck,
+          stopped: { phase: "preflight", code: blocked[0]!.code, message: blocked[0]!.message, remaining: touched.length },
         };
+      };
+
+      // 0. What can never be sent is refused before the browser opens.
+      const earlyBlocked = validateLocalPlan(diff, local);
+
+      if (earlyBlocked.length > 0) {
+        return await stopBeforeWrites(earlyBlocked, "skipped");
       }
 
       notify(options, "opening Figma Make file");
       session = await adapter.openProject(context.config.figmaMakeUrl, signal ? { signal } : {});
       throwIfAborted(signal);
 
-      const unresolved: Array<{
-        path: string;
-        reason: string;
-      }> = [];
-      const currentEntryByPath = new Map(
-        localManifest.files.map((entry) => [entry.path, entry]),
-      );
+      // 1. The zip is the existence/content oracle. Mandatory for every caller: without it nothing is sent.
+      notify(options, "checking remote for changes");
+      reportPush(options, { phase: "checking", index: 1, total: touched.length, completed: 0, percent: 0, startedAt, detail: "Checking Figma for newer changes" });
 
-      // Remote-divergence safety: compare remote content to the baseline for
-      // every path this push would touch. Best-effort (needs a zip download).
-      const skipped = new Set<string>();
-      const remoteDiverged: string[] = [];
-      let remoteCheck: "ok" | "skipped" = "skipped";
-      const checkStartedAt = Date.now();
+      let remoteManifest: SnapshotManifest;
 
       try {
-        notify(options, "checking remote for changes");
-        reportPush(options, {
-          phase: "checking",
-          index: 1,
-          total: summary.total,
-          completed: 0,
-          percent: 0,
-          startedAt: checkStartedAt,
-        });
-        const download = await session.downloadLatestCodeZip(
-          context.store.paths.downloadsDir,
-        );
-
-        remoteTempDir = await context.store.createTempDir("push-remote");
-        await extractZipSafely(download.zipPath, remoteTempDir);
-
-        const remoteManifest = await createManifest(remoteTempDir, {
-          ignore: context.config.sync.ignore,
-        });
-        const remoteHash = new Map(
-          remoteManifest.files.map((entry) => [entry.path, entry.contentHash]),
-        );
-        const baseHash = new Map(
-          baselineManifest.files.map((entry) => [
-            entry.path,
-            entry.contentHash,
-          ]),
-        );
-        const touched = new Set<string>([
-          ...diff.added.map((entry) => entry.path),
-          ...diff.modified.map((entry) => entry.current.path),
-          ...diff.deleted.map((entry) => entry.path),
-          ...diff.renamed.flatMap((entry) => [entry.from, entry.to]),
-        ]);
-
-        remoteCheck = "ok";
-
-        for (const touchedPath of [...touched].sort()) {
-          const remote = remoteHash.get(touchedPath);
-
-          if (
-            remote !== baseHash.get(touchedPath) &&
-            remote !== currentEntryByPath.get(touchedPath)?.contentHash
-          ) {
-            remoteDiverged.push(touchedPath);
-          }
-        }
+        remoteManifest = await this.downloadRemoteManifest(context, session, tempDirs);
       } catch (error) {
         throwIfAborted(signal);
-        if (options.requireRemoteCheck) {
-          // Unattended callers fail closed: nothing has been written yet.
-          throw new Error(
-            "Could not check Figma Make for newer changes, so nothing was pushed. Try again, or push manually.",
-          );
-        }
-        context.logger.warn(
-          { err: error },
-          "remote divergence check could not run; pushing without it",
+        context.logger.warn({ err: error }, "remote check failed; nothing was pushed");
+        throw new Error(
+          "Could not check Figma Make for newer changes, so nothing was pushed. Try again, or push manually.",
+          { cause: error },
         );
+      }
+
+      const remote = new Map(remoteManifest.files.map((entry) => [entry.path, entry]));
+
+      // 2. The explorer index is the clickability oracle (sessions without one leave row existence unknown).
+      let explorer: ExplorerSnapshot | undefined;
+
+      if (session.indexExplorer) {
+        notify(options, "reading the file list");
+        reportPush(options, { phase: "checking", index: 1, total: touched.length, completed: 0, percent: 0, startedAt, detail: "Reading Figma's file list" });
+
+        try {
+          explorer = await session.indexExplorer(touched);
+        } catch (error) {
+          throwIfAborted(signal);
+
+          const code = codeOf(error);
+
+          if (code === "TREE_INDEX_INCOMPLETE" || code === "EXPLORER_MISMATCH" || code === "UI_CHANGED" || code === "SELECTOR_NOT_FOUND") {
+            const path = (error as { relativePath?: string }).relativePath ?? touched[0] ?? "";
+
+            return await stopBeforeWrites([{ path, code: "EXPLORER_MISMATCH", message: pushMessage(code, path) }], "ok");
+          }
+
+          throw error;
+        }
+      }
+
+      // 3. The plan: every op decided, nothing written yet.
+      const planInput: PlanInput = { diff, baseline: base, local, remote, ...(explorer ? { explorer } : {}) };
+      let plan = buildPushPlan(planInput);
+      const remoteDiverged = plan.diverged;
+
+      if (plan.blocked.length > 0) {
+        return await stopBeforeWrites(plan.blocked, "ok");
       }
 
       if (remoteDiverged.length > 0) {
@@ -621,360 +708,372 @@ export class FigmakeSyncService {
           `${remoteDiverged.length} file(s) changed in Figma Make since the last pull (${remoteDiverged.slice(0, 5).join(", ")}${remoteDiverged.length > 5 ? ", ..." : ""}). Overwrite them with local content?`,
           false,
         );
+        const resolved = resolveDiverged(plan, planInput, approved);
 
-        if (!approved) {
-          const divergedSet = new Set(remoteDiverged);
+        plan = resolved.plan;
 
-          for (const entry of diff.renamed) {
-            if (divergedSet.has(entry.from) || divergedSet.has(entry.to)) {
-              divergedSet.add(entry.from);
-              divergedSet.add(entry.to);
+        for (const divergedPath of resolved.skipped) {
+          unresolved.push({
+            path: divergedPath,
+            reason: "Remote changed since last pull; skipped to avoid overwriting. Pull first.",
+            code: "DIVERGED",
+          });
+        }
+
+        if (approved) {
+          // A diverged binary cannot be overwritten through the editor.
+          for (const divergedPath of remoteDiverged) {
+            if (!plan.ops.some((op) => op.path === divergedPath) && !plan.noops.some((op) => op.path === divergedPath)) {
+              unresolved.push({ path: divergedPath, reason: pushMessage("UNSUPPORTED_BINARY_MODIFY", divergedPath), code: "UNSUPPORTED_BINARY_MODIFY" });
             }
-          }
-
-          for (const divergedPath of divergedSet) {
-            skipped.add(divergedPath);
-            unresolved.push({
-              path: divergedPath,
-              reason:
-                "Remote changed since last pull; skipped to avoid overwriting. Pull first.",
-            });
           }
         }
       }
 
       throwIfAborted(signal);
 
-      const modifiedList = diff.modified.filter(
-        (entry) => !skipped.has(entry.current.path),
-      );
-      const renamedList = diff.renamed.filter(
-        (entry) => !skipped.has(entry.from) && !skipped.has(entry.to),
-      );
-      const addedPaths = [
-        ...diff.added
-          .map((entry) => entry.path)
-          .filter((entryPath) => !skipped.has(entryPath)),
-        ...renamedList.map((entry) => entry.to),
-      ].sort((left, right) => left.localeCompare(right));
-      const deletedPaths = [
-        ...diff.deleted
-          .map((entry) => entry.path)
-          .filter((entryPath) => !skipped.has(entryPath)),
-        ...renamedList.map((entry) => entry.from),
-      ].sort((left, right) => left.localeCompare(right));
-      // Paths successfully pushed (create/update) -> baseline advances for these only.
-      const pushedOk = new Set<string>();
-      const deletedOk: string[] = [];
-
-      // Progress: every planned operation counts once, so the percentage is real.
-      type Op = "replace" | "create" | "delete" | "rename";
-      const renameTo = new Set(renamedList.map((entry) => entry.to));
-      const renameFrom = new Set(renamedList.map((entry) => entry.from));
-      const total = modifiedList.length + addedPaths.length + deletedPaths.length;
-      const pushStartedAt = checkStartedAt;
+      // 4. Execute: one operation at a time, baseline advanced right after each verified one.
+      const total = plan.ops.length + plan.noops.length;
       let completed = 0;
+      let running = baselineManifest;
       const emit = (
         phase: "sending" | "saving",
-        extra: { op?: Op; file?: string; finished?: { file: string; op: Op; ok: boolean }; last?: boolean } = {},
+        extra: { op?: ShownOp; file?: string; finished?: PushProgress["finished"]; detail?: string; last?: boolean; stopped?: PushProgress["stopped"] } = {},
       ): void => {
-        const { last, ...rest } = extra;
         const ratio = total === 0 ? 1 : completed / total;
-        reportPush(options, {
+        const progress: PushProgress = {
           phase,
           index: Math.min(completed + 1, Math.max(total, 1)),
           total,
           completed,
-          percent: last ? 100 : Math.min(99, Math.floor(ratio * 100)),
-          startedAt: pushStartedAt,
-          ...rest,
-        });
-      };
-      const finish = (file: string, op: Op, ok: boolean): void => {
-        completed += 1;
-        emit("sending", { finished: { file, op, ok } });
-      };
-      const addOp = (file: string): Op => (renameTo.has(file) ? "rename" : "create");
-      const deleteOp = (file: string): Op => (renameFrom.has(file) ? "rename" : "delete");
+          percent: extra.last ? 100 : Math.min(99, Math.floor(ratio * 100)),
+          startedAt,
+        };
 
-      if (modifiedList.length > 0) {
+        if (extra.op) progress.op = extra.op;
+        if (extra.file) progress.file = extra.file;
+        if (extra.finished) progress.finished = extra.finished;
+        if (extra.detail) progress.detail = extra.detail;
+        if (extra.stopped) progress.stopped = extra.stopped;
+
+        reportPush(options, progress);
+      };
+      const finish = (file: string, op: ShownOp, ok: boolean, code?: string): void => {
+        completed += 1;
+        emit("sending", { finished: { file, op, ok, ...(code ? { code } : {}) } });
+      };
+      /** Bytes the baseline held for a path before this push touched it (for a rollback after the final check). */
+      const preImages = new Map<string, { entry: ManifestEntry; content: Buffer }>();
+      const rememberPreImage = async (relativePath: string): Promise<void> => {
+        const entry = base.get(relativePath);
+
+        if (!entry || preImages.has(relativePath)) return;
+
+        const content = await context.store.readBaselineSnapshot(relativePath);
+
+        if (content) preImages.set(relativePath, { entry, content });
+      };
+      const advance = async (upsert?: ManifestEntry, removal?: string): Promise<void> => {
+        const { stale } = await context.store.advanceBaseline(context.rootDir, running, {
+          upserts: upsert ? [upsert] : [],
+          removals: removal ? [removal] : [],
+        });
+
+        if (stale.length > 0) {
+          context.logger.warn({ paths: stale }, "file changed during push; left dirty for the next push");
+        }
+
+        const files = new Map(running.files.map((entry) => [entry.path, entry]));
+
+        if (upsert && !stale.includes(upsert.path)) files.set(upsert.path, upsert);
+        if (removal) files.delete(removal);
+
+        running = { ...running, files: [...files.values()].sort((left, right) => left.path.localeCompare(right.path)) };
+      };
+      const done: PlannedOp[] = [];
+      const doneSet = new Set<string>();
+      let stopped: PushResult["stopped"];
+
+      if (plan.ops.length > 0) {
         notify(options, "pushing changes");
       }
 
-      for (const entry of modifiedList) {
+      for (const noop of plan.noops) {
         throwIfAborted(signal);
 
-        if (entry.current.isBinary) {
-          unresolved.push({
-            path: entry.current.path,
-            reason:
-              "Binary file updates are not safely editable through the in-browser code editor. Re-upload or update this file manually.",
-          });
-          finish(entry.current.path, "replace", false);
-          continue;
+        if (noop.op === "delete") await advance(undefined, noop.path);
+        else await advance(noop.entry);
+
+        finish(noop.path, noop.op, true);
+      }
+
+      const stopAt = (index: number, op: PlannedOp, code: string, message: string, ops: PlannedOp[]): void => {
+        unresolved.push({ path: op.path, reason: message, code });
+        finish(op.path, op.shown, false, code);
+
+        const rest = ops.slice(index + 1);
+
+        for (const later of rest) {
+          unresolved.push({ path: later.path, reason: pushMessage("STOPPED", op.path), code: "STOPPED" });
         }
 
-        const absolutePath = resolveRelativePath(
-          context.rootDir,
-          entry.current.path,
-        );
+        stopped = { phase: "sending", code, message, remaining: rest.length };
+      };
 
-        notify(options, `updating ${entry.current.path}`);
-        emit("sending", { op: "replace", file: entry.current.path });
+      // Root-level binaries: one batched upload, verified per file by the explorer (and the final zip).
+      const binaryOps = plan.ops.filter((op) => op.binary);
+      const editorOps = plan.ops.filter((op) => !op.binary);
+
+      if (binaryOps.length > 0) {
+        throwIfAborted(signal);
+        emit("sending", { op: "create", ...(binaryOps.length === 1 ? { file: binaryOps[0]!.path } : {}) });
+
+        const upload = await session.uploadFiles(
+          binaryOps.map((op) => resolveRelativePath(context.rootDir, op.path)),
+          context.rootDir,
+        );
+        const uploadedSet = new Set(upload.uploaded);
+        const reasons = new Map(upload.unresolved.map((entry) => [entry.path, entry.reason] as const));
+
+        for (const [index, op] of binaryOps.entries()) {
+          if (uploadedSet.has(op.path)) {
+            await advance(op.entry);
+            done.push(op);
+            doneSet.add(op.path);
+            finish(op.path, op.shown, true);
+            continue;
+          }
+
+          stopAt(index, op, "UPLOAD_FAILED", reasons.get(op.path) ?? `${op.path} could not be uploaded. Nothing after it was sent.`, [...binaryOps, ...editorOps]);
+          break;
+        }
+      }
+
+      let deletesApproved: boolean | null = null;
+
+      for (const [index, op] of editorOps.entries()) {
+        if (stopped) break;
+
+        throwIfAborted(signal);
+
+        if (op.op === "delete") {
+          if (op.counterpart && !doneSet.has(op.counterpart)) {
+            unresolved.push({ path: op.path, reason: `Not deleted: rename destination ${op.counterpart} was not sent.`, code: "RENAME_TARGET_FAILED" });
+            finish(op.path, op.shown, false, "RENAME_TARGET_FAILED");
+            continue;
+          }
+
+          deletesApproved ??= await getConfirm(options)(
+            `Delete ${editorOps.filter((o) => o.op === "delete").length} file(s) from the linked Figma Make project? Unsupported deletes will be left unresolved.`,
+            false,
+          );
+
+          if (!deletesApproved) {
+            unresolved.push({ path: op.path, reason: "Deletion skipped by user confirmation policy.", code: "DELETE_DECLINED" });
+            finish(op.path, op.shown, false, "DELETE_DECLINED");
+            continue;
+          }
+        }
+
+        notify(options, `${op.op === "delete" ? "deleting" : op.op === "mkdir" ? "creating folder" : op.op === "create" ? "creating" : "updating"} ${op.path}`);
+        emit("sending", { op: op.shown, file: op.path });
 
         try {
-          const content = await fs.readFile(absolutePath, "utf8");
+          if (op.op === "replace" || op.op === "delete") await rememberPreImage(op.path);
 
-          await session.replaceFileContents(entry.current.path, content);
-          hasPendingEditorChanges = true;
-          pushedOk.add(entry.current.path);
-          finish(entry.current.path, "replace", true);
+          await withRetry(() => this.executePushOp(session!, context, op), {
+            attempts: 3,
+            baseDelayMs: 1_000,
+            maxDelayMs: 3_000,
+            shouldRetry: (error) => !signal?.aborted && isTransientPushError(error),
+          });
+
+          if (op.op === "delete") await advance(undefined, op.path);
+          else if (op.op !== "mkdir") await advance(op.entry);
+
+          done.push(op);
+          doneSet.add(op.path);
+          finish(op.path, op.shown, true);
         } catch (error) {
           throwIfAborted(signal);
-          unresolved.push({
-            path: entry.current.path,
-            reason:
-              error instanceof Error
-                ? error.message
-                : "Failed to update the file remotely.",
-          });
-          finish(entry.current.path, "replace", false);
+
+          const code = codeOf(error) ?? "PUSH_OP_FAILED";
+
+          context.logger.error({ err: error, path: op.path, op: op.op, code }, "push stopped at an operation boundary");
+          stopAt(index, op, code, messageForError(error, op.path), editorOps);
         }
       }
 
-      if (addedPaths.length > 0) {
-        throwIfAborted(signal);
+      const newlyCreated = done.filter((op) => op.op === "create").map((op) => op.path);
+      const shouldPromptAfterUpload = options.prompt ?? context.config.adapter.promptAfterUpload;
 
-        const absolutePaths = addedPaths.map((relativePath) =>
-          resolveRelativePath(context.rootDir, relativePath),
-        );
-        emit("sending", {
-          op: addOp(addedPaths[0] as string),
-          ...(addedPaths.length === 1 ? { file: addedPaths[0] as string } : {}),
-        });
-        const uploadResult = await session.uploadFiles(
-          absolutePaths,
-          context.rootDir,
-        );
-        const uploadedSet = new Set(uploadResult.uploaded);
-        const deferredUploadReasons = new Map(
-          uploadResult.unresolved.map(
-            (entry) => [entry.path, entry.reason] as const,
-          ),
-        );
-
-        for (const addedPath of addedPaths) {
-          if (uploadedSet.has(addedPath)) {
-            pushedOk.add(addedPath);
-            finish(addedPath, addOp(addedPath), true);
-            continue;
-          }
-
-          const currentEntry = currentEntryByPath.get(addedPath);
-
-          if (currentEntry?.isBinary) {
-            unresolved.push({
-              path: addedPath,
-              reason:
-                deferredUploadReasons.get(addedPath) ??
-                "Binary file upload could not be completed through the current UI automation path.",
-            });
-            finish(addedPath, addOp(addedPath), false);
-            continue;
-          }
-
-          notify(options, `creating ${addedPath}`);
-          // A lone file was already named when the upload began.
-          if (addedPaths.length > 1) emit("sending", { op: addOp(addedPath), file: addedPath });
-
-          try {
-            const absolutePath = resolveRelativePath(
-              context.rootDir,
-              addedPath,
-            );
-            const content = await fs.readFile(absolutePath, "utf8");
-
-            await session.upsertFile(addedPath, content);
-            hasPendingEditorChanges = true;
-            pushedOk.add(addedPath);
-            finish(addedPath, addOp(addedPath), true);
-          } catch (error) {
-            throwIfAborted(signal);
-            unresolved.push({
-              path: addedPath,
-              reason:
-                error instanceof Error
-                  ? error.message
-                  : "Failed to create the new file remotely.",
-            });
-            finish(addedPath, addOp(addedPath), false);
-          }
-        }
-
-        if (hasPendingEditorChanges) {
-          notify(options, "saving editor changes");
-          emit("saving");
-          await session.commitPendingChanges();
-          hasPendingEditorChanges = false;
-        }
-
-        const shouldPromptAfterUpload =
-          options.prompt ?? context.config.adapter.promptAfterUpload;
-        const newlyAdded = addedPaths.filter((addedPath) =>
-          pushedOk.has(addedPath),
-        );
-
-        // Only newly created files go in the prompt; failed ones retry later.
-        if (shouldPromptAfterUpload && newlyAdded.length > 0) {
-          const prompt = renderPostUploadPrompt(
-            context.config.adapter.postUploadPromptTemplate,
-            newlyAdded,
-          );
-
-          notify(options, "sending contextual prompt");
-          await session.submitPrompt(prompt);
-        }
+      if (!stopped && shouldPromptAfterUpload && newlyCreated.length > 0) {
+        notify(options, "sending contextual prompt");
+        await session.submitPrompt(renderPostUploadPrompt(context.config.adapter.postUploadPromptTemplate, newlyCreated));
       }
 
-      if (hasPendingEditorChanges) {
-        notify(options, "saving editor changes");
-        emit("saving");
-        await session.commitPendingChanges();
-        hasPendingEditorChanges = false;
-      }
+      // 5. Final check: download the zip again and compare what was sent (and what was not touched) against it.
+      let verified = 0;
+      const remoteChanged: string[] = [];
+      let verifyCheck: PushResult["verifyCheck"] = "skipped";
 
-      // Deletes last, and a rename's old path only if its new path succeeded.
-      const renameTarget = new Map(
-        renamedList.map((entry) => [entry.from, entry.to] as const),
-      );
-      const deletable: string[] = [];
+      if (done.length > 0) {
+        notify(options, "checking against Figma");
+        emit("saving", { detail: "Checking against Figma" });
 
-      for (const relativePath of deletedPaths) {
-        const target = renameTarget.get(relativePath);
+        try {
+          const after = await this.downloadRemoteManifest(context, session, tempDirs);
+          const afterMap = new Map(after.files.map((entry) => [entry.path, entry]));
+          const restores: Array<{ entry: ManifestEntry; content: Buffer }> = [];
+          const removals: string[] = [];
+          const touchedSet = new Set(touched);
 
-        if (target !== undefined && !pushedOk.has(target)) {
-          unresolved.push({
-            path: relativePath,
-            reason: `Not deleted: rename destination ${target} was not pushed.`,
-          });
-          finish(relativePath, deleteOp(relativePath), false);
-          continue;
-        }
+          verifyCheck = "ok";
 
-        deletable.push(relativePath);
-      }
+          for (const op of done) {
+            const now = afterMap.get(op.path);
 
-      if (deletable.length > 0) {
-        throwIfAborted(signal);
-
-        const confirmDeletion = getConfirm(options);
-        const approved = await confirmDeletion(
-          `Delete ${deletable.length} file(s) from the linked Figma Make project? Unsupported deletes will be left unresolved.`,
-          false,
-        );
-
-        if (!approved) {
-          unresolved.push(
-            ...deletable.map((relativePath) => ({
-              path: relativePath,
-              reason: "Deletion skipped by user confirmation policy.",
-            })),
-          );
-          for (const relativePath of deletable) {
-            finish(relativePath, deleteOp(relativePath), false);
-          }
-        } else {
-          for (const relativePath of deletable) {
-            throwIfAborted(signal);
-            notify(options, `deleting ${relativePath}`);
-            emit("sending", { op: deleteOp(relativePath), file: relativePath });
-
-            try {
-              const result = await session.deletePath(relativePath);
-
-              if (result.status === "deleted") {
-                deletedOk.push(relativePath);
-                finish(relativePath, deleteOp(relativePath), true);
-              } else {
-                unresolved.push({
-                  path: result.path,
-                  reason:
-                    result.reason ?? `Delete action returned ${result.status}.`,
-                });
-                finish(relativePath, deleteOp(relativePath), false);
+            if (op.op === "delete") {
+              if (now === undefined) {
+                verified += 1;
+                continue;
               }
-            } catch (error) {
-              throwIfAborted(signal);
-              unresolved.push({
-                path: relativePath,
-                reason:
-                  error instanceof Error
-                    ? error.message
-                    : "Failed to delete the file remotely.",
-              });
-              finish(relativePath, deleteOp(relativePath), false);
+
+              const pre = preImages.get(op.path);
+
+              if (pre) restores.push(pre);
+
+              unresolved.push({ path: op.path, reason: pushMessage("NOT_SAVED", op.path), code: "NOT_SAVED" });
+              continue;
             }
+
+            const entry = op.entry!;
+            const same = now !== undefined && (entry.isBinary ? now.contentHash === entry.contentHash : now.normalizedHash === entry.normalizedHash);
+
+            if (same) {
+              verified += 1;
+              continue;
+            }
+
+            const code = now === undefined ? "NOT_SAVED" : "CHANGED_AFTER_SEND";
+            const pre = preImages.get(op.path);
+
+            if (pre) restores.push(pre);
+            else removals.push(op.path);
+
+            unresolved.push({ path: op.path, reason: pushMessage(code, op.path), code });
           }
+
+          for (const [relativePath, entry] of afterMap) {
+            if (!touchedSet.has(relativePath) && base.has(relativePath) && base.get(relativePath)!.contentHash !== entry.contentHash) remoteChanged.push(relativePath);
+          }
+
+          for (const relativePath of base.keys()) {
+            if (!touchedSet.has(relativePath) && !afterMap.has(relativePath) && !userIgnore.includes(relativePath)) remoteChanged.push(relativePath);
+          }
+
+          if (restores.length > 0 || removals.length > 0) {
+            await context.store.restoreBaselineEntries(running, { restores, removals });
+            context.logger.warn({ restores: restores.map((r) => r.entry.path), removals }, "final check found sent files missing or changed in Figma; baseline rolled back for them");
+          }
+
+          if (remoteChanged.length > 0) {
+            context.logger.warn({ paths: remoteChanged }, "files not part of this push changed in Figma meanwhile");
+          }
+        } catch (error) {
+          throwIfAborted(signal);
+          context.logger.warn({ err: error }, "final check against Figma could not run");
         }
       }
 
-      // Per-path baseline: succeeded paths advance, failed paths stay dirty.
-      const { stale } = await context.store.advanceBaseline(
-        context.rootDir,
-        baselineManifest,
-        {
-          upserts: [...pushedOk].flatMap((pushedPath) => {
-            const entry = currentEntryByPath.get(pushedPath);
+      await recordUnresolved();
 
-            return entry ? [entry] : [];
-          }),
-          removals: deletedOk,
-        },
-      );
-
-      if (stale.length > 0) {
-        context.logger.warn(
-          { paths: stale },
-          "files changed during push; left dirty for the next push",
-        );
+      if (stopped) {
+        emit("saving", { stopped: { code: stopped.code, message: stopped.message, remaining: stopped.remaining } });
+      } else {
+        completed = total;
+        emit("saving", { last: true });
       }
-
-      await context.store.updateMetadata({
-        lastPushAt: new Date().toISOString(),
-        lastCommand: "push",
-        unresolved: unresolved.map((entry) => ({
-          operation: "push" as const,
-          path: entry.path,
-          reason: entry.reason,
-          recordedAt: new Date().toISOString(),
-        })),
-      });
-
-      completed = total;
-      emit("saving", { last: true });
 
       return {
         dryRun: false,
         summary,
         unresolved,
         remoteDiverged,
-        remoteCheck,
+        remoteCheck: "ok",
+        ...(stopped ? { stopped } : {}),
+        verified,
+        verifyCheck,
+        ...(remoteChanged.length > 0 ? { remoteChanged: remoteChanged.sort() } : {}),
       };
     } finally {
       signal?.removeEventListener("abort", onAbort);
+      await session?.close().catch(() => undefined);
 
-      if (session && hasPendingEditorChanges && !signal?.aborted) {
-        await session.commitPendingChanges().catch((error) => {
-          context.logger.warn(
-            { error },
-            "failed to flush pending editor changes before closing the browser session",
-          );
-        });
+      for (const tempDir of tempDirs) {
+        await this.cleanupTransient(context, tempDir);
       }
 
-      await session?.close().catch(() => undefined);
-      await this.cleanupTransient(context, remoteTempDir);
+      if (tempDirs.length === 0) await this.cleanupTransient(context, undefined);
+
       await flushLogger(context.logger);
+    }
+  }
+
+  /** Downloads the project zip and builds its manifest in a temp dir (recorded for cleanup). */
+  private async downloadRemoteManifest(
+    context: LoadedProjectContext,
+    session: FigmaMakeProjectSession,
+    tempDirs: string[],
+  ): Promise<SnapshotManifest> {
+    const download = await session.downloadLatestCodeZip(context.store.paths.downloadsDir);
+    const tempDir = await context.store.createTempDir("push-remote");
+
+    tempDirs.push(tempDir);
+    await extractZipSafely(download.zipPath, tempDir);
+
+    return createManifest(tempDir, { ignore: context.config.sync.ignore });
+  }
+
+  /** Runs one planned operation through the session; throws (with a `code`) when it did not verifiably happen. */
+  private async executePushOp(session: FigmaMakeProjectSession, context: LoadedProjectContext, op: PlannedOp): Promise<void> {
+    switch (op.op) {
+      case "mkdir": {
+        if (!session.createFolder) {
+          throw new PushOpError("UI_CHANGED", `Figma's file list has no folder ${op.path} and this session cannot create one.`);
+        }
+
+        await session.createFolder(op.path);
+        return;
+      }
+      case "create": {
+        const content = await fs.readFile(resolveRelativePath(context.rootDir, op.path), "utf8");
+
+        if (session.createFile) await session.createFile(op.path, content);
+        else await session.upsertFile(op.path, content);
+
+        await session.commitPendingChanges();
+        return;
+      }
+      case "replace": {
+        const content = await fs.readFile(resolveRelativePath(context.rootDir, op.path), "utf8");
+
+        await session.replaceFileContents(op.path, content, op.expectedNormalizedHash ? { expectedNormalizedHash: op.expectedNormalizedHash } : {});
+        await session.commitPendingChanges();
+        return;
+      }
+      case "delete": {
+        const result = await session.deletePath(op.path);
+
+        if (result.status !== "deleted") {
+          throw new PushOpError(
+            result.code ?? (result.status === "unsupported" ? "DELETE_UNSUPPORTED" : "DELETE_NOT_VERIFIED"),
+            result.reason ?? `${op.path} could not be deleted in Figma.`,
+          );
+        }
+
+        return;
+      }
     }
   }
 

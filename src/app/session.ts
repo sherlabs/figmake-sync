@@ -10,6 +10,7 @@ import { resolveRelativePath } from "../utils/path.js";
 import { REMOTE_DIVERGED_PROMPT, isAllowedLoginUrl } from "../harness/index.js";
 import type { HarnessEvent, HarnessService } from "../harness/index.js";
 import type { DevStatus } from "../harness/types.js";
+import { reapStaleDevServer } from "../harness/devserver.js";
 import type { AgentChoice, ChangedFile, ChatFile, ChatMessage, ChatState, DesktopAppState, ErrorCode, FileView, FolderListing, Phase, ProcessId, ProjectSummary, ReviewDiff, ReviewItem, SendProgress, SessionState } from "../electron/contracts.js";
 import { isAuthRequiredError } from "../electron/authState.js";
 import { applyAgentEvent, baseName, capMessages, dropSummaryRepeat, emptyAssistant, finishLive, newId, userMessage } from "./chat.js";
@@ -109,6 +110,14 @@ export function errorCode(error: unknown, kind: Failing): ErrorCode {
   if (kind === "agent") return "agent_failed";
   const known = typeof code === "string" || /newer changes|timeout|timed out|net::|ECONN|ENOTFOUND|EAI_AGAIN|reach/iu.test(raw);
   return known ? "figma_unreachable" : "unknown";
+}
+
+/** The report code for a push that stopped with one of the push-plan codes. */
+export function pushStopCode(code: string): ErrorCode {
+  if (["EXPLORER_MISMATCH", "TREE_INDEX_INCOMPLETE", "UI_CHANGED", "SELECTOR_NOT_FOUND", "LEFTOVER_FILE", "AMBIGUOUS_REMOTE_PATH"].includes(code)) return "figma_ui_changed";
+  if (code === "AUTH_REQUIRED") return "figma_signin_required";
+  if (code === "TIMEOUT" || code === "PROJECT_UNAVAILABLE") return "figma_unreachable";
+  return "push_failed";
 }
 
 /** A display name: whitespace tidied, 1 to 80 characters, otherwise null. */
@@ -286,6 +295,8 @@ export class Session {
     this.set({ agent: saved.agent, agentConnected: connected, updatesEnabled: saved.updates.enabled });
     await this.useWorkspace(saved.workspace);
     await this.refreshProjects();
+    // A crash or force-quit can leave a project's preview server running: stop those before anything starts new ones.
+    await Promise.all(Object.values(this.known).map((root) => reapStaleDevServer(root).catch(() => false)));
     const info = seed;
     const root = info ? this.known[info.key] : undefined;
     const reopen = saved.lastLink && info && root && (await fs.pathExists(root)) ? { link: saved.lastLink, info } : null;
@@ -473,8 +484,13 @@ export class Session {
                 REMOTE_DIVERGED_PROMPT.test(message) && !resolution ? Promise.reject(new Diverged(message)) : Promise.resolve(true),
             }),
           );
+          if (result.stopped) {
+            // The push stopped cleanly (before any write, or at a file boundary with earlier files verified).
+            return this.fail(result.stopped.message, () => this.send(), pushStopCode(result.stopped.code));
+          }
           if (result.unresolved.length > 0) {
-            return this.fail("Some changes couldn't be sent. Try again.", () => this.send(), "push_failed");
+            const first = result.unresolved.find((u) => u.code && u.code !== "STOPPED");
+            return this.fail(first ? first.reason : "Some changes couldn't be sent. Try again.", () => this.send(), "push_failed");
           }
         }
         this.settle(resolution === "figma" ? "undone" : "sent");

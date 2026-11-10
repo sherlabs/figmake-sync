@@ -105,7 +105,11 @@ export interface PushProgress {
   /** Epoch ms the push began. */
   startedAt: number;
   /** An operation that just ended; `ok` is false when it was skipped or failed. */
-  finished?: { file: string; op: "replace" | "create" | "delete" | "rename"; ok: boolean };
+  finished?: { file: string; op: "replace" | "create" | "delete" | "rename"; ok: boolean; code?: string };
+  /** Plain words for what the phase is doing right now ("Reading Figma's file list"). */
+  detail?: string;
+  /** Only on the last event of a push that stopped before or between files. */
+  stopped?: { code: string; message: string; remaining: number };
 }
 
 export interface CommandRuntimeOptions {

@@ -73,7 +73,7 @@ describe("selectors.default.json", () => {
 });
 
 describe("healable table derived from JSON", () => {
-  const healable = ["codeModeButton", "filesActionsMenuButton", "downloadButton", "downloadZipAction", "uploadButton", "newFileButton", "createFileAction", "promptTextarea", "promptSendButton", "promptStopButton", "saveButton", "quickOpenInput", "renameAction"];
+  const healable = ["codeModeButton", "filesActionsMenuButton", "downloadButton", "downloadZipAction", "uploadButton", "newFileButton", "createFileAction", "createFolderAction", "showHiddenFilesToggle", "promptTextarea", "promptSendButton", "promptStopButton", "saveButton", "quickOpenInput", "renameAction"];
 
   it("every find-a-control key is healable with at least one expected term", () => {
     for (const key of healable) {
@@ -85,7 +85,7 @@ describe("healable table derived from JSON", () => {
   });
 
   it("destructive keys, containers and hidden inputs are never healable", () => {
-    for (const key of ["deleteAction", "deleteConfirmButton", "workspaceRoot", "codeEditorRoot", "fileTreeRoot", "persistenceStatus", "uploadInput", "newFileInput"]) {
+    for (const key of ["deleteAction", "deleteConfirmButton", "workspaceRoot", "codeEditorRoot", "fileTreeRoot", "treeRow", "persistenceStatus", "uploadInput", "newFileInput"]) {
       expect(isHealable(key), key).toBe(false);
     }
     for (const key of SELECTOR_KEYS) {

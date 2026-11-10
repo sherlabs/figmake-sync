@@ -95,18 +95,27 @@ async function setup(): Promise<{
 }
 
 describe("engine core", () => {
-  it("partial push advances only succeeded paths; no re-push", async () => {
+  it("a changed binary refuses the whole push before any write; ignoring it unblocks the rest, which advances only sent paths", async () => {
     const { project, session, service } = await setup();
     await fs.outputFile(path.join(project, "a.ts"), "a2\n");
     await fs.writeFile(path.join(project, "img.bin"), Buffer.from([0, 9, 9]));
 
     const first = await service.push({ cwd: project, yes: true });
+    expect(first.stopped).toMatchObject({ phase: "preflight", code: "UNSUPPORTED_BINARY_MODIFY" });
+    expect(first.stopped?.message).toContain("img.bin");
     expect(first.unresolved.map((u) => u.path)).toEqual(["img.bin"]);
+    expect(session.replaced).toEqual([]);
+
+    await service.setIgnored({ cwd: project, path: "img.bin", ignored: true });
+    const second = await service.push({ cwd: project, yes: true });
+    expect(second.stopped).toBeUndefined();
+    expect(second.unresolved).toEqual([]);
+    expect(second.verified).toBe(1);
     expect(session.replaced).toEqual(["a.ts"]);
 
-    const second = await service.push({ cwd: project, yes: true });
+    const third = await service.push({ cwd: project, yes: true });
     expect(session.replaced).toEqual(["a.ts"]);
-    expect(second.summary.total).toBe(1);
+    expect(third.summary.total).toBe(0);
   });
 
   it("skips files changed remotely when overwrite not confirmed", async () => {
@@ -123,12 +132,15 @@ describe("engine core", () => {
     expect(session.replaced).toEqual([]);
   });
 
-  it("does not delete rename source when destination failed", async () => {
+  it("a binary moved into a folder is refused up front: nothing is deleted, nothing is sent", async () => {
     const { project, session, service } = await setup();
     await fs.move(path.join(project, "img.bin"), path.join(project, "x", "img.bin"));
     const result = await service.push({ cwd: project, yes: true });
     expect(session.deleted).toEqual([]);
-    expect(result.unresolved.some((u) => u.path === "img.bin")).toBe(true);
+    expect(result.stopped).toMatchObject({ phase: "preflight", code: "UNSUPPORTED_BINARY_NESTED" });
+    expect(result.unresolved).toEqual([expect.objectContaining({ path: "x/img.bin", code: "UNSUPPORTED_BINARY_NESTED" })]);
+    // The baseline did not move: the rename is still pending next time.
+    expect((await service.status({ cwd: project })).summary.total).toBe(1);
   });
 
   it("push cleans temp dirs", async () => {

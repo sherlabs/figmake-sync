@@ -128,7 +128,7 @@ class RecordingAdapter implements FigmaMakeAdapter {
 }
 
 describe("push batching", () => {
-  it("flushes text editor changes once after replacing and creating files", async () => {
+  it("commits after each replaced or created file (one transaction per file)", async () => {
     const rootDir = await createTempDir("figmake-sync-batch");
     const projectDir = path.join(rootDir, "project");
     const remoteDir = path.join(rootDir, "remote");
@@ -177,7 +177,9 @@ describe("push batching", () => {
     expect(pushResult.unresolved).toHaveLength(0);
     expect(tracker.replaceCalls).toEqual(["src/app.ts"]);
     expect(tracker.upsertCalls).toEqual(["src/new.ts"]);
-    expect(tracker.commitCalls).toBe(1);
+    // Every file is its own transaction: settled (committed) before the next one starts.
+    expect(tracker.commitCalls).toBe(2);
+    expect(pushResult.verified).toBe(2);
   });
 
   async function setup(tracker: Tracker): Promise<{ service: FigmakeSyncService; projectDir: string }> {
@@ -213,14 +215,15 @@ describe("push batching", () => {
     expect(events[0]).toMatchObject({ phase: "checking", percent: 0 });
     const sending = events.filter((e) => e.phase === "sending");
     expect(new Set(sending.map((e) => e.total))).toEqual(new Set([3]));
+    // New files go first (importers never point at a missing module), then replaces, deletes last.
     expect(sending.filter((e) => e.file && !e.finished).map((e) => [e.op, e.file, e.index])).toEqual([
-      ["replace", "src/app.ts", 1],
-      ["create", "src/new.ts", 2],
+      ["create", "src/new.ts", 1],
+      ["replace", "src/app.ts", 2],
       ["delete", "src/old.ts", 3],
     ]);
     expect(sending.filter((e) => e.finished).map((e) => [e.finished?.file, e.finished?.ok, e.completed])).toEqual([
-      ["src/app.ts", true, 1],
-      ["src/new.ts", true, 2],
+      ["src/new.ts", true, 1],
+      ["src/app.ts", true, 2],
       ["src/old.ts", true, 3],
     ]);
     const percents = events.map((e) => e.percent);
@@ -228,18 +231,25 @@ describe("push batching", () => {
     expect(percents.slice(0, -1).every((v) => v < 100)).toBe(true);
     expect(events.at(-1)).toMatchObject({ phase: "saving", percent: 100, completed: 3, total: 3 });
     // A running file is in progress, never already counted as done.
-    expect(sending.find((e) => e.file === "src/app.ts" && !e.finished)?.completed).toBe(0);
+    expect(sending.find((e) => e.file === "src/new.ts" && !e.finished)?.completed).toBe(0);
   });
 
-  it("never reaches 100% when the push fails, and a throwing listener changes nothing", async () => {
+  it("stops at the first failed file (never 100%), lists what is still waiting, and a throwing listener changes nothing", async () => {
     const tracker: Tracker = { replaceCalls: [], upsertCalls: [], commitCalls: 0, failCommit: true };
     const { service, projectDir } = await setup(tracker);
     const events: PushProgress[] = [];
 
-    await expect(
-      service.push({ cwd: projectDir, yes: true, onProgress: (p) => { events.push(p); throw new Error("listener bug"); } }),
-    ).rejects.toThrow("save failed");
+    const result = await service.push({ cwd: projectDir, yes: true, onProgress: (p) => { events.push(p); throw new Error("listener bug"); } });
+    expect(result.stopped).toMatchObject({ phase: "sending", remaining: 2 });
+    expect(result.unresolved.map((u) => [u.path, u.code])).toEqual([
+      ["src/new.ts", "PUSH_OP_FAILED"],
+      ["src/app.ts", "STOPPED"],
+      ["src/old.ts", "STOPPED"],
+    ]);
+    // Only the first file was attempted (retried, then stopped): nothing after it was touched.
+    expect(tracker.replaceCalls).toEqual([]);
     expect(events.length).toBeGreaterThan(0);
     expect(events.some((e) => e.percent === 100)).toBe(false);
-  });
+    expect(events.at(-1)?.stopped).toMatchObject({ remaining: 2 });
+  }, 20_000);
 });

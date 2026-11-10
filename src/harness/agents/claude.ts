@@ -21,6 +21,9 @@ export const CLAUDE_ALLOWED_TOOLS = [
   "Write",
   "Glob",
   "Grep",
+  // Plan checklist and helper agents show up as live progress in the chat; neither can reach the network or run commands beyond this list.
+  "TodoWrite",
+  "Task",
   "Bash(npm install)",
   "Bash(npm run build)",
   "Bash(npm run test)",

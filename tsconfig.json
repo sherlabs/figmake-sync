@@ -20,6 +20,6 @@
     "sourceMap": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "eslint.config.mjs"],
+  "include": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts", "eslint.config.mjs"],
   "exclude": ["dist", "node_modules"]
 }

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import path from "node:path";
 
 import fs from "fs-extra";
@@ -49,6 +50,18 @@ export interface DeleteResult {
   path: string;
   status: "deleted" | "unsupported" | "failed";
   reason?: string;
+  /** Stable code for a failure (e.g. EXPLORER_MISMATCH when the row was never seen). */
+  code?: string;
+}
+
+export interface ReplaceOptions {
+  /** The normalised hash the editor must show before anything is written (the zip's `normalizedHash`). */
+  expectedNormalizedHash?: string;
+}
+
+/** "unchanged": the editor already held the desired content, nothing was written (idempotent re-run). */
+export interface WriteOutcome {
+  status: "written" | "unchanged";
 }
 
 export interface OpenProjectOptions {
@@ -58,8 +71,15 @@ export interface OpenProjectOptions {
 
 export interface FigmaMakeProjectSession {
   downloadLatestCodeZip(destinationDir: string): Promise<DownloadResult>;
-  replaceFileContents(relativePath: string, content: string): Promise<void>;
+  /** Per-file transaction: open, precondition, write, strict read-back, settle. Resolves void for older fakes. */
+  replaceFileContents(relativePath: string, content: string, options?: ReplaceOptions): Promise<WriteOutcome | void>;
   upsertFile(relativePath: string, content: string): Promise<void>;
+  /** Reads the explorer once (expanding the folders `paths` need) so a push can be planned before any write. */
+  indexExplorer?(paths: string[]): Promise<ExplorerSnapshot>;
+  /** Creates a file that the explorer does not show yet (its parent folder must exist) and writes `content` into it. */
+  createFile?(relativePath: string, content: string): Promise<WriteOutcome>;
+  /** Creates a folder whose parent exists. */
+  createFolder?(relativePath: string): Promise<void>;
   commitPendingChanges(): Promise<void>;
   uploadFiles(absolutePaths: string[], rootDir: string): Promise<UploadResult>;
   deletePath(relativePath: string): Promise<DeleteResult>;
@@ -155,12 +175,72 @@ export class AutomationAbortedError extends FigmaAutomationError {
   }
 }
 
+/** The zip (or caller) says a path exists but the explorer index has no row for it, or the other way round. Never a reason to guess. */
+export class ExplorerMismatchError extends FigmaAutomationError {
+  override readonly code = "EXPLORER_MISMATCH";
+
+  constructor(
+    readonly relativePath: string,
+    detail = "is not in Figma's file list",
+  ) {
+    super(`Figma's file list looks different from what we expected: ${relativePath} ${detail}.`);
+  }
+}
+
+/** The virtualised tree could not be read completely (gap, posinset/setsize disagreement). */
+export class TreeIndexIncompleteError extends FigmaAutomationError {
+  override readonly code = "TREE_INDEX_INCOMPLETE";
+}
+
+/** Two rows with the same name in one folder: the path cannot be addressed safely. */
+export class AmbiguousRemotePathError extends FigmaAutomationError {
+  override readonly code = "AMBIGUOUS_REMOTE_PATH";
+
+  constructor(readonly relativePath: string) {
+    super(`Figma has two entries called ${relativePath}. Fix that in Figma first.`);
+  }
+}
+
+/** The editor showed different content than the freshly downloaded zip: wrong file, or edited in Figma meanwhile. */
+export class FileChangedInFigmaError extends FigmaAutomationError {
+  override readonly code = "WRONG_FILE_OR_CHANGED";
+
+  constructor(readonly relativePath: string) {
+    super(`${relativePath} changed in Figma while sending. Stopped before changing it.`);
+  }
+}
+
+/** The editor never showed the written content. */
+export class WriteNotVerifiedError extends FigmaAutomationError {
+  override readonly code = "WRITE_NOT_VERIFIED";
+
+  constructor(readonly relativePath: string, detail: string) {
+    super(`${relativePath} didn't take in Figma's editor (${detail}).`);
+  }
+}
+
+/** Figma created a default-named entry and would not rename it. The user must delete it by hand. */
+export class LeftoverFileError extends FigmaAutomationError {
+  override readonly code = "LEFTOVER_FILE";
+
+  constructor(
+    readonly folder: string,
+    readonly leftover: string,
+  ) {
+    super(`Figma created '${leftover}' in ${folder || "the top level"} but wouldn't rename it. Delete that file in Figma, then send again.`);
+  }
+}
+
 function isNonRetryable(error: unknown): boolean {
   return (
     error instanceof AuthRequiredError ||
     error instanceof ProjectUnavailableError ||
     error instanceof AutomationAbortedError ||
-    error instanceof WrongFileError
+    error instanceof WrongFileError ||
+    error instanceof FileChangedInFigmaError ||
+    error instanceof ExplorerMismatchError ||
+    error instanceof AmbiguousRemotePathError ||
+    error instanceof LeftoverFileError
   );
 }
 
@@ -669,6 +749,267 @@ const TREE_SCROLL_SCRIPT = `async (root, args) => {
 const TARGET_SELECTOR = '[data-fm-target="1"]';
 
 // ---------------------------------------------------------------------------
+// Aria-based explorer index (current Figma Make UI: a flat virtualised role="tree")
+// ---------------------------------------------------------------------------
+
+/** One rendered `role="treeitem"` row, as read from the page. Depth comes from aria-level only. */
+export interface AriaRow {
+  label: string;
+  level: number;
+  /** -1 when the attribute is absent. */
+  posinset: number;
+  setsize: number;
+  /** Pixel offset of the row inside the tree container (row identity across scroll windows). */
+  top: number;
+  kind: "file" | "folder";
+  expanded: boolean | null;
+  selected: boolean;
+}
+
+export interface IndexedRow extends AriaRow {
+  path: string;
+  parentPath: string;
+}
+
+export interface ExplorerIndex {
+  rows: IndexedRow[];
+  byPath: Map<string, IndexedRow>;
+  rowHeight: number;
+  /** Paths that appear more than once in one folder (never safe to click). */
+  duplicates: string[];
+  /** Whether any row exposes a selection signal (aria-selected / data-state). */
+  selectionSupported: boolean;
+}
+
+/** What `indexExplorer` hands back to callers outside the adapter (serialisable; the service classifies with it). */
+export interface ExplorerSnapshot {
+  /** False for an older, non-virtualised explorer without `role="treeitem"` rows (row existence is then unknown). */
+  supported: boolean;
+  /** Every indexed path -> kind. Folders that were not required may be collapsed, so their children are absent. */
+  entries: Record<string, "file" | "folder">;
+  duplicates: string[];
+  /** "on" = hidden files are shown, "off" = not shown, "unavailable" = the explorer has no such toggle. */
+  hiddenFiles: "on" | "off" | "unavailable";
+}
+
+/** Names the explorer hides unless "Show hidden files" is on (besides dot-files). */
+export const KNOWN_HIDDEN_NAMES: ReadonlySet<string> = new Set(["pnpm-lock.yaml"]);
+
+export function looksHidden(relativePath: string): boolean {
+  return relativePath.split("/").some((segment) => segment.startsWith(".") || KNOWN_HIDDEN_NAMES.has(segment));
+}
+
+/**
+ * Rebuilds paths from a complete, top-sorted list of aria rows and proves completeness: contiguous tops, every level
+ * reachable through a parent, and for the root and every expanded folder `posinset` covering exactly `1..setsize`.
+ * Throws TreeIndexIncompleteError when any proof fails (callers retry the pass once).
+ */
+export function reconstructTree(input: AriaRow[], rowHeight: number): ExplorerIndex {
+  const rows = [...input].sort((a, b) => a.top - b.top);
+  const fail = (why: string): never => {
+    throw new TreeIndexIncompleteError(`The file list could not be read completely (${why}).`);
+  };
+
+  if (rowHeight <= 0) fail("row height unknown");
+
+  for (let i = 1; i < rows.length; i += 1) {
+    const gap = rows[i]!.top - rows[i - 1]!.top;
+
+    if (Math.abs(gap - rowHeight) > 1.5) fail(`gap of ${gap}px after "${rows[i - 1]!.label}"`);
+  }
+
+  const stack: IndexedRow[] = [];
+  const indexed: IndexedRow[] = [];
+  const children = new Map<string, IndexedRow[]>();
+
+  for (const row of rows) {
+    if (!Number.isInteger(row.level) || row.level < 1) fail(`row "${row.label}" has no aria-level`);
+
+    while (stack.length >= row.level) stack.pop();
+
+    if (stack.length !== row.level - 1) fail(`row "${row.label}" at level ${row.level} has no parent`);
+
+    const parent = stack[stack.length - 1];
+
+    if (parent && parent.kind !== "folder") fail(`row "${row.label}" sits under the file "${parent.label}"`);
+
+    const parentPath = parent ? parent.path : "";
+    const entry: IndexedRow = { ...row, parentPath, path: parentPath ? `${parentPath}/${row.label}` : row.label };
+
+    indexed.push(entry);
+    (children.get(parentPath) ?? children.set(parentPath, []).get(parentPath)!).push(entry);
+
+    if (row.kind === "folder") stack.push(entry);
+  }
+
+  for (const [parentPath, list] of children) {
+    const sizes = new Set(list.map((row) => row.setsize));
+
+    if (sizes.has(-1)) continue; // older markup without posinset/setsize: contiguity is all we can prove
+
+    if (sizes.size !== 1) fail(`children of "${parentPath || "the top level"}" disagree on aria-setsize`);
+
+    const setsize = list[0]!.setsize;
+    const positions = new Set(list.map((row) => row.posinset));
+
+    if (list.length !== setsize || positions.size !== setsize || [...positions].some((p) => p < 1 || p > setsize)) {
+      fail(`"${parentPath || "the top level"}" shows ${list.length} of ${setsize} entries`);
+    }
+  }
+
+  const byPath = new Map<string, IndexedRow>();
+  const duplicates = new Set<string>();
+
+  for (const entry of indexed) {
+    if (byPath.has(entry.path)) duplicates.add(entry.path);
+    else byPath.set(entry.path, entry);
+  }
+
+  return {
+    rows: indexed,
+    byPath,
+    rowHeight,
+    duplicates: [...duplicates].sort(),
+    selectionSupported: indexed.some((row) => row.selected),
+  };
+}
+
+/**
+ * Finds the scrolling ancestor of the rows. Starts from a row (not from `root`): the resolved tree root may be a large
+ * ancestor above the scroller (the zero-height live container is skipped by visibility checks), and the live
+ * `role="tree"` box itself is overflow: visible.
+ */
+const SCROLLER_FINDER = `(root) => {
+  const anchor = root.querySelector('[role="treeitem"], button[data-testid="code-file-item"], [data-folder-item="true"]');
+  let sc = anchor ? anchor.parentElement : root;
+  while (sc && sc !== document.body) {
+    const o = getComputedStyle(sc).overflowY;
+    if ((o === 'auto' || o === 'scroll' || o === 'overlay') && sc.scrollHeight > sc.clientHeight + 1) return sc;
+    sc = sc.parentElement;
+  }
+  return null;
+}`;
+
+/**
+ * Reads every mounted treeitem (optionally after scrolling the scroller to `args.scrollTo`), with the scroller's metrics.
+ * Depth, order and identity come from aria-level / aria-posinset / aria-setsize / aria-label / the row's offset.
+ */
+const TREE_READ_SCRIPT = `async (root, args) => {
+  const findScroller = ${SCROLLER_FINDER};
+  const sc = findScroller(root);
+  const frame = () => new Promise((r) => requestAnimationFrame(r));
+  const mountedTops = () => Array.from(root.querySelectorAll('[role="treeitem"][aria-level]')).map((el) => parseFloat(el.style.top)).filter((t) => Number.isFinite(t));
+  if (sc && typeof args.scrollTo === 'number') {
+    sc.scrollTop = args.scrollTo;
+    await frame();
+    await frame();
+    // The virtualiser renders on its own schedule: wait (bounded) until a row of the new window is mounted.
+    const want = sc.scrollTop;
+    for (let i = 0; i < 30; i += 1) {
+      const tops = mountedTops();
+      if (tops.length === 0 || tops.some((t) => t >= want - 1 && t <= want + sc.clientHeight)) break;
+      await frame();
+    }
+  }
+  const rootRect = root.getBoundingClientRect();
+  const items = Array.from(root.querySelectorAll('[role="treeitem"][aria-level]'));
+  const num = (v) => { const n = parseInt(v ?? '', 10); return Number.isFinite(n) ? n : -1; };
+  const rows = items.map((el) => {
+    const rect = el.getBoundingClientRect();
+    const styleTop = parseFloat(el.style.top);
+    const button = el.querySelector('button');
+    const aria = (button && button.getAttribute('aria-label')) || '';
+    const isFolder = el.hasAttribute('aria-expanded') || Boolean(el.querySelector('[data-folder-item="true"]')) || /^Folder\\b/.test(aria);
+    const expandedAttr = el.getAttribute('aria-expanded') ?? (button ? button.getAttribute('aria-expanded') : null);
+    let selected = el.getAttribute('aria-selected') === 'true' || el.getAttribute('aria-current') === 'true';
+    for (const probe of [el, button]) {
+      if (!probe) continue;
+      for (const attr of ['data-selected', 'data-active']) {
+        const v = probe.getAttribute(attr);
+        if (v !== null && v !== 'false' && v !== '') selected = true;
+      }
+      const st = probe.getAttribute('data-state');
+      if (st !== null && /^(active|selected|on)$/.test(st)) selected = true;
+    }
+    const m = aria.match(/^(?:File|Folder) "([\\s\\S]*)"$/);
+    return {
+      label: el.getAttribute('aria-label') ?? (m ? m[1] : ''),
+      level: num(el.getAttribute('aria-level')),
+      posinset: num(el.getAttribute('aria-posinset')),
+      setsize: num(el.getAttribute('aria-setsize')),
+      top: Number.isFinite(styleTop) ? styleTop : Math.round(rect.top - rootRect.top),
+      height: rect.height,
+      kind: isFolder ? 'folder' : 'file',
+      expanded: isFolder ? expandedAttr === 'true' : null,
+      selected,
+    };
+  });
+  const legacyButtons = root.querySelectorAll('button[data-testid="code-file-item"], [data-folder-item="true"] button').length;
+  return {
+    rows,
+    legacyButtons,
+    treeHeight: root.getBoundingClientRect().height,
+    scroller: sc ? { scrollTop: sc.scrollTop, clientHeight: sc.clientHeight, scrollHeight: sc.scrollHeight } : null,
+  };
+}`;
+
+/**
+ * Scrolls so the row at `args.top` is inside the viewport, re-reads it and tags the matching treeitem (same level, label
+ * and top) with data-fm-target. Returns what it saw so the caller can assert identity before clicking.
+ */
+const TREE_TAG_SCRIPT = `async (root, args) => {
+  const findScroller = ${SCROLLER_FINDER};
+  const sc = findScroller(root);
+  document.querySelectorAll('[data-fm-target]').forEach((e) => e.removeAttribute('data-fm-target'));
+  if (sc) {
+    const want = Math.max(0, Math.min(args.top - Math.floor(sc.clientHeight / 2), sc.scrollHeight - sc.clientHeight));
+    if (Math.abs(sc.scrollTop - want) > 1) {
+      sc.scrollTop = want;
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    }
+  }
+  const rootRect = root.getBoundingClientRect();
+  for (const el of root.querySelectorAll('[role="treeitem"][aria-level]')) {
+    const styleTop = parseFloat(el.style.top);
+    const top = Number.isFinite(styleTop) ? styleTop : Math.round(el.getBoundingClientRect().top - rootRect.top);
+    if (Math.abs(top - args.top) > 1.5) continue;
+    if (el.getAttribute('aria-label') !== args.label || parseInt(el.getAttribute('aria-level') ?? '', 10) !== args.level) {
+      return { ok: false, label: el.getAttribute('aria-label'), level: el.getAttribute('aria-level') };
+    }
+    el.setAttribute('data-fm-target', '1');
+    const button = el.querySelector('button');
+    return {
+      ok: true,
+      selected: el.getAttribute('aria-selected') === 'true',
+      expanded: (el.getAttribute('aria-expanded') ?? (button ? button.getAttribute('aria-expanded') : null)) === 'true',
+    };
+  }
+  return { ok: false, label: null, level: null };
+}`;
+
+interface TreeReadResult {
+  rows: Array<AriaRow & { height: number }>;
+  legacyButtons: number;
+  treeHeight: number;
+  scroller: { scrollTop: number; clientHeight: number; scrollHeight: number } | null;
+}
+
+interface TreeTagResult {
+  ok: boolean;
+  selected?: boolean;
+  expanded?: boolean;
+  label?: string | null;
+  level?: string | null;
+}
+
+/** Same transform as a manifest entry's `normalizedHash`: BOM stripped, CR/CRLF -> LF, sha256 of the UTF-8 bytes. */
+export function normalizedTextHash(text: string): string {
+  const stripped = text.startsWith("﻿") ? text.slice(1) : text;
+
+  return createHash("sha256").update(Buffer.from(stripped.replaceAll(/\r\n?/g, "\n"), "utf8")).digest("hex");
+}
+
+// ---------------------------------------------------------------------------
 // Selectors
 // ---------------------------------------------------------------------------
 
@@ -693,6 +1034,21 @@ function splitPath(relativePath: string): string[] {
 
 function normalizeEol(value: string): string {
   return value.replaceAll("\r\n", "\n");
+}
+
+/** Every ancestor folder of the given paths, parents before children, each once. */
+export function requiredFolders(paths: readonly string[]): string[] {
+  const out = new Set<string>();
+
+  for (const relativePath of paths) {
+    const segments = splitPath(relativePath);
+
+    for (let depth = 1; depth < segments.length; depth += 1) {
+      out.add(segments.slice(0, depth).join("/"));
+    }
+  }
+
+  return [...out].sort((a, b) => a.split("/").length - b.split("/").length || a.localeCompare(b));
 }
 
 function deriveDefaultNewFileName(expectedLeaf: string): string {
@@ -818,6 +1174,17 @@ export class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSessio
   private readonly healSession: HealSession | null;
   /** How long to wait for the Code toggle before treating the UI as changed (tests shorten it). */
   private codeModeWaitMs = 20_000;
+  /** How long to wait for an autosave request to start after a write (tests shorten it). */
+  private settleStartWindowMs = 2_000;
+  /** Whether the explorer is the current flat virtualised role="tree" (null = not probed yet). */
+  private ariaTree: boolean | null = null;
+  /** The last complete explorer index; dropped after anything that changes rows. */
+  private explorerIndex: ExplorerIndex | null = null;
+  /** Hidden files are shown because this session switched them on (restored on close). */
+  private hiddenFilesShown = false;
+  private hiddenFilesToggledByUs = false;
+  /** Folders clicked to expand already (an empty folder never reports children; clicking again would collapse it). */
+  private readonly expandAttempted = new Set<string>();
 
   private readonly inflightMutations = new Set<Request>();
   private mutationSeq = 0;
@@ -907,16 +1274,123 @@ export class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSessio
     });
   }
 
+  /**
+   * One file as a transaction: open it (by the aria index when the explorer exposes one), read the editor,
+   * stop if it is not what the zip said (unless already the desired text), write, read back strictly, then wait for
+   * Figma's autosave to settle. Nothing else is in flight while this runs.
+   */
   async replaceFileContents(
     relativePath: string,
     content: string,
-  ): Promise<void> {
-    await this.step(`replace-${relativePath}`, async () => {
+    options: ReplaceOptions = {},
+  ): Promise<WriteOutcome> {
+    return this.step(`replace-${relativePath}`, async () => {
       await this.ensureCodeSurfaceReady();
       await this.openFile(relativePath);
-      await this.writeEditorContent(content);
-      this.hasPendingEditorChanges = true;
-      await this.settleWrites(0);
+
+      return this.writeOpenFile(relativePath, content, options);
+    });
+  }
+
+  /** Precondition + write + strict read-back + settle for the file the editor shows now. */
+  private async writeOpenFile(relativePath: string, content: string, options: ReplaceOptions): Promise<WriteOutcome> {
+    const doc = await this.readActiveEditorContent();
+    const docHash = normalizedTextHash(doc);
+
+    if (docHash === normalizedTextHash(content)) {
+      return { status: "unchanged" };
+    }
+
+    if (options.expectedNormalizedHash !== undefined && docHash !== options.expectedNormalizedHash) {
+      throw new FileChangedInFigmaError(relativePath);
+    }
+
+    await this.writeEditorContent(content, { strict: true, relativePath });
+    this.hasPendingEditorChanges = true;
+    await this.settleOperation();
+
+    return { status: "written" };
+  }
+
+  /** Waits for the autosave request of the last write to start and finish, then for the status indicator to rest. */
+  private async settleOperation(): Promise<void> {
+    await this.settleWrites(this.settleStartWindowMs);
+
+    if ((await this.readPersistenceStatus()) !== null) {
+      await this.waitPersistenceIdle(10_000);
+    }
+
+    this.hasPendingEditorChanges = false;
+  }
+
+  async indexExplorer(paths: string[]): Promise<ExplorerSnapshot> {
+    return this.step("index-explorer", async () => {
+      await this.ensureCodeSurfaceReady();
+
+      if (!(await this.usesAriaTree())) {
+        return { supported: false, entries: {}, duplicates: [], hiddenFiles: "unavailable" };
+      }
+
+      let index = await this.ensureIndex(paths);
+      const missingHidden = paths.filter((p) => !index.byPath.has(p) && looksHidden(p));
+      let hiddenFiles: ExplorerSnapshot["hiddenFiles"] = this.hiddenFilesShown ? "on" : "off";
+
+      if (missingHidden.length > 0 && !this.hiddenFilesShown) {
+        const toggled = await this.setHiddenFilesShown(true);
+
+        if (toggled) {
+          this.explorerIndex = null;
+          index = await this.ensureIndex(paths);
+          hiddenFiles = "on";
+        } else {
+          hiddenFiles = "unavailable";
+        }
+      }
+
+      return {
+        supported: true,
+        entries: Object.fromEntries(index.rows.map((row) => [row.path, row.kind])),
+        duplicates: index.duplicates,
+        hiddenFiles,
+      };
+    });
+  }
+
+  async createFile(relativePath: string, content: string): Promise<WriteOutcome> {
+    return this.step(`create-${relativePath}`, async () => {
+      await this.ensureCodeSurfaceReady();
+
+      if (!(await this.usesAriaTree())) {
+        await this.createFileLegacy(relativePath);
+        await this.writeEditorContent(content, { strict: true, relativePath });
+        this.hasPendingEditorChanges = true;
+        await this.settleOperation();
+
+        return { status: "written" };
+      }
+
+      await this.createEntry(relativePath, "file");
+      await this.openFile(relativePath);
+
+      const doc = await this.readActiveEditorContent();
+
+      if (doc.length > 0) {
+        this.context.logger.warn({ relativePath, length: doc.length }, "new file is not empty in the editor; overwriting");
+      }
+
+      return this.writeOpenFile(relativePath, content, {});
+    });
+  }
+
+  async createFolder(relativePath: string): Promise<void> {
+    await this.step(`mkdir-${relativePath}`, async () => {
+      await this.ensureCodeSurfaceReady();
+
+      if (!(await this.usesAriaTree())) {
+        throw new UiChangedError("Creating folders needs the current Figma Make explorer.");
+      }
+
+      await this.createEntry(relativePath, "folder");
     });
   }
 
@@ -947,10 +1421,15 @@ export class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSessio
       );
 
       if (!exists) {
-        await this.createFile(relativePath);
+        if (await this.usesAriaTree()) {
+          await this.createEntry(relativePath, "file");
+          await this.openFile(relativePath);
+        } else {
+          await this.createFileLegacy(relativePath);
+        }
       }
 
-      await this.writeEditorContent(content);
+      await this.writeEditorContent(content, { relativePath });
       this.hasPendingEditorChanges = true;
       await this.settleWrites(0);
     });
@@ -1092,27 +1571,51 @@ export class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSessio
     });
   }
 
+  /**
+   * Deletes a file or folder and reports "deleted" only after its row was seen to disappear. A row that was never
+   * visible is a failure (EXPLORER_MISMATCH): the baseline keeps the path and the user is told, never a silent drop.
+   */
   async deletePath(relativePath: string): Promise<DeleteResult> {
     return this.step(`delete-${relativePath}`, async () => {
       await this.ensureCodeSurfaceReady();
 
+      const aria = await this.usesAriaTree();
       const segments = splitPath(relativePath);
-      const target = await this.locateTreeItem(segments, {
-        kind: "any",
-        expand: true,
-        scan: true,
-      });
+      let target: Locator;
+      let siblingsBefore = -1;
 
-      if (!target) {
-        return {
-          path: relativePath,
-          status: "deleted",
-          reason: "Item is not present in the file explorer.",
-        } satisfies DeleteResult;
+      if (aria) {
+        const index = await this.ensureIndex([relativePath]);
+        const row = index.byPath.get(relativePath);
+
+        if (!row) {
+          return {
+            path: relativePath,
+            status: "failed",
+            code: "EXPLORER_MISMATCH",
+            reason: `${relativePath} is not in Figma's file list, so it was not deleted.`,
+          } satisfies DeleteResult;
+        }
+
+        siblingsBefore = index.rows.filter((r) => r.parentPath === row.parentPath).length;
+        target = (await this.focusIndexedRow(relativePath)).locator;
+      } else {
+        const hit = await this.locateTreeItem(segments, { kind: "any", expand: true, scan: true });
+
+        if (!hit) {
+          return {
+            path: relativePath,
+            status: "failed",
+            code: "EXPLORER_MISMATCH",
+            reason: `${relativePath} is not in Figma's file list, so it was not deleted.`,
+          } satisfies DeleteResult;
+        }
+
+        await hit.locator.scrollIntoViewIfNeeded();
+        target = hit.locator;
       }
 
-      await target.locator.scrollIntoViewIfNeeded();
-      await target.locator.click({ button: "right" });
+      await target.click({ button: "right" });
       const deleteAction = await this.tryFindVisible("deleteAction", 2_000);
 
       if (!deleteAction) {
@@ -1128,30 +1631,33 @@ export class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSessio
       await deleteAction.click();
 
       // Confirmation is scoped to dialogs so it can never re-match the menu item.
-      const confirmDeleteButton = await this.tryFindVisible(
-        "deleteConfirmButton",
-        2_000,
-      );
+      const confirmDeleteButton = await this.tryFindVisible("deleteConfirmButton", 2_000);
 
       if (confirmDeleteButton) {
         await confirmDeleteButton.click();
       }
 
-      const gone = await this.pollUntil(
-        async () =>
-          !(await this.locateTreeItem(segments, {
-            kind: "any",
-            expand: false,
-            scan: false,
-          })),
-        6_000,
-      );
+      this.explorerIndex = null;
+
+      const gone = await this.pollUntil(async () => {
+        if (!aria) {
+          return !(await this.locateTreeItem(segments, { kind: "any", expand: false, scan: false }));
+        }
+
+        this.explorerIndex = null;
+        const index = await this.ensureIndex([relativePath]);
+        const parentPath = segments.slice(0, -1).join("/");
+        const siblingsNow = index.rows.filter((r) => r.parentPath === parentPath).length;
+
+        return !index.byPath.has(relativePath) && siblingsNow === siblingsBefore - 1;
+      }, 6_000, 250);
 
       if (!gone) {
         return {
           path: relativePath,
           status: "failed",
-          reason: "Item was still present in the file explorer after delete.",
+          code: "DELETE_NOT_VERIFIED",
+          reason: `${relativePath} is still in Figma's file list after deleting it.`,
         } satisfies DeleteResult;
       }
 
@@ -1279,6 +1785,13 @@ export class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSessio
   }
 
   async close(): Promise<void> {
+    if (this.hiddenFilesToggledByUs && !this.signal?.aborted && !this.handle.page.isClosed()) {
+      // Leave the explorer as we found it (the toggle may be a persisted preference).
+      await this.setHiddenFilesShown(false).catch((error: unknown) => {
+        this.context.logger.warn({ error }, "could not switch 'Show hidden files' back off");
+      });
+    }
+
     await this.closeOnce();
   }
 
@@ -1608,10 +2121,11 @@ export class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSessio
   }
 
   private async isMenuOpen(): Promise<boolean> {
+    // Any visible menu counts: a closed header menu may stay in the DOM ahead of an open context menu.
     return this.handle.page
-      .locator('[role="menu"]')
-      .first()
-      .isVisible()
+      .locator('[role="menu"]:visible')
+      .count()
+      .then((count) => count > 0)
       .catch(() => false);
   }
 
@@ -1896,6 +2410,11 @@ export class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSessio
       return { matchCount: 1 };
     }
 
+    if (await this.usesAriaTree()) {
+      await this.openFileIndexed(relativePath);
+      return { matchCount: 1 };
+    }
+
     const before = await this.readEditorContentOrNull();
     const hit = await this.locateTreeItem(segments, {
       kind: "file",
@@ -2027,7 +2546,8 @@ export class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSessio
     );
   }
 
-  private async createFile(relativePath: string): Promise<void> {
+  /** Older explorer (no aria rows): create through the context menu / toolbar and the pixel-based tree lookup. */
+  private async createFileLegacy(relativePath: string): Promise<void> {
     const segments = splitPath(relativePath);
     const leaf = segments.at(-1);
 
@@ -2115,6 +2635,11 @@ export class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSessio
     if (directNewFileButton) {
       await directNewFileButton.click();
       return;
+    }
+
+    if (await this.usesAriaTree()) {
+      // The virtualised container is as tall as the whole list: a coordinate right-click would land off-screen.
+      throw new SelectorNotFoundError("createFileAction", this.sel("createFileAction"));
     }
 
     await this.openRootFileTreeContextMenu(treeRoot);
@@ -2265,6 +2790,471 @@ export class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSessio
   }
 
   // -------------------------------------------------------------------------
+  // Aria explorer index (current UI): read everything once, click by (level, label, top)
+  // -------------------------------------------------------------------------
+
+  /** True when the explorer renders `role="treeitem"` rows with aria-level (probed once, after rows had time to mount). */
+  private async usesAriaTree(): Promise<boolean> {
+    if (this.ariaTree !== null) {
+      return this.ariaTree;
+    }
+
+    const treeRoot = await this.tryFindVisible("fileTreeRoot", 6_000);
+
+    if (!treeRoot) {
+      return false;
+    }
+
+    const probe = (): Promise<TreeReadResult> => runPageScript<TreeReadResult>(treeRoot, TREE_READ_SCRIPT, {});
+    const deadline = Date.now() + 5_000;
+    let result = await probe();
+
+    while (result.rows.length === 0 && result.legacyButtons === 0 && Date.now() < deadline) {
+      await this.sleep(150);
+      result = await probe();
+    }
+
+    if (result.rows.length > 0) {
+      this.ariaTree = true;
+    } else if (result.legacyButtons > 0) {
+      this.ariaTree = false; // genuinely the older markup
+    } else {
+      // Nothing mounted yet (slow load, or an empty project): decide again next time rather than locking in "legacy".
+      return false;
+    }
+
+    return this.ariaTree;
+  }
+
+  /** The complete index with every ancestor folder of `paths` expanded (cached until rows change). */
+  private async ensureIndex(paths: string[]): Promise<ExplorerIndex> {
+    const treeRoot = await this.findVisible("fileTreeRoot", 6_000);
+    const required = requiredFolders(paths);
+    let index = this.explorerIndex ?? (await this.buildIndex(treeRoot));
+
+    for (let round = 0; round <= required.length; round += 1) {
+      const next = required.find((dir) => {
+        const row = index.byPath.get(dir);
+
+        return row !== undefined && row.kind === "folder" && row.expanded !== true && !this.expandAttempted.has(dir);
+      });
+
+      if (!next) {
+        break;
+      }
+
+      this.expandAttempted.add(next);
+      await this.expandIndexedRow(treeRoot, index.byPath.get(next)!);
+      index = await this.buildIndex(treeRoot);
+    }
+
+    this.explorerIndex = index;
+
+    return index;
+  }
+
+  /** One full scroll pass + completeness proof; the pass is retried once before giving up. */
+  private async buildIndex(treeRoot: Locator): Promise<ExplorerIndex> {
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const pass = await this.readExplorerPass(treeRoot);
+
+      try {
+        const index = reconstructTree(pass.rows, pass.rowHeight);
+
+        this.context.logger.debug({ rows: index.rows.length, attempt }, "explorer indexed");
+
+        return index;
+      } catch (error) {
+        if (!(error instanceof TreeIndexIncompleteError)) {
+          throw error;
+        }
+
+        lastError = error;
+        await this.sleep(300);
+      }
+    }
+
+    throw lastError;
+  }
+
+  /** Scrolls the explorer window by window and merges the mounted rows by their offset. */
+  private async readExplorerPass(treeRoot: Locator): Promise<{ rows: AriaRow[]; rowHeight: number }> {
+    const seen = new Map<number, AriaRow>();
+    let rowHeight = 0;
+    const merge = (result: TreeReadResult): void => {
+      for (const { height, ...row } of result.rows) {
+        if (rowHeight === 0 && height > 0) {
+          rowHeight = Math.round(height);
+        }
+
+        seen.set(Math.round(row.top), row);
+      }
+    };
+    const first = await runPageScript<TreeReadResult>(treeRoot, TREE_READ_SCRIPT, { scrollTo: 0 });
+
+    merge(first);
+
+    if (first.scroller) {
+      const { clientHeight, scrollHeight } = first.scroller;
+      const step = Math.max(160, Math.floor(clientHeight * 0.8));
+      const maxScroll = Math.max(0, scrollHeight - clientHeight);
+      const maxIterations = Math.ceil(scrollHeight / step) + 3;
+      let scrollTop = 0;
+
+      // The tree container's own box can be shorter than its absolutely positioned rows (overflow: visible), so the
+      // only reliable end of the list is the scroller's bottom.
+      for (let i = 0; i < maxIterations && scrollTop < maxScroll; i += 1) {
+        this.throwIfAborted();
+        scrollTop = Math.min(scrollTop + step, maxScroll);
+        merge(await runPageScript<TreeReadResult>(treeRoot, TREE_READ_SCRIPT, { scrollTo: scrollTop }));
+      }
+    }
+
+    if (rowHeight === 0) {
+      const tops = [...seen.keys()].sort((a, b) => a - b);
+      const gaps = tops.slice(1).map((top, i) => top - tops[i]!).filter((gap) => gap > 0);
+
+      rowHeight = gaps.length > 0 ? Math.min(...gaps) : 32;
+    }
+
+    return { rows: [...seen.values()], rowHeight };
+  }
+
+  private async tagRow(treeRoot: Locator, row: IndexedRow): Promise<TreeTagResult> {
+    return runPageScript<TreeTagResult>(treeRoot, TREE_TAG_SCRIPT, { top: row.top, label: row.label, level: row.level });
+  }
+
+  private async expandIndexedRow(treeRoot: Locator, row: IndexedRow): Promise<void> {
+    const tag = await this.tagRow(treeRoot, row);
+
+    if (!tag.ok) {
+      throw new ExplorerMismatchError(row.path, "moved in the list while reading it");
+    }
+
+    if (tag.expanded) {
+      return;
+    }
+
+    await this.handle.page.locator(TARGET_SELECTOR).locator("button").first().click();
+
+    const opened = await this.pollUntil(async () => {
+      const again = await this.tagRow(treeRoot, row);
+
+      return again.ok && again.expanded === true;
+    }, 2_500);
+
+    if (!opened) {
+      this.context.logger.warn({ path: row.path }, "folder did not report aria-expanded after clicking; treating it as empty");
+    }
+  }
+
+  /** Scrolls to the row, re-asserts (level, label) at that offset and returns a locator for the mounted treeitem. */
+  private async focusIndexedRow(relativePath: string): Promise<{ locator: Locator; row: IndexedRow; selected: boolean }> {
+    const treeRoot = await this.findVisible("fileTreeRoot", 6_000);
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const index = await this.ensureIndex([relativePath]);
+
+      if (index.duplicates.includes(relativePath)) {
+        throw new AmbiguousRemotePathError(relativePath);
+      }
+
+      const row = index.byPath.get(relativePath);
+
+      if (!row) {
+        throw new ExplorerMismatchError(relativePath);
+      }
+
+      const tag = await this.tagRow(treeRoot, row);
+
+      if (tag.ok) {
+        return { locator: this.handle.page.locator(TARGET_SELECTOR).first(), row, selected: tag.selected === true };
+      }
+
+      // Rows shifted since the index was read (something was created or deleted): read once more.
+      this.explorerIndex = null;
+    }
+
+    throw new ExplorerMismatchError(relativePath, "moved in the list while reading it");
+  }
+
+  /** Clicks the file's row and waits until the explorer marks it selected or the editor swapped its content. */
+  private async openFileIndexed(relativePath: string): Promise<void> {
+    const treeRoot = await this.findVisible("fileTreeRoot", 6_000);
+    const { locator, row, selected } = await this.focusIndexedRow(relativePath);
+
+    if (row.kind !== "file") {
+      throw new ExplorerMismatchError(relativePath, "is a folder in Figma");
+    }
+
+    if (selected && this.activePath === relativePath) {
+      await this.findVisible("codeEditorRoot", 6_000);
+      return;
+    }
+
+    const selectionSupported = this.explorerIndex?.selectionSupported ?? false;
+    const before = await this.readEditorContentOrNull();
+
+    await locator.locator("button").first().click();
+
+    const confirmed = await this.pollUntil(async () => {
+      const again = await this.tagRow(treeRoot, row);
+
+      if (again.ok && again.selected === true) {
+        return true;
+      }
+
+      const current = await this.readEditorContentOrNull();
+
+      // Live: no editor surface exists until the first file is opened, so "became readable" counts as a swap too.
+      return current !== null && (before === null || current !== before);
+    }, 6_000);
+
+    if (!confirmed) {
+      if (selectionSupported) {
+        throw new WrongFileError(`Could not confirm ${relativePath} became the active file after opening it.`);
+      }
+
+      // No selection signal anywhere and identical content: the content precondition of the write decides.
+      this.context.logger.warn({ relativePath }, "could not independently confirm the active file; the content check decides");
+    }
+
+    this.activePath = relativePath;
+    await this.findVisible("codeEditorRoot", 6_000);
+  }
+
+  private async openContextMenuOn(target: Locator): Promise<void> {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await target.click({ button: "right" });
+
+      if (await this.pollUntil(() => this.isMenuOpen(), 2_000)) {
+        return;
+      }
+
+      await this.dismissFloatingOverlays();
+      await this.handle.page.keyboard.press("Escape").catch(() => undefined);
+    }
+
+    throw new UiChangedError("The context menu of the file list did not open.");
+  }
+
+  /** Create file/folder under an existing parent, verified by the explorer index; never leaves a default-named entry silently. */
+  private async createEntry(relativePath: string, kind: "file" | "folder"): Promise<void> {
+    const segments = splitPath(relativePath);
+    const leaf = segments.at(-1);
+
+    if (!leaf) {
+      throw new FigmaAutomationError(`Unable to derive a name from ${relativePath}.`);
+    }
+
+    const parentPath = segments.slice(0, -1).join("/");
+    const index = await this.ensureIndex([relativePath]);
+
+    if (index.byPath.has(relativePath)) {
+      throw new ExplorerMismatchError(relativePath, "already exists in Figma's file list");
+    }
+
+    if (parentPath) {
+      const parent = index.byPath.get(parentPath);
+
+      if (!parent) {
+        throw new ExplorerMismatchError(parentPath, "is not in Figma's file list (the folder must exist first)");
+      }
+
+      if (parent.kind !== "folder") {
+        throw new ExplorerMismatchError(parentPath, "is a file in Figma, not a folder");
+      }
+    }
+
+    const siblingsBefore = new Set(index.rows.filter((r) => r.parentPath === parentPath).map((r) => r.label));
+    const action: SelectorKey = kind === "file" ? "createFileAction" : "createFolderAction";
+
+    if (parentPath) {
+      const { locator } = await this.focusIndexedRow(parentPath);
+
+      await this.openContextMenuOn(locator.locator("button").first());
+      await this.clickKey(action, 4_000, () => this.expectNameInput());
+    } else {
+      await this.startRootCreation(action);
+    }
+
+    const input = await this.takeNameInput(kind);
+
+    await this.replaceInlineFileName(input, leaf);
+    await input.press("Enter");
+    this.explorerIndex = null;
+    await this.verifyCreated(parentPath, leaf, kind, siblingsBefore);
+  }
+
+  private async startRootCreation(action: SelectorKey): Promise<void> {
+    if ((await this.isAnyVisibleNow("filesActionsMenuButton")) && (await this.openFilesActionsMenu())) {
+      const item = await this.tryFindVisible(action, 3_000);
+
+      if (item) {
+        await item.click();
+        return;
+      }
+
+      const healed = await this.healKey(action, async (candidate) => {
+        await candidate.click();
+        await this.expectNameInput();
+      });
+
+      if (healed) {
+        return;
+      }
+
+      await this.closeMenu();
+    }
+
+    if (action === "createFileAction") {
+      await this.startRootFileCreation(await this.findVisible("fileTreeRoot", 6_000));
+      return;
+    }
+
+    throw new SelectorNotFoundError(action, this.sel(action));
+  }
+
+  /**
+   * The one editable name input Figma shows while creating or renaming. A read-only row input of an existing entry is
+   * never used, and Enter is never pressed on an input that does not hold a fresh default name (or, for a rename, the
+   * current name): that is how stray `new-file*.tsx` entries were left behind before.
+   */
+  private async takeNameInput(kind: "file" | "folder", options: { rename?: string } = {}): Promise<Locator> {
+    const editable = this.handle.page.locator('input[data-testid="code-file-name-input"]:not([readonly])');
+    const appeared = await this.pollUntil(async () => (await editable.count()) > 0 && (await editable.first().isVisible()), 4_000);
+    let input: Locator | null = null;
+
+    if (appeared) {
+      const count = await editable.count();
+
+      if (count !== 1) {
+        await this.cancelInlineEdit();
+        throw new UiChangedError(`Expected one editable name input in the file list, found ${count}.`);
+      }
+
+      input = editable.first();
+    } else {
+      // Older UI: the generic selectors, but never a read-only control.
+      const candidate = await this.tryFindVisible("newFileInput", 1_000);
+
+      if (candidate && (await candidate.evaluate((el) => !(el as HTMLInputElement).readOnly).catch(() => false))) {
+        input = candidate;
+      }
+    }
+
+    if (!input) {
+      await this.cancelInlineEdit();
+      throw new UiChangedError("Figma did not show an editable name input, so nothing was created.");
+    }
+
+    const value = await input.inputValue().catch(() => "");
+    const acceptable =
+      options.rename !== undefined ? value === options.rename : value === "" || /^(new-file|new-folder|untitled)/i.test(value);
+
+    if (!acceptable) {
+      await this.cancelInlineEdit();
+      throw new UiChangedError(`The name input showed "${value}" instead of a new ${kind}'s default name; Enter was not pressed.`);
+    }
+
+    return input;
+  }
+
+  private async cancelInlineEdit(): Promise<void> {
+    await this.handle.page.keyboard.press("Escape").catch(() => undefined);
+    this.explorerIndex = null;
+  }
+
+  private async verifyCreated(parentPath: string, leaf: string, kind: "file" | "folder", siblingsBefore: ReadonlySet<string>): Promise<void> {
+    const want = parentPath ? `${parentPath}/${leaf}` : leaf;
+    const present = async (): Promise<boolean> => {
+      this.explorerIndex = null;
+      const row = (await this.ensureIndex([want])).byPath.get(want);
+
+      return row !== undefined && row.kind === kind;
+    };
+
+    if (await this.pollUntil(present, 5_000, 250)) {
+      return;
+    }
+
+    // The typed name did not apply. Only a single new default-named entry may be renamed; anything else stops the push.
+    const index = await this.ensureIndex([want]);
+    const added = index.rows.filter((r) => r.parentPath === parentPath && !siblingsBefore.has(r.label));
+    const defaults = added.filter((r) => /^(new-file|new-folder|untitled)/i.test(r.label));
+
+    if (added.length === 0) {
+      throw new UiChangedError(`Figma did not create ${want}.`);
+    }
+
+    if (added.length !== 1 || defaults.length !== 1) {
+      throw new LeftoverFileError(parentPath, added.map((r) => r.label).join(", "));
+    }
+
+    const leftover = defaults[0]!;
+
+    try {
+      await this.renameIndexedRow(leftover, leaf);
+    } catch (error) {
+      if (error instanceof AutomationAbortedError) {
+        throw error;
+      }
+
+      throw new LeftoverFileError(parentPath, leftover.label);
+    }
+
+    if (!(await this.pollUntil(present, 5_000, 250))) {
+      throw new LeftoverFileError(parentPath, leftover.label);
+    }
+  }
+
+  private async renameIndexedRow(row: IndexedRow, nextLabel: string): Promise<void> {
+    const { locator } = await this.focusIndexedRow(row.path);
+
+    await this.openContextMenuOn(locator.locator("button").first());
+    await this.clickKey("renameAction", 4_000, () => this.expectNameInput());
+
+    const input = await this.takeNameInput(row.kind, { rename: row.label });
+
+    await this.replaceInlineFileName(input, nextLabel);
+    await input.press("Enter");
+    this.explorerIndex = null;
+  }
+
+  /** Switches "Show hidden files" in the Files actions menu. False when the menu has no such item. */
+  private async setHiddenFilesShown(on: boolean): Promise<boolean> {
+    if (!(await this.openFilesActionsMenu())) {
+      return false;
+    }
+
+    const item = await this.tryFindVisible("showHiddenFilesToggle", 2_000);
+
+    if (!item) {
+      await this.closeMenu();
+      return false;
+    }
+
+    const checked = await item.getAttribute("aria-checked").catch(() => null);
+
+    if (checked !== null && (checked === "true") === on) {
+      await this.closeMenu();
+      this.hiddenFilesShown = on;
+      return true;
+    }
+
+    await item.click();
+    await this.pollUntil(async () => !(await this.isMenuOpen()), 1_000);
+    await this.closeMenu();
+    this.hiddenFilesShown = on;
+    this.hiddenFilesToggledByUs = on;
+    this.explorerIndex = null;
+
+    return true;
+  }
+
+  // -------------------------------------------------------------------------
   // Tree resolution
   // -------------------------------------------------------------------------
 
@@ -2284,6 +3274,34 @@ export class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSessio
     options: LocateOptions,
   ): Promise<TreeHit | null> {
     const treeRoot = await this.findVisible("fileTreeRoot", 6_000);
+
+    if (await this.usesAriaTree()) {
+      // Current UI: the index is the only source of truth (fresh read: callers poll this after creating/uploading).
+      const relativePath = segments.join("/");
+
+      this.explorerIndex = null;
+
+      const index = await this.ensureIndex([relativePath]);
+      const row = index.byPath.get(relativePath);
+
+      if (!row || (options.kind !== "any" && row.kind !== options.kind)) {
+        return null;
+      }
+
+      const tag = await this.tagRow(treeRoot, row);
+
+      if (!tag.ok) {
+        return null;
+      }
+
+      return {
+        locator: this.handle.page.locator(TARGET_SELECTOR).first(),
+        active: tag.selected === true,
+        activeSupported: index.selectionSupported,
+        matchCount: index.duplicates.includes(relativePath) ? 2 : 1,
+      };
+    }
+
     const assumeExpandedAt: number[] = [];
     let scrollStep = -1;
     let originalScroll: number | null = null;
@@ -2336,6 +3354,14 @@ export class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSessio
 
       if (!options.scan) {
         return null;
+      }
+
+      if ((await this.handle.page.locator('[data-testid="virtualized-file-tree-container"]').count()) > 0) {
+        // The pixel-depth scan is unsafe across scroll windows of the virtualised explorer (that was the original
+        // bug); its rows were simply not mounted yet. Fail loudly so the caller retries through the aria index.
+        throw new UiChangedError(
+          `The file list had not finished loading while looking for ${segments.join("/")}.`,
+        );
       }
 
       const scroll = await runPageScript<{ original: number; atEnd?: boolean; [k: string]: unknown }>(treeRoot, TREE_SCROLL_SCRIPT, {
@@ -2436,7 +3462,7 @@ export class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSessio
       : [editorRoot];
   }
 
-  private async writeEditorContent(content: string): Promise<void> {
+  private async writeEditorContent(content: string, options: { strict?: boolean; relativePath?: string } = {}): Promise<void> {
     const editorRoot = await this.findVisible("codeEditorRoot", 6_000);
     let replaced = false;
 
@@ -2458,12 +3484,13 @@ export class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSessio
       await this.handle.page.keyboard.insertText(content);
     }
 
-    await this.verifyWrite(content);
+    // The keyboard fallback may trim or re-indent: its read-back is always strict.
+    await this.verifyWrite(content, { strict: options.strict || !replaced, relativePath: options.relativePath ?? "" });
   }
 
   /** State-based replacement for fixed sleeps: waits until the editor shows the content. */
-  private async verifyWrite(expected: string): Promise<void> {
-    const strict = this.context.config.adapter.verifyEditorWrites;
+  private async verifyWrite(expected: string, options: { strict: boolean; relativePath: string }): Promise<void> {
+    const strict = options.strict || this.context.config.adapter.verifyEditorWrites;
     const normalizedExpected = normalizeEol(expected);
     let readable = false;
     let lastActual = "";
@@ -2486,10 +3513,9 @@ export class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSessio
       return;
     }
 
-    throw new FigmaAutomationError(
-      readable
-        ? "Editor content did not match the expected file contents after writing."
-        : "Unable to read back the editor contents to verify the write.",
+    throw new WriteNotVerifiedError(
+      options.relativePath || "the file",
+      readable ? "the editor shows different content after writing" : "the editor contents could not be read back",
     );
   }
 
