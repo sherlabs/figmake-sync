@@ -399,7 +399,7 @@ describe("renderer layout", () => {
       "Getting your project from Figma",
       "downloading latest code",
       "applying downloaded snapshot",
-      "Installing project files (npm install)",
+      "Installing project files",
       "npm warn deprecated inflight@1.0.6: This module is not supported",
       `npm http fetch GET 200 https://registry.npmjs.org/${"a-very-long-package-name-".repeat(8)} 412ms`,
       "added 312 packages in 41s",

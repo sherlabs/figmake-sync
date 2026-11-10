@@ -3,6 +3,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 
+import { getManagedPnpm } from "../runtime/managed.js";
 import {
   buildEnv,
   childOptions,
@@ -194,7 +195,13 @@ export class DevServer {
       FORCE_COLOR: "0",
       ...(port ? { PORT: port, FIGMA_DEV_SERVER_HOST: "127.0.0.1" } : {}),
     });
-    const command = process.platform === "win32" ? "npm.cmd" : "npm";
+    // The app's private pnpm runs the project when installed (same scripts, no npm start-up cost); npm otherwise.
+    const pnpm = this.deps.spawn ? null : getManagedPnpm();
+    const tool = pnpm ? "pnpm" : "npm";
+    const command = process.platform === "win32" ? `${tool}.cmd` : tool;
+    if (pnpm) env["PATH"] = [...pnpm.binDirs, env["PATH"] ?? ""].join(path.delimiter);
+    this.push(`$ ${tool} run ${script}`);
+    this.deps.onLog?.(`$ ${tool} run ${script}`);
     let child: ChildLike;
     try {
       child = spawn(command, ["run", script], {

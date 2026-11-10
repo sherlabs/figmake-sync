@@ -563,8 +563,8 @@ export class Session {
       else {
         this.installing = event.stage === "installing-node" || event.stage === "installing-deps";
         if (event.stage !== "running") this.stepStartedAt = Date.now();
-        if (event.stage === "installing-deps") this.feed("Installing project files (npm install)");
-        else if (event.stage === "starting") this.feed("Starting the preview (npm run dev)");
+        if (event.stage === "installing-deps") this.feed("Installing project files");
+        else if (event.stage === "starting") this.feed("Starting the preview");
         else this.feed(event.message);
       }
       this.set({});

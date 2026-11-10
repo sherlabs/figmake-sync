@@ -1110,10 +1110,10 @@ describe("session: activity feed", () => {
     await wait(150);
     const { lines } = r.session.state.activity;
     expect(lines[0]).toBe("Getting your project from Figma");
-    expect(lines).toEqual(expect.arrayContaining(["Installing project files (npm install)", "added 312 packages in 41s", "Starting the preview (npm run dev)", "VITE v5 ready in 900 ms"]));
+    expect(lines).toEqual(expect.arrayContaining(["Installing project files", "added 312 packages in 41s", "Starting the preview", "VITE v5 ready in 900 ms"]));
     // Pull progress reaches the feed through the pull options.
     expect(lines.some((l) => /downloading latest code/iu.test(l))).toBe(true);
-    expect(lines.indexOf("Installing project files (npm install)")).toBeLessThan(lines.indexOf("Starting the preview (npm run dev)"));
+    expect(lines.indexOf("Installing project files")).toBeLessThan(lines.indexOf("Starting the preview"));
     // Calm again: no running clocks, lines stay for "Show details".
     expect(r.session.state.activity.stepStartedAt).toBeNull();
     expect(r.session.state.activity.startedAt).toBeNull();

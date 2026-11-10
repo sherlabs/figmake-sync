@@ -127,6 +127,7 @@ function spawnInstall(
   onLog?: (line: string) => void,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
+    onLog?.(`$ ${command} ${args.join(" ")}`);
     const isWin = process.platform === "win32";
     // Fixed args only; shell is needed on Windows to resolve npm.cmd safely (no EINVAL).
     const child = spawn(command, args, {

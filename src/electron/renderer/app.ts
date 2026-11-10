@@ -249,8 +249,8 @@ function renderStatus(s: SessionState): void {
 function prepStep(s: SessionState): number {
   if (s.phase === "connecting") return 0;
   const lines = s.activity?.lines ?? [];
-  if (lines.includes("Starting the preview (npm run dev)")) return 2;
-  if (lines.includes("Installing project files (npm install)")) return 1;
+  if (lines.includes("Starting the preview")) return 2;
+  if (lines.includes("Installing project files")) return 1;
   return Date.now() - prepSince > 3500 ? 2 : 1;
 }
 
