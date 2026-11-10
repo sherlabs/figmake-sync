@@ -229,6 +229,9 @@ function registerIpc(s: Session): void {
   ipcMain.handle("figmake:clipboard-write", (_e, text: unknown) => {
     if (typeof text === "string") clipboard.writeText(text.slice(0, 100_000));
   });
+  ipcMain.handle("figmake:open-support", () => {
+    void shell.openExternal("https://www.sherlabs.com/support-us");
+  });
   ipcMain.handle("figmake:report-issue", (_e, request: unknown) => {
     handleReportRequest(request, {
       version: app.getVersion(),

@@ -45,6 +45,7 @@ const busyNow = (s: SessionState): boolean => BUSY.includes(s.phase);
 /** Anything in flight, including a question waiting to be answered: Clean up waits for it. */
 const cleanupBusy = (s: SessionState): boolean => busyNow(s) || s.phase === "conflict" || s.phase === "resolving";
 const report = (s: SessionState): void => void api.reportIssue({ errorCode: s.code ?? "unknown", message: s.message ?? "", phase: s.failedIn ?? s.phase });
+const openSupport = (): void => void api.openSupport();
 const reportProblem = (): void => void api.reportIssue({ errorCode: "unknown", message: "Reported from the app", phase: state?.phase ?? "start" });
 
 // ================= skeleton (built once) =================
@@ -660,7 +661,7 @@ function buildSheet(kind: string, s: SessionState): HTMLDialogElement {
             h("div", { class: "row" }, h("div", { class: "l" }, h("b", {}, "Reset the app"), h("span", {}, "Signs you out and removes your projects")), h("div", { class: "r" }, btn("Reset…", () => openSheet({ kind: "confirm", action: "reset-app" }), "danger", { disabled: cleanupBusy(s) }))),
           ),
         ],
-        acts: [h("button", { type: "button", class: "plain", onclick: () => { closeSheet(); reportProblem(); } }, "Report a problem"), btn("Done", closeSheet, "primary")],
+        acts: [h("button", { type: "button", class: "plain", onclick: () => { closeSheet(); reportProblem(); } }, "Report a problem"), h("button", { type: "button", class: "plain", onclick: openSupport }, "Support Sherlabs"), btn("Done", closeSheet, "primary")],
       });
     }
     case "review": {
@@ -797,6 +798,7 @@ function commands(s: SessionState): Cmd[] {
     { group: "Do", label: "Show project files", glyph: "folder", off: !hasChat(s), run: () => { chatOpen = true; store.set("chat.open", "1"); setTab("files", true); layoutChat(); } },
     { group: "Do", label: "Undo last change", glyph: "undo", off: !(s.phase === "ready" && s.canUndo), run: () => void api.undo() },
     { group: "Do", label: "Settings", glyph: "gear", keys: [`${MOD},`], run: () => openSheet({ kind: "settings" }) },
+    { group: "Do", label: "Support Sherlabs", glyph: "info", run: openSupport },
     { group: "Do", label: "Report a problem", glyph: "info", run: reportProblem },
   ];
   for (const p of s.projects) if (p.key !== s.activeKey) list.push({ group: "Projects", label: p.name, glyph: "folder", run: () => void api.switchProject(p.key) });

@@ -326,6 +326,8 @@ export interface FigmakeApi {
   signOutFigma(): Promise<void>;
   setUpdates(enabled: boolean): Promise<void>;
   reportIssue(request: ReportRequest): Promise<void>;
+  /** Opens the Sherlabs "support us" page in the default browser. */
+  openSupport(): Promise<void>;
   onUpdateState(listener: (state: UpdateState) => void): () => void;
   /** Where updating stands right now (the window asks once when it opens). */
   updateState(): Promise<UpdateState>;

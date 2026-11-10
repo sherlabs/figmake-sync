@@ -107,7 +107,7 @@ async function open(state: object, size: { width: number; height: number }, sche
       stopProcess: noop, restartProcess: noop,
       cleanup: (a: string) => { (window as unknown as { __cleanup: string[] }).__cleanup = [...((window as unknown as { __cleanup?: string[] }).__cleanup ?? []), a]; return Promise.resolve(); },
       newChat: noop, copyText: noop, openProject: noop, ask: noop, undo: noop, send: noop, cancel: noop, retry: noop, setAgent: noop,
-      chooseWorkspace: noop, signOutFigma: noop, setUpdates: noop, switchProject: noop, removeProject: noop, reportIssue: noop, installUpdate: noop,
+      chooseWorkspace: noop, openSupport: noop, signOutFigma: noop, setUpdates: noop, switchProject: noop, removeProject: noop, reportIssue: noop, installUpdate: noop,
     };
   }, { s: state, tree: TREE, cart: CART, tab, upd: update });
   await page.goto(base);
