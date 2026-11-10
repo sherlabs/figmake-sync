@@ -31,5 +31,10 @@ contextBridge.exposeInMainWorld("figmake", {
   reportIssue: call("figmake:report-issue"),
   onUpdateState: listen("figmake:update-state"),
   installUpdate: call("figmake:update-install"),
+  listFolder: call("figmake:list-folder"),
+  readFile: call("figmake:read-file"),
+  changedFiles: call("figmake:changed-files"),
+  stopProcess: call("figmake:stop-process"),
+  restartProcess: call("figmake:restart-process"),
   previewRect: (rect) => ipcRenderer.send("figmake:preview-rect", rect),
 });

@@ -1,5 +1,6 @@
 import type { AgentChoice, ChatState, Phase, ProjectStatus, SessionState } from "../contracts.js";
 import { createChatPanel } from "./chat.js";
+import { createFilesPanel } from "./files.js";
 import { ago, h, icon, nodes, plural, type Child } from "./dom.js";
 
 /* Renderer: draws SessionState and forwards clicks. No business logic lives here. */
@@ -46,7 +47,7 @@ const chip = h("span", { class: "chip status", role: "status" });
 const updateBtn = h("button", { type: "button", class: "plain update", hidden: true, onclick: () => void api.installUpdate() }, icon("refresh", true), "Restart to update");
 const sendBtn = h("button", { type: "button", class: "btn primary send", "aria-keyshortcuts": "", onclick: () => void api.send() });
 const gearBtn = h("button", { type: "button", class: "btn icon gear", "aria-label": "Settings", title: `Settings (${MOD},)`, onclick: () => openSheet({ kind: "settings" }) }, icon("gear"));
-const chatBtn = h("button", { type: "button", class: "btn icon chat-toggle", "aria-label": "Chat", "aria-pressed": "true", "aria-keyshortcuts": "Meta+J Control+J", title: `Chat (${MOD}J)`, onclick: () => setChatOpen(!chatOpen) }, icon("panel"), h("span", { class: "pip", hidden: true }));
+const chatBtn = h("button", { type: "button", class: "btn icon chat-toggle", "aria-label": "Side panel", "aria-pressed": "true", "aria-keyshortcuts": "Meta+J Control+J", title: `Side panel (${MOD}J)`, onclick: () => setChatOpen(!chatOpen) }, icon("panel"), h("span", { class: "pip", hidden: true }));
 const toolbar = h("header", { class: "toolbar" }, h("div", { class: "ttl row-ttl" }, title, chip), h("div", { class: "tright" }, updateBtn, chatBtn, sendBtn, gearBtn));
 
 const banner = h("div", { class: "errbanner", role: "alert", hidden: true });
@@ -73,7 +74,7 @@ const slot = h("div", { class: "slot" });
 const stage = h("main", { class: "stage", id: "pane" }, slot, welcome, prep, calm);
 
 const statusText = h("span", { role: "status" });
-const statusBar = h("footer", { class: "status" }, statusText, h("span", { class: "sp" }), h("span", {}, h("span", { class: "kbd" }, `${MOD}J`), " Chat"), h("span", {}, h("span", { class: "kbd" }, `${MOD}K`), " Commands"));
+const statusBar = h("footer", { class: "status" }, statusText, h("span", { class: "sp" }), h("span", {}, h("span", { class: "kbd" }, `${MOD}J`), " Panel"), h("span", {}, h("span", { class: "kbd" }, `${MOD}K`), " Commands"));
 
 const chatPanel = createChatPanel({
   api,
@@ -84,8 +85,14 @@ const chatPanel = createChatPanel({
   collapse: () => setChatOpen(false),
   toast: (text) => toast(text),
 });
-const resizer = h("div", { class: "resizer", role: "separator", "aria-orientation": "vertical", "aria-label": "Resize chat", tabindex: "0" });
-const work = h("div", { class: "work" }, stage, resizer, chatPanel.el);
+const filesPanel = createFilesPanel({ api, mod: MOD, collapse: () => setChatOpen(false) });
+type RailTab = "chat" | "files";
+const tabChat = h("button", { type: "button", role: "tab", id: "tab-chat", "aria-controls": "rail-body", onclick: () => setTab("chat") }, "Chat");
+const tabFiles = h("button", { type: "button", role: "tab", id: "tab-files", "aria-controls": "rail-body", onclick: () => setTab("files") }, "Files");
+const tabs = h("div", { class: "rail-tabs" }, h("div", { class: "seg", role: "tablist", "aria-label": "Side panel" }, tabChat, tabFiles));
+const rail = h("section", { class: "rail", id: "rail-body", "aria-label": "Side panel" }, tabs, chatPanel.el, filesPanel.el);
+const resizer = h("div", { class: "resizer", role: "separator", "aria-orientation": "vertical", "aria-label": "Resize side panel", tabindex: "0" });
+const work = h("div", { class: "work" }, stage, resizer, rail);
 const main = h("div", { class: "main" }, toolbar, banner, work, statusBar);
 
 const sheetHost = h("div", { class: "sheet-host" });
@@ -397,7 +404,8 @@ function commands(s: SessionState): Cmd[] {
     { group: "Do", label: "Open project…", glyph: "plus", keys: [`${MOD}N`], run: () => openSheet({ kind: "add" }) },
     { group: "Do", label: "Send to Figma", glyph: "up", off: !(s.phase === "ready" && s.canSend), run: () => void api.send() },
     { group: "Do", label: "New chat", glyph: "compose", off: !(s.phase === "ready" && chatState.messages.length > 0), run: () => void api.newChat() },
-    { group: "Do", label: "Toggle chat", glyph: "panel", keys: [`${MOD}J`], off: !hasChat(s), run: () => setChatOpen(!chatOpen) },
+    { group: "Do", label: "Toggle side panel", glyph: "panel", keys: [`${MOD}J`], off: !hasChat(s), run: () => setChatOpen(!chatOpen) },
+    { group: "Do", label: "Show project files", glyph: "folder", off: !hasChat(s), run: () => { chatOpen = true; store.set("chat.open", "1"); setTab("files", true); layoutChat(); } },
     { group: "Do", label: "Undo last change", glyph: "undo", off: !(s.phase === "ready" && s.canUndo), run: () => void api.undo() },
     { group: "Do", label: "Settings", glyph: "gear", keys: [`${MOD},`], run: () => openSheet({ kind: "settings" }) },
     { group: "Do", label: "Report a problem", glyph: "info", run: reportProblem },
@@ -483,7 +491,7 @@ function layoutChat(): void {
   const show = hasChat(state) && chatOpen;
   work.classList.toggle("compact", compactQuery.matches);
   work.classList.toggle("chat-off", !show);
-  chatPanel.el.hidden = !show;
+  rail.hidden = !show;
   resizer.hidden = !show;
   chatBtn.hidden = !hasChat(state);
   chatBtn.setAttribute("aria-pressed", String(show));
@@ -496,12 +504,40 @@ function layoutChat(): void {
   syncPreview();
 }
 
+let tab: RailTab = store.get("rail.tab") === "files" ? "files" : "chat";
+
+function drawTabs(): void {
+  for (const [name, btn] of [["chat", tabChat], ["files", tabFiles]] as const) {
+    btn.setAttribute("aria-selected", String(tab === name));
+    btn.tabIndex = tab === name ? 0 : -1;
+  }
+  tabs.setAttribute("aria-label", "Side panel");
+  rail.setAttribute("aria-labelledby", `tab-${tab}`);
+  chatPanel.el.hidden = tab !== "chat";
+  filesPanel.el.hidden = tab !== "files";
+  if (tab === "files" && !rail.hidden) filesPanel.show();
+}
+
+function setTab(next: RailTab, focus = false): void {
+  tab = next;
+  store.set("rail.tab", next);
+  drawTabs();
+  if (focus) (next === "chat" ? tabChat : tabFiles).focus();
+  else if (next === "chat" && chatOpen) chatPanel.focusComposer();
+}
+tabs.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+    e.preventDefault();
+    setTab(tab === "chat" ? "files" : "chat", true);
+  }
+});
+
 function setChatOpen(open: boolean): void {
   if (!hasChat(state)) return;
   chatOpen = open;
   store.set("chat.open", open ? "1" : "0");
   layoutChat();
-  if (open) chatPanel.focusComposer();
+  if (open && tab === "chat") chatPanel.focusComposer();
 }
 
 resizer.addEventListener("pointerdown", (e) => {
@@ -570,7 +606,9 @@ function render(s: SessionState): void {
   renderBanner(s);
   renderStage(s);
   chatPanel.setSession(s);
+  filesPanel.setSession(s);
   layoutChat();
+  drawTabs();
   renderStatus(s);
   renderSheets(s);
   if (s.message === "Sent to Figma" && lastMessage !== "Sent to Figma") toast("Sent to Figma");

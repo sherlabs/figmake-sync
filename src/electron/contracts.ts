@@ -70,6 +70,41 @@ export interface ChangedFile {
   rows: DiffRow[];
 }
 
+export type ProcessId = "preview" | "agent" | "install";
+
+/** One thing figmake-sync keeps running for the open project, described in plain words. */
+export interface ProcessInfo {
+  id: ProcessId;
+  /** Friendly name: "Preview", "Claude (AI helper)". */
+  name: string;
+  state: "starting" | "running" | "stopped" | "failed";
+  /** One plain sentence, only when there is something to explain. */
+  note?: string;
+  canStop: boolean;
+  canRestart: boolean;
+}
+
+/** One row of the file explorer. `path` uses "/" and is relative to the project folder. */
+export interface TreeEntry {
+  name: string;
+  path: string;
+  kind: "folder" | "file";
+}
+
+/** The direct children of one folder, capped; `truncated` is true when more existed. */
+export interface FolderListing {
+  path: string;
+  entries: TreeEntry[];
+  truncated: boolean;
+}
+
+/** What the read-only viewer shows for one file. */
+export type FileView =
+  | { kind: "text"; path: string; text: string; lines: number }
+  | { kind: "image"; path: string; dataUrl: string }
+  | { kind: "binary" | "large"; path: string; size: number }
+  | { kind: "missing"; path: string };
+
 /** The one thing the renderer ever sees. Every sentence in it is already plain language. */
 export interface SessionState {
   phase: Phase;
@@ -100,6 +135,8 @@ export interface SessionState {
   /** Folder name (not path) of the workspace new projects are created in. */
   workspace: string;
   workspaceError?: string;
+  /** What is running for the open project (preview, AI helper, setup), for the Files panel. */
+  processes: ProcessInfo[];
 }
 
 export type ActivityKind = "look" | "edit" | "add" | "check" | "other";
@@ -206,6 +243,14 @@ export interface FigmakeApi {
   reportIssue(request: ReportRequest): Promise<void>;
   onUpdateState(listener: (state: { phase: "idle" | "downloading" | "ready"; version?: string }) => void): () => void;
   installUpdate(): Promise<void>;
+  /** Direct children of a project folder ("" = the project itself). Read-only. */
+  listFolder(path: string): Promise<FolderListing>;
+  /** Contents of one project file for the read-only viewer. */
+  readFile(path: string): Promise<FileView>;
+  /** Project files (not folders) the AI changed since the last pull. */
+  changedFiles(): Promise<string[]>;
+  stopProcess(id: ProcessId): Promise<void>;
+  restartProcess(id: ProcessId): Promise<void>;
   /** Where the preview sits in the window (null hides it). */
   previewRect(rect: PreviewRect | null): void;
 }

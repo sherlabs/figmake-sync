@@ -6,11 +6,14 @@ import type { FigmakeSyncService } from "../core/service.js";
 import { ProjectStateStore, STATE_DIRECTORY_NAME } from "../core/state.js";
 import { REMOTE_DIVERGED_PROMPT, isAllowedLoginUrl } from "../harness/index.js";
 import type { HarnessEvent, HarnessService } from "../harness/index.js";
-import type { AgentChoice, ChangedFile, ChatFile, ChatMessage, ChatState, DesktopAppState, ErrorCode, Phase, ProjectSummary, SessionState } from "../electron/contracts.js";
+import type { DevStatus } from "../harness/types.js";
+import type { AgentChoice, ChangedFile, ChatFile, ChatMessage, ChatState, DesktopAppState, ErrorCode, FileView, FolderListing, Phase, ProcessId, ProjectSummary, SessionState } from "../electron/contracts.js";
 import { isAuthRequiredError } from "../electron/authState.js";
 import { applyAgentEvent, baseName, capMessages, dropSummaryRepeat, emptyAssistant, newId, userMessage } from "./chat.js";
 import type { ChatStore } from "./chatStore.js";
 import { describeFolders, listChangedFiles } from "./changes.js";
+import { listFolder, readFileView } from "./fileTree.js";
+import { buildProcesses } from "./processes.js";
 import { FIGMA_MAKE_GUIDE } from "./figmaMakeGuide.js";
 import { defaultWorkspaceDir, parseFigmaLink, resolveProjectFolder, validateWorkspace, type FigmaLink, type WorkspaceGuard } from "./workspace.js";
 
@@ -22,7 +25,7 @@ export const AGENT_NAMES: Record<AgentChoice, string> = { claude: "Claude", code
 
 export interface SessionDeps {
   sync: Pick<FigmakeSyncService, "init" | "pull" | "push" | "status" | "auth">;
-  harness: Pick<HarnessService, "ensureProjectRunning" | "ensureAgentReady" | "startRun" | "pendingLoginUrl" | "stopDevExcept" | "updateSettings">;
+  harness: Pick<HarnessService, "ensureProjectRunning" | "ensureAgentReady" | "startRun" | "pendingLoginUrl" | "stopDevExcept" | "stopDev" | "updateSettings">;
   appState: { load(): Promise<DesktopAppState>; update(patch: Partial<DesktopAppState>): Promise<DesktopAppState> };
   /** Per-project transcripts (userData/chats). */
   chatStore: Pick<ChatStore, "load" | "save" | "archive" | "remove">;
@@ -115,6 +118,7 @@ const START: SessionState = {
   canUndo: false,
   agent: null,
   workspace: "",
+  processes: [],
 };
 
 export class Session {
@@ -138,6 +142,11 @@ export class Session {
   private turnId: string | null = null;
   private readonly chatListeners = new Set<(chat: ChatState) => void>();
   private chatTimer: NodeJS.Timeout | null = null;
+  /** Latest report of the open project's preview server, and whether its files are being installed. */
+  private dev: Pick<DevStatus, "state"> | null = null;
+  private installing = false;
+  /** The person stopped the preview on purpose: the project stays open, just without a picture. */
+  private previewStopped = false;
 
   constructor(private readonly deps: SessionDeps) {
     this.workspaceDir = defaultWorkspaceDir(deps.documentsDir);
@@ -514,10 +523,89 @@ export class Session {
       const existed = edit ? fs.existsSync(path.resolve(this.root, edit.path)) : true;
       this.patchMessage(id, (m) => applyAgentEvent(m, event.event, { existed }));
       this.scheduleChat();
+    } else if (event.kind === "dev-status" || event.kind === "project-ensure") {
+      if (!this.root || path.resolve(event.rootDir) !== path.resolve(this.root)) return;
+      if (event.kind === "dev-status") this.dev = { state: event.status.state };
+      else this.installing = event.stage === "installing-node" || event.stage === "installing-deps";
+      this.set({});
     } else if (event.kind === "agent-login-url") {
       const url = this.deps.harness.pendingLoginUrl(event.agent);
       if (url && isAllowedLoginUrl(url)) this.deps.openExternal(url);
     }
+  }
+
+  // ---- files + running things ----
+
+  async listFolder(rel: string): Promise<FolderListing> {
+    return this.root ? listFolder(this.root, rel) : { path: "", entries: [], truncated: false };
+  }
+
+  async readFile(rel: string): Promise<FileView> {
+    return this.root ? readFileView(this.root, rel) : { kind: "missing", path: "" };
+  }
+
+  /** Files added or edited since the last pull (the same comparison that decides "Send to Figma"). Never throws. */
+  async changedPaths(): Promise<string[]> {
+    if (!this.root) return [];
+    try {
+      const { diff } = await this.deps.sync.status({ projectRoot: this.root });
+      if (!diff) return [];
+      return [...diff.modified.map((m) => m.current.path), ...diff.added.map((e) => e.path), ...diff.renamed.map((r) => r.to)].sort();
+    } catch {
+      return [];
+    }
+  }
+
+  /** Stops one running thing. The AI helper and project setup stop like the Stop button; the preview just shuts down. */
+  async stopProcess(id: ProcessId): Promise<void> {
+    const root = this.root;
+    if (id === "agent" || id === "install") {
+      const running = id === "agent" ? this.turnId !== null : this.installing;
+      if (running && this.busy) this.ctl?.abort();
+      return;
+    }
+    if (!root || this.busy || this.s.phase !== "ready") return;
+    await this.exclusive(async () => {
+      try {
+        await this.deps.harness.stopDev(root);
+      } catch (error) {
+        this.deps.log("stop preview failed", error);
+      }
+      this.dev = { state: "stopped" };
+      this.previewStopped = true;
+      this.set({ previewUrl: null });
+    });
+  }
+
+  /** Restarts the preview (the only restartable thing). Never overlaps another action. */
+  async restartProcess(id: ProcessId): Promise<void> {
+    const root = this.root;
+    if (id !== "preview" || !root || this.busy || (this.s.phase !== "ready" && this.s.phase !== "error")) return;
+    await this.exclusive(async (signal) => {
+      this.resume = null;
+      this.previewStopped = false;
+      this.set({ phase: "preparing", previewUrl: null, message: undefined });
+      try {
+        await this.deps.harness.stopDev(root).catch(() => undefined);
+        const project = await this.deps.harness.ensureProjectRunning(root, signal);
+        if (project.ok) {
+          this.set({ previewUrl: project.url });
+          this.deps.reloadPreview();
+          return await this.ready();
+        }
+        if (signal.aborted) return this.stoppedPreview();
+        this.fail("Couldn't start the preview. Try again.", () => this.restartProcess("preview"), "preview_failed");
+      } catch (error) {
+        this.deps.log("restart preview failed", error);
+        if (signal.aborted) return this.stoppedPreview();
+        this.fail("Couldn't start the preview. Try again.", () => this.restartProcess("preview"), "preview_failed");
+      }
+    });
+  }
+
+  private stoppedPreview(): void {
+    this.previewStopped = true;
+    this.set({ phase: "ready" });
   }
 
   // ---- flow ----
@@ -545,6 +633,9 @@ export class Session {
         this.emitChat();
       }
       this.agentReady = null;
+      this.dev = null;
+      this.installing = false;
+      this.previewStopped = false;
       this.set({ phase: restore ? "preparing" : "connecting", projectName: info.name, activeKey: info.key, previewUrl: null, changes: [], changeFiles: [], changeIds: [], canSend: false, canUndo: false, message: undefined });
       try {
         const root = await resolveProjectFolder(this.workspaceDir, info, this.known);
@@ -615,6 +706,9 @@ export class Session {
           this.activeKey = null;
           this.agentReady = null;
           this.resume = null;
+          this.dev = null;
+          this.installing = false;
+          this.previewStopped = false;
         }
         await this.deps.appState.update({ projects: known, links, ...(wasActive ? { lastLink: null } : {}) });
         if (wasActive) this.set(this.startState());
@@ -756,7 +850,7 @@ export class Session {
       this.settle("undone");
     }
     this.set({
-      phase: this.s.previewUrl ? "ready" : "start",
+      phase: this.s.previewUrl || this.previewStopped ? "ready" : "start",
       changes: this.stack.map((e) => e.sentence),
       changeFiles: this.stack.map((e) => e.files ?? 0),
       changeIds: this.stack.map((e) => e.id),
@@ -793,6 +887,15 @@ export class Session {
     for (const key of Object.keys(next)) {
       if (next[key] === undefined) delete next[key];
     }
+    next["processes"] = buildProcesses({
+      hasProject: Boolean(this.root) && next["phase"] !== "start",
+      phase: next["phase"] as Phase,
+      previewUrl: (next["previewUrl"] as string | undefined) ?? null,
+      dev: this.dev,
+      installing: this.installing,
+      agentWorking: this.turnId !== null,
+      agentName: AGENT_NAMES[(next["agent"] as AgentChoice | null) ?? "claude"],
+    });
     this.s = next as unknown as SessionState;
     for (const listener of this.listeners) listener(this.s);
   }

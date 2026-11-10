@@ -8,7 +8,7 @@ const read = (name: string): string => fs.readFileSync(path.join(dir, name), "ut
 
 describe("renderer: static guarantees", () => {
   const html = read("index.html");
-  const FILES = ["app.ts", "dom.ts", "chat.ts", "diff.ts"];
+  const FILES = ["app.ts", "dom.ts", "chat.ts", "diff.ts", "files.ts"];
   const code = FILES.map(read).join("\n");
 
   it("keeps the strict CSP (no inline styles or scripts, no network)", () => {
@@ -37,7 +37,7 @@ describe("renderer: static guarantees", () => {
   it("builds message content only from text nodes and a fixed set of tags", () => {
     expect(code).not.toMatch(/h\(\s*"(a|script|iframe|svg|object|embed|link|style)"/u);
     // (dom.ts itself sets the sprite's href; nothing that draws messages may.)
-    const drawing = ["app.ts", "chat.ts", "diff.ts"].map(read).join("\n");
+    const drawing = ["app.ts", "chat.ts", "diff.ts", "files.ts"].map(read).join("\n");
     expect(drawing).not.toMatch(/setAttribute\(\s*"(href|src|style|on\w+)"/u);
     expect(drawing).not.toMatch(/\b(href|src|srcdoc)\s*:\s*(?!\s*"\.\/assets\/)/u);
     expect(code).not.toMatch(/\.href\s*=|\.src\s*=|eval\(|new Function\(/u);

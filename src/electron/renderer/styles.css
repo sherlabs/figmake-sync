@@ -549,8 +549,59 @@ html.is-win .toolbar button, html.is-win .toolbar input { -webkit-app-region: no
 .resizer::after { content: ""; position: absolute; top: 0; bottom: 0; left: -1px; width: 3px; background: var(--accent); opacity: 0; transition: opacity 0.15s; }
 .resizer:hover::after, .resizer.drag::after, .resizer:focus-visible::after { opacity: 0.55; }
 .resizer:focus-visible { box-shadow: none; }
-.chat { flex: none; width: var(--chat-w, 400px); min-width: 0; display: flex; flex-direction: column; background: var(--win); min-height: 0; }
-.chat[hidden], .resizer[hidden] { display: none !important; }
+.rail { flex: none; width: var(--chat-w, 400px); min-width: 0; display: flex; flex-direction: column; background: var(--win); min-height: 0; position: relative; }
+.chat, .files { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; background: var(--win); min-height: 0; }
+.chat[hidden], .files[hidden], .rail[hidden], .resizer[hidden] { display: none !important; }
+.rail-tabs { flex: none; height: 44px; display: flex; align-items: center; padding: 0 10px 0 14px; }
+.rail-tabs .seg button { min-width: 56px; }
+.rail .chat-h, .rail .files-h { position: absolute; top: 0; right: 0; height: 44px; z-index: 2; }
+.rail .chat-h h2 { display: none; }
+.rail .chat-h { padding-left: 0; }
+.files-h { display: flex; align-items: center; gap: 4px; padding: 0 10px 0 0; }
+
+/* ============ files ============ */
+.ftree { flex: 1 1 auto; min-height: 96px; overflow: auto; padding: 2px 8px 8px; overscroll-behavior: contain; }
+.ftree.short { flex: 0 0 34%; border-bottom: 1px solid var(--sep); }
+.ftree:focus-visible { box-shadow: none; }
+.trow { display: flex; align-items: center; gap: 5px; width: 100%; height: 26px; padding: 0 8px; border-radius: 6px; font-size: 13px; color: var(--text); text-align: left; white-space: nowrap; }
+button.trow:hover { background: var(--hover); }
+button.trow:active { background: var(--press); }
+button.trow:focus-visible { box-shadow: var(--ring); }
+.trow .i { color: var(--text-2); }
+.trow.folder .i:first-child { color: var(--text-3); }
+.trow.file .gap { width: 14px; flex: none; }
+.trow.file.on { background: var(--accent-soft); color: var(--accent-text); }
+.trow.file.on .i { color: var(--accent-text); }
+.trow .tname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.trow.note { color: var(--text-3); font-size: 12px; height: 22px; }
+.mark { width: 7px; height: 7px; border-radius: 50%; background: var(--chg-dot); flex: none; margin: 0 2px; }
+.mark.sub { opacity: 0.55; }
+.fempty { color: var(--text-3); font-size: 12.5px; padding: 14px 12px; text-align: center; }
+.fview { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+.fview[hidden] { display: none !important; }
+.fv-h { flex: none; display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 6px 0 14px; }
+.fv-t { min-width: 0; display: flex; align-items: baseline; gap: 6px; overflow: hidden; white-space: nowrap; }
+.fv-t strong { font-size: 13px; font-weight: 600; }
+.fv-t span { color: var(--text-3); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; }
+.fv-h .sp { flex: 1; }
+.fv-h .ro { flex: none; color: var(--text-3); font-size: 11.5px; }
+.code { flex: 1 1 0; min-height: 0; overflow: auto; display: flex; align-items: flex-start; background: var(--inset); border-top: 1px solid var(--sep); font-family: var(--mono); font-size: 12px; line-height: 1.55; tab-size: 2; }
+.code:focus-visible { box-shadow: inset var(--ring); }
+.code pre { margin: 0; padding: 8px 0; font: inherit; }
+.code .ln { position: sticky; left: 0; flex: none; min-width: 40px; padding: 8px 10px 8px 12px; text-align: right; color: var(--text-3); background: var(--inset); user-select: none; z-index: 1; }
+.code .src { flex: 1 0 auto; padding-right: 16px; white-space: pre; color: var(--text); }
+.imgview { flex: 1 1 0; min-height: 0; overflow: auto; display: grid; place-items: center; padding: 14px; background: var(--inset); border-top: 1px solid var(--sep); }
+.imgview img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.running { flex: none; border-top: 1px solid var(--sep); padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 6px; max-height: 40%; overflow: auto; }
+.running[hidden] { display: none !important; }
+.running h3 { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-3); }
+.rrow { display: flex; align-items: center; gap: 8px; min-height: 34px; }
+.rrow .spin { width: 12px; height: 12px; border-width: 2px; margin: 0 4px; }
+.rrow .dot { margin: 0 4px; }
+.rname { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; }
+.rname strong { font-size: 13px; font-weight: 500; }
+.rname span { font-size: 12px; color: var(--text-2); }
+.rname small { flex-basis: 100%; font-size: 11.5px; color: var(--bad-text); }
 .chat-h { flex: none; height: 44px; display: flex; align-items: center; gap: 4px; padding: 0 10px 0 18px; }
 .chat-h h2 { font-size: 13px; font-weight: 600; }
 .chat-h .sp { flex: 1; }
@@ -686,7 +737,7 @@ html.is-win .toolbar button, html.is-win .toolbar input { -webkit-app-region: no
 
 /* chat below the preview (narrow windows) */
 .work.compact { flex-direction: column; }
-.work.compact .chat { width: auto; height: var(--chat-h, 320px); border-top: 0; }
+.work.compact .rail { width: auto; height: var(--chat-h, 320px); border-top: 0; }
 .work.compact .resizer { width: auto; height: 1px; cursor: row-resize; }
 .work.compact .resizer::before { inset: -4px 0; }
 .work.compact .resizer::after { top: -1px; bottom: auto; left: 0; right: 0; width: auto; height: 3px; }
@@ -694,7 +745,8 @@ html.is-win .toolbar button, html.is-win .toolbar input { -webkit-app-region: no
 .work.compact .cdiff .dl { grid-template-columns: 1fr; }
 @media (max-width: 900px) {
   .thread { padding: 8px 14px 16px; }
-  .chat-h { height: 38px; }
+  .chat-h, .rail .chat-h, .rail .files-h, .rail-tabs { height: 38px; }
+  .ftree.short { flex-basis: 40%; }
   .empty { padding-bottom: 12px; }
   .chips { flex-direction: row; flex-wrap: wrap; max-width: none; justify-content: center; }
   .sugg { width: auto; }
@@ -718,3 +770,17 @@ html.is-win .toolbar button, html.is-win .toolbar input { -webkit-app-region: no
 .chcard .dl .c { white-space: pre-wrap; overflow-wrap: anywhere; }
 .chcard .dfile .diffbody { overflow-x: hidden; }
 .toasts { right: auto; left: 244px; justify-items: start; }
+
+.trow.lv0 { padding-left: 8px; }
+.trow.lv1 { padding-left: 22px; }
+.trow.lv2 { padding-left: 36px; }
+.trow.lv3 { padding-left: 50px; }
+.trow.lv4 { padding-left: 64px; }
+.trow.lv5 { padding-left: 78px; }
+.trow.lv6 { padding-left: 92px; }
+.trow.lv7 { padding-left: 106px; }
+.trow.lv8 { padding-left: 120px; }
+.trow.lv9 { padding-left: 134px; }
+.trow.lv10 { padding-left: 148px; }
+.trow.lv11 { padding-left: 162px; }
+.trow.lv12 { padding-left: 176px; }

@@ -34,6 +34,7 @@ import { UPDATE_INSTALL_CHANNEL, UPDATE_STATE_CHANNEL } from "../updater/contrac
 import { trackEvent } from "./analytics.js";
 import { DesktopAppStateStore } from "./appState.js";
 import type { MenuCommand, PreviewRect } from "./contracts.js";
+import { processIdArg, projectPathArg } from "./ipc.js";
 import { PreviewView } from "./preview.js";
 
 const APP_ID = "com.figmake.sync";
@@ -242,6 +243,23 @@ function registerIpc(s: Session): void {
   ipcMain.handle("figmake:send", (_e, resolution: unknown) =>
     s.send(resolution === "mine" || resolution === "figma" ? resolution : undefined),
   );
+  ipcMain.handle("figmake:list-folder", (_e, rel: unknown) => {
+    const parsed = projectPathArg.safeParse(rel);
+    return parsed.success ? s.listFolder(parsed.data) : { path: "", entries: [], truncated: false };
+  });
+  ipcMain.handle("figmake:read-file", (_e, rel: unknown) => {
+    const parsed = projectPathArg.safeParse(rel);
+    return parsed.success ? s.readFile(parsed.data) : { kind: "missing", path: "" };
+  });
+  ipcMain.handle("figmake:changed-files", () => s.changedPaths());
+  ipcMain.handle("figmake:stop-process", (_e, id: unknown) => {
+    const parsed = processIdArg.safeParse(id);
+    return parsed.success ? s.stopProcess(parsed.data) : undefined;
+  });
+  ipcMain.handle("figmake:restart-process", (_e, id: unknown) => {
+    const parsed = processIdArg.safeParse(id);
+    return parsed.success ? s.restartProcess(parsed.data) : undefined;
+  });
   ipcMain.handle("figmake:cancel", () => s.cancel());
   ipcMain.handle("figmake:retry", () => s.retry());
   ipcMain.handle("figmake:set-agent", (_e, agent: unknown) => (agent === "claude" || agent === "codex" ? s.setAgent(agent) : undefined));

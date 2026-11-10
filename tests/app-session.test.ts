@@ -32,7 +32,7 @@ interface Rig {
   workspace: string;
   project: string;
   deps: SessionDeps;
-  harness: { startRun: ReturnType<typeof vi.fn>; ensureAgentReady: ReturnType<typeof vi.fn>; ensureProjectRunning: ReturnType<typeof vi.fn>; stopDevExcept: ReturnType<typeof vi.fn> };
+  harness: { startRun: ReturnType<typeof vi.fn>; ensureAgentReady: ReturnType<typeof vi.fn>; ensureProjectRunning: ReturnType<typeof vi.fn>; stopDevExcept: ReturnType<typeof vi.fn>; stopDev: ReturnType<typeof vi.fn> };
   sync: { pull: ReturnType<typeof vi.fn>; push: ReturnType<typeof vi.fn>; auth: ReturnType<typeof vi.fn> };
   edit: { fn: (root: string) => Promise<void>; outcome: Partial<RunOutcome>; hold?: Promise<void>; events?: AgentEvent[] };
   store: DesktopAppStateStore;
@@ -70,6 +70,7 @@ async function rig(opts: { agent?: "claude" | "codex" | null; saved?: boolean } 
     pendingLoginUrl: vi.fn(() => null),
     updateSettings: vi.fn(async () => ({})),
     stopDevExcept: vi.fn(async () => undefined),
+    stopDev: vi.fn(async () => ({})),
     startRun: vi.fn(async (input: { rootDir: string; prompt: string }, signal?: AbortSignal) => {
       const projectStore = new ProjectStateStore(input.rootDir);
       const config = await projectStore.loadProjectConfig();
@@ -837,5 +838,89 @@ describe("session: chat", () => {
     expect(r.session.chat.messages).toEqual([]);
     await r.session.switchProject("AbC123");
     expect(r.session.chat.messages.map((m) => m.text).filter(Boolean)).toEqual(["in the first project"]);
+  });
+});
+
+describe("session: files and running things", () => {
+  it("lists and reads project files, and marks only what changed since the pull", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    const top = await r.session.listFolder("");
+    expect(top.entries.map((e) => e.name)).toContain("src");
+    expect(top.entries.map((e) => e.name)).not.toContain(".figmake-sync");
+    expect((await r.session.readFile("src/app.ts")).kind).toBe("text");
+    expect((await r.session.readFile("../outside.txt")).kind).toBe("missing");
+    expect(await r.session.changedPaths()).toEqual([]);
+    await r.session.ask("Make the button blue");
+    expect(await r.session.changedPaths()).toEqual(["src/app.ts", "src/new.ts"]);
+  });
+
+  it("shows the preview as running, and the AI helper only while it works", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    expect(r.session.state.processes).toEqual([expect.objectContaining({ id: "preview", name: "Preview", state: "running", canStop: true, canRestart: true })]);
+    let release: () => void = () => undefined;
+    r.edit.hold = new Promise<void>((resolve) => (release = resolve));
+    const turn = r.session.ask("Hold on");
+    await vi.waitFor(() => expect(r.session.state.processes.map((p) => p.id)).toContain("agent"));
+    const agent = r.session.state.processes.find((p) => p.id === "agent");
+    expect(agent).toMatchObject({ state: "running", canStop: true, canRestart: false });
+    expect(r.session.state.processes.find((p) => p.id === "preview")).toMatchObject({ canStop: false, canRestart: false });
+    await r.session.stopProcess("agent");
+    release();
+    await turn;
+    expect(r.session.state.processes.map((p) => p.id)).toEqual(["preview"]);
+    expect(r.session.state.phase).toBe("ready");
+  });
+
+  it("follows the preview server and tracks setup", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    r.session.handleHarnessEvent({ kind: "dev-status", rootDir: r.project, status: { rootDir: r.project, state: "crashed", url: null, script: "dev", exitCode: 1, logTail: [] } });
+    expect(r.session.state.processes[0]).toMatchObject({ state: "failed", canRestart: true, canStop: false });
+    r.session.handleHarnessEvent({ kind: "dev-status", rootDir: "/somewhere/else", status: { rootDir: "/somewhere/else", state: "running", url: null, script: null, exitCode: null, logTail: [] } });
+    expect(r.session.state.processes[0]).toMatchObject({ state: "failed" });
+    r.session.handleHarnessEvent({ kind: "project-ensure", rootDir: r.project, stage: "installing-deps", message: "" });
+    expect(r.session.state.processes.map((p) => p.id)).toEqual(["preview", "install"]);
+    r.session.handleHarnessEvent({ kind: "project-ensure", rootDir: r.project, stage: "running", message: "" });
+    expect(r.session.state.processes.map((p) => p.id)).toEqual(["preview"]);
+  });
+
+  it("stops the preview on purpose, stays on the project, and starts it again", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    await r.session.stopProcess("preview");
+    expect(r.harness.stopDev).toHaveBeenCalledWith(r.project);
+    expect(r.session.state).toMatchObject({ phase: "ready", previewUrl: null });
+    expect(r.session.state.processes[0]).toMatchObject({ state: "stopped", canStop: false, canRestart: true });
+    r.harness.ensureProjectRunning.mockClear();
+    await r.session.restartProcess("preview");
+    expect(r.harness.ensureProjectRunning).toHaveBeenCalledTimes(1);
+    expect(r.session.state).toMatchObject({ phase: "ready", previewUrl: "http://localhost:5173/" });
+    expect(r.deps.reloadPreview).toHaveBeenCalled();
+  });
+
+  it("a failed restart says so plainly and Try again restarts again", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    r.harness.ensureProjectRunning.mockResolvedValueOnce({ ok: false, code: "dev_failed", message: "boom /Users/x" } as never);
+    await r.session.restartProcess("preview");
+    expect(r.session.state).toMatchObject({ phase: "error", message: "Couldn't start the preview. Try again.", code: "preview_failed" });
+    await r.session.retry();
+    expect(r.session.state).toMatchObject({ phase: "ready", previewUrl: "http://localhost:5173/" });
+  });
+
+  it("never restarts or stops the preview in the middle of another action", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    r.edit.hold = new Promise<void>(() => undefined);
+    const turn = r.session.ask("Hold on");
+    await vi.waitFor(() => expect(r.session.state.phase).toBe("working"));
+    r.harness.stopDev.mockClear();
+    await r.session.stopProcess("preview");
+    await r.session.restartProcess("preview");
+    expect(r.harness.stopDev).not.toHaveBeenCalled();
+    await r.session.cancel();
+    await turn;
   });
 });

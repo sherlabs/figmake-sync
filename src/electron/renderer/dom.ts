@@ -52,3 +52,12 @@ export function splitPath(p: string): { dir: string; name: string } {
   const i = p.lastIndexOf("/");
   return i < 0 ? { dir: "", name: p } : { dir: p.slice(0, i + 1), name: p.slice(i + 1) };
 }
+
+/** An <img> for a data: URL the main process built (the only place a picture's source is ever set). */
+export function dataImage(dataUrl: string, alt: string, cls = ""): HTMLImageElement {
+  const img = document.createElement("img");
+  img.setAttribute("alt", alt);
+  if (cls) img.className = cls;
+  if (dataUrl.startsWith("data:image/")) img.setAttribute("src", dataUrl);
+  return img;
+}
