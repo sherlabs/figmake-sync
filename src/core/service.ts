@@ -30,6 +30,7 @@ import { getManagedPnpm } from "../runtime/managed.js";
 import { createProjectLogger, flushLogger } from "../logging/logger.js";
 import type {
   CommandRuntimeOptions,
+  PushProgress,
   PullStrategy,
   ProjectConfig,
 } from "../types/config.js";
@@ -246,6 +247,18 @@ function notify(
   message: string,
 ): void {
   options?.progress?.(message);
+}
+
+/** Progress is cosmetic: a listener that throws never changes what the push does. */
+function reportPush(
+  options: CommandRuntimeOptions | undefined,
+  progress: PushProgress,
+): void {
+  try {
+    options?.onProgress?.(progress);
+  } catch {
+    // ignored on purpose
+  }
 }
 
 function getConfirm(
@@ -539,9 +552,18 @@ export class FigmakeSyncService {
       const skipped = new Set<string>();
       const remoteDiverged: string[] = [];
       let remoteCheck: "ok" | "skipped" = "skipped";
+      const checkStartedAt = Date.now();
 
       try {
         notify(options, "checking remote for changes");
+        reportPush(options, {
+          phase: "checking",
+          index: 1,
+          total: summary.total,
+          completed: 0,
+          percent: 0,
+          startedAt: checkStartedAt,
+        });
         const download = await session.downloadLatestCodeZip(
           context.store.paths.downloadsDir,
         );
@@ -645,6 +667,36 @@ export class FigmakeSyncService {
       const pushedOk = new Set<string>();
       const deletedOk: string[] = [];
 
+      // Progress: every planned operation counts once, so the percentage is real.
+      type Op = "replace" | "create" | "delete" | "rename";
+      const renameTo = new Set(renamedList.map((entry) => entry.to));
+      const renameFrom = new Set(renamedList.map((entry) => entry.from));
+      const total = modifiedList.length + addedPaths.length + deletedPaths.length;
+      const pushStartedAt = checkStartedAt;
+      let completed = 0;
+      const emit = (
+        phase: "sending" | "saving",
+        extra: { op?: Op; file?: string; finished?: { file: string; op: Op; ok: boolean }; last?: boolean } = {},
+      ): void => {
+        const { last, ...rest } = extra;
+        const ratio = total === 0 ? 1 : completed / total;
+        reportPush(options, {
+          phase,
+          index: Math.min(completed + 1, Math.max(total, 1)),
+          total,
+          completed,
+          percent: last ? 100 : Math.min(99, Math.floor(ratio * 100)),
+          startedAt: pushStartedAt,
+          ...rest,
+        });
+      };
+      const finish = (file: string, op: Op, ok: boolean): void => {
+        completed += 1;
+        emit("sending", { finished: { file, op, ok } });
+      };
+      const addOp = (file: string): Op => (renameTo.has(file) ? "rename" : "create");
+      const deleteOp = (file: string): Op => (renameFrom.has(file) ? "rename" : "delete");
+
       if (modifiedList.length > 0) {
         notify(options, "pushing changes");
       }
@@ -658,6 +710,7 @@ export class FigmakeSyncService {
             reason:
               "Binary file updates are not safely editable through the in-browser code editor. Re-upload or update this file manually.",
           });
+          finish(entry.current.path, "replace", false);
           continue;
         }
 
@@ -667,6 +720,7 @@ export class FigmakeSyncService {
         );
 
         notify(options, `updating ${entry.current.path}`);
+        emit("sending", { op: "replace", file: entry.current.path });
 
         try {
           const content = await fs.readFile(absolutePath, "utf8");
@@ -674,6 +728,7 @@ export class FigmakeSyncService {
           await session.replaceFileContents(entry.current.path, content);
           hasPendingEditorChanges = true;
           pushedOk.add(entry.current.path);
+          finish(entry.current.path, "replace", true);
         } catch (error) {
           throwIfAborted(signal);
           unresolved.push({
@@ -683,6 +738,7 @@ export class FigmakeSyncService {
                 ? error.message
                 : "Failed to update the file remotely.",
           });
+          finish(entry.current.path, "replace", false);
         }
       }
 
@@ -692,6 +748,10 @@ export class FigmakeSyncService {
         const absolutePaths = addedPaths.map((relativePath) =>
           resolveRelativePath(context.rootDir, relativePath),
         );
+        emit("sending", {
+          op: addOp(addedPaths[0] as string),
+          ...(addedPaths.length === 1 ? { file: addedPaths[0] as string } : {}),
+        });
         const uploadResult = await session.uploadFiles(
           absolutePaths,
           context.rootDir,
@@ -706,6 +766,7 @@ export class FigmakeSyncService {
         for (const addedPath of addedPaths) {
           if (uploadedSet.has(addedPath)) {
             pushedOk.add(addedPath);
+            finish(addedPath, addOp(addedPath), true);
             continue;
           }
 
@@ -718,10 +779,13 @@ export class FigmakeSyncService {
                 deferredUploadReasons.get(addedPath) ??
                 "Binary file upload could not be completed through the current UI automation path.",
             });
+            finish(addedPath, addOp(addedPath), false);
             continue;
           }
 
           notify(options, `creating ${addedPath}`);
+          // A lone file was already named when the upload began.
+          if (addedPaths.length > 1) emit("sending", { op: addOp(addedPath), file: addedPath });
 
           try {
             const absolutePath = resolveRelativePath(
@@ -733,6 +797,7 @@ export class FigmakeSyncService {
             await session.upsertFile(addedPath, content);
             hasPendingEditorChanges = true;
             pushedOk.add(addedPath);
+            finish(addedPath, addOp(addedPath), true);
           } catch (error) {
             throwIfAborted(signal);
             unresolved.push({
@@ -742,11 +807,13 @@ export class FigmakeSyncService {
                   ? error.message
                   : "Failed to create the new file remotely.",
             });
+            finish(addedPath, addOp(addedPath), false);
           }
         }
 
         if (hasPendingEditorChanges) {
           notify(options, "saving editor changes");
+          emit("saving");
           await session.commitPendingChanges();
           hasPendingEditorChanges = false;
         }
@@ -771,6 +838,7 @@ export class FigmakeSyncService {
 
       if (hasPendingEditorChanges) {
         notify(options, "saving editor changes");
+        emit("saving");
         await session.commitPendingChanges();
         hasPendingEditorChanges = false;
       }
@@ -789,6 +857,7 @@ export class FigmakeSyncService {
             path: relativePath,
             reason: `Not deleted: rename destination ${target} was not pushed.`,
           });
+          finish(relativePath, deleteOp(relativePath), false);
           continue;
         }
 
@@ -811,22 +880,28 @@ export class FigmakeSyncService {
               reason: "Deletion skipped by user confirmation policy.",
             })),
           );
+          for (const relativePath of deletable) {
+            finish(relativePath, deleteOp(relativePath), false);
+          }
         } else {
           for (const relativePath of deletable) {
             throwIfAborted(signal);
             notify(options, `deleting ${relativePath}`);
+            emit("sending", { op: deleteOp(relativePath), file: relativePath });
 
             try {
               const result = await session.deletePath(relativePath);
 
               if (result.status === "deleted") {
                 deletedOk.push(relativePath);
+                finish(relativePath, deleteOp(relativePath), true);
               } else {
                 unresolved.push({
                   path: result.path,
                   reason:
                     result.reason ?? `Delete action returned ${result.status}.`,
                 });
+                finish(relativePath, deleteOp(relativePath), false);
               }
             } catch (error) {
               throwIfAborted(signal);
@@ -837,6 +912,7 @@ export class FigmakeSyncService {
                     ? error.message
                     : "Failed to delete the file remotely.",
               });
+              finish(relativePath, deleteOp(relativePath), false);
             }
           }
         }
@@ -873,6 +949,9 @@ export class FigmakeSyncService {
           recordedAt: new Date().toISOString(),
         })),
       });
+
+      completed = total;
+      emit("saving", { last: true });
 
       return {
         dryRun: false,

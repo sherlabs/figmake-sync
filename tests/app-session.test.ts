@@ -140,6 +140,37 @@ describe("session: happy path", () => {
     expect(r.session.state).toMatchObject({ phase: "ready", canSend: false, canUndo: false, changes: [] });
   });
 
+  it("publishes send progress while sending (coalesced, plain feed line) and clears it afterwards", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    await r.session.ask("make the button blue");
+    r.states.length = 0;
+    await r.session.send();
+    const during = r.states.filter((s) => s.phase === "sending" && s.sendProgress).map((s) => s.sendProgress);
+    expect(during.length).toBeGreaterThan(0);
+    expect(during.length).toBeLessThan(40);
+    const last = during.at(-1);
+    expect(last).toMatchObject({ phase: "saving", percent: 100, total: 2, completed: 2 });
+    expect(last?.done.map((d) => d.name).sort()).toEqual(["app.ts", "new.ts"]);
+    const percents = during.map((p) => p?.percent ?? 0);
+    expect([...percents].sort((a, b) => a - b)).toEqual(percents);
+    expect(r.states.some((s) => s.activity.lines.some((l) => /^Sending app\.ts \(\d of 2\)$/u.test(l)))).toBe(true);
+    expect(r.session.state.sendProgress ?? null).toBeNull();
+  });
+
+  it("clears send progress when sending fails", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    await r.session.ask("x");
+    r.sync.push.mockImplementationOnce((o: { onProgress?: (p: unknown) => void }) => {
+      o.onProgress?.({ phase: "sending", op: "replace", file: "src/app.ts", index: 1, total: 2, completed: 0, percent: 0, startedAt: Date.now() });
+      return Promise.reject(Object.assign(new Error("Selector missing"), { code: "UI_CHANGED" }));
+    });
+    await r.session.send();
+    expect(r.session.state.phase).toBe("error");
+    expect(r.session.state.sendProgress ?? null).toBeNull();
+  });
+
   it("never sends anything the app added or agent helper files", async () => {
     const r = await rig();
     await r.session.openProject(LINK);

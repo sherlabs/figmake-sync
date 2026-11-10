@@ -100,6 +100,26 @@ export interface ActivityFeed {
   startedAt: number | null;
 }
 
+/** Live progress of "Send to Figma". Null/absent whenever nothing is being sent. */
+export interface SendProgress {
+  phase: "checking" | "sending" | "saving";
+  /** What the running step does, for the wording. */
+  op: "replace" | "create" | "delete" | "rename" | null;
+  /** Project-relative path of the file being sent now (shown only as a tooltip), and its file name. */
+  file: string | null;
+  name: string | null;
+  /** 1-based position of the running file and the number of files in this send. */
+  index: number;
+  total: number;
+  completed: number;
+  /** 0..100, real: finished steps / all steps. */
+  percent: number;
+  /** Epoch ms the send began. */
+  startedAt: number;
+  /** Every file finished so far, oldest first (capped). `ok` is false when it was skipped or failed. */
+  done: Array<{ file: string; name: string; op: "replace" | "create" | "delete" | "rename"; ok: boolean }>;
+}
+
 /** One row of the file explorer. `path` uses "/" and is relative to the project folder. */
 export interface TreeEntry {
   name: string;
@@ -179,6 +199,8 @@ export interface SessionState {
   processes: ProcessInfo[];
   /** Live output of the project being opened (kept after an error so it can be shown). */
   activity: ActivityFeed;
+  /** Present while sending to Figma (phase "sending"). */
+  sendProgress?: SendProgress | null;
 }
 
 export type ActivityKind = "look" | "edit" | "add" | "check" | "helper" | "other";

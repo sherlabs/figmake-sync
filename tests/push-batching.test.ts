@@ -14,6 +14,7 @@ import type {
   FigmaMakeProjectSession,
   UploadResult,
 } from "../src/figma/adapter.js";
+import type { PushProgress } from "../src/types/config.js";
 import { createZipFromDirectory } from "../src/utils/archive.js";
 
 const tempDirs: string[] = [];
@@ -32,6 +33,7 @@ interface Tracker {
   replaceCalls: string[];
   upsertCalls: string[];
   commitCalls: number;
+  failCommit?: boolean;
 }
 
 class RecordingSession implements FigmaMakeProjectSession {
@@ -66,7 +68,7 @@ class RecordingSession implements FigmaMakeProjectSession {
 
   commitPendingChanges(): Promise<void> {
     this.tracker.commitCalls += 1;
-    return Promise.resolve();
+    return this.tracker.failCommit ? Promise.reject(new Error("save failed")) : Promise.resolve();
   }
 
   uploadFiles(
@@ -176,5 +178,68 @@ describe("push batching", () => {
     expect(tracker.replaceCalls).toEqual(["src/app.ts"]);
     expect(tracker.upsertCalls).toEqual(["src/new.ts"]);
     expect(tracker.commitCalls).toBe(1);
+  });
+
+  async function setup(tracker: Tracker): Promise<{ service: FigmakeSyncService; projectDir: string }> {
+    const rootDir = await createTempDir("figmake-sync-progress");
+    const projectDir = path.join(rootDir, "project");
+    const remoteDir = path.join(rootDir, "remote");
+
+    await fs.ensureDir(projectDir);
+    await fs.outputFile(path.join(remoteDir, "src", "app.ts"), "export const value = 1;\n");
+    await fs.outputFile(path.join(remoteDir, "src", "old.ts"), "export const old = 1;\n");
+
+    const service = new FigmakeSyncService({
+      adapterFactory: ({ logger }) => new RecordingAdapter(remoteDir, tracker, logger),
+    });
+
+    await service.init("https://www.figma.com/make/test-project", projectDir, { cwd: projectDir, yes: true });
+    await service.pull({ cwd: projectDir, yes: true });
+    await fs.outputFile(path.join(projectDir, "src", "app.ts"), "export const value = 2;\n");
+    await fs.outputFile(path.join(projectDir, "src", "new.ts"), "export const added = true;\n");
+    await fs.remove(path.join(projectDir, "src", "old.ts"));
+
+    return { service, projectDir };
+  }
+
+  it("reports structured progress: real counts, monotonic percent, 100% only at the end", async () => {
+    const tracker: Tracker = { replaceCalls: [], upsertCalls: [], commitCalls: 0 };
+    const { service, projectDir } = await setup(tracker);
+    const events: PushProgress[] = [];
+
+    const result = await service.push({ cwd: projectDir, yes: true, onProgress: (p) => events.push(p) });
+
+    expect(result.unresolved).toHaveLength(0);
+    expect(events[0]).toMatchObject({ phase: "checking", percent: 0 });
+    const sending = events.filter((e) => e.phase === "sending");
+    expect(new Set(sending.map((e) => e.total))).toEqual(new Set([3]));
+    expect(sending.filter((e) => e.file && !e.finished).map((e) => [e.op, e.file, e.index])).toEqual([
+      ["replace", "src/app.ts", 1],
+      ["create", "src/new.ts", 2],
+      ["delete", "src/old.ts", 3],
+    ]);
+    expect(sending.filter((e) => e.finished).map((e) => [e.finished?.file, e.finished?.ok, e.completed])).toEqual([
+      ["src/app.ts", true, 1],
+      ["src/new.ts", true, 2],
+      ["src/old.ts", true, 3],
+    ]);
+    const percents = events.map((e) => e.percent);
+    expect([...percents].sort((a, b) => a - b)).toEqual(percents);
+    expect(percents.slice(0, -1).every((v) => v < 100)).toBe(true);
+    expect(events.at(-1)).toMatchObject({ phase: "saving", percent: 100, completed: 3, total: 3 });
+    // A running file is in progress, never already counted as done.
+    expect(sending.find((e) => e.file === "src/app.ts" && !e.finished)?.completed).toBe(0);
+  });
+
+  it("never reaches 100% when the push fails, and a throwing listener changes nothing", async () => {
+    const tracker: Tracker = { replaceCalls: [], upsertCalls: [], commitCalls: 0, failCommit: true };
+    const { service, projectDir } = await setup(tracker);
+    const events: PushProgress[] = [];
+
+    await expect(
+      service.push({ cwd: projectDir, yes: true, onProgress: (p) => { events.push(p); throw new Error("listener bug"); } }),
+    ).rejects.toThrow("save failed");
+    expect(events.length).toBeGreaterThan(0);
+    expect(events.some((e) => e.percent === 100)).toBe(false);
   });
 });

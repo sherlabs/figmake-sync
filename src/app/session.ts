@@ -3,13 +3,14 @@ import path from "node:path";
 import fs from "fs-extra";
 
 import type { FigmakeSyncService } from "../core/service.js";
+import type { PushProgress } from "../types/config.js";
 import { ProjectStateStore, STATE_DIRECTORY_NAME } from "../core/state.js";
 import { MAX_MERGE_BYTES } from "../diff/mergeText.js";
 import { resolveRelativePath } from "../utils/path.js";
 import { REMOTE_DIVERGED_PROMPT, isAllowedLoginUrl } from "../harness/index.js";
 import type { HarnessEvent, HarnessService } from "../harness/index.js";
 import type { DevStatus } from "../harness/types.js";
-import type { AgentChoice, ChangedFile, ChatFile, ChatMessage, ChatState, DesktopAppState, ErrorCode, FileView, FolderListing, Phase, ProcessId, ProjectSummary, ReviewDiff, ReviewItem, SessionState } from "../electron/contracts.js";
+import type { AgentChoice, ChangedFile, ChatFile, ChatMessage, ChatState, DesktopAppState, ErrorCode, FileView, FolderListing, Phase, ProcessId, ProjectSummary, ReviewDiff, ReviewItem, SendProgress, SessionState } from "../electron/contracts.js";
 import { isAuthRequiredError } from "../electron/authState.js";
 import { applyAgentEvent, baseName, capMessages, dropSummaryRepeat, emptyAssistant, finishLive, newId, userMessage } from "./chat.js";
 import type { ChatStore } from "./chatStore.js";
@@ -117,6 +118,8 @@ function cleanProjectName(raw: unknown): string | null {
   return name.length >= 1 && name.length <= 80 ? name : null;
 }
 
+const MAX_SEND_DONE = 500;
+
 const BUSY_PHASES: readonly Phase[] = ["connecting", "preparing", "working", "sending", "conflict", "syncing", "resolving"];
 
 const START: SessionState = {
@@ -174,6 +177,10 @@ export class Session {
   private stepStartedAt: number | null = null;
   private activityTimer: NodeJS.Timeout | null = null;
   private activityDirty = false;
+  /** Progress of the send in flight, and its own 100 ms coalescing timer. */
+  private sendProg: SendProgress | null = null;
+  private sendProgTimer: NodeJS.Timeout | null = null;
+  private sendProgDirty = false;
   /** The person stopped the preview on purpose: the project stays open, just without a picture. */
   private previewStopped = false;
 
@@ -444,6 +451,7 @@ export class Session {
     if (this.busy || !root) return;
     if (resolution ? phase !== "conflict" : phase !== "ready" || !this.s.canSend) return;
     await this.exclusive(async (signal) => {
+      this.sendProg = null;
       this.set({ phase: "sending", message: undefined });
       try {
         if (resolution) {
@@ -460,6 +468,7 @@ export class Session {
               projectRoot: root,
               signal,
               requireRemoteCheck: true,
+              onProgress: (p) => this.sendProgress(p),
               confirm: (message) =>
                 REMOTE_DIVERGED_PROMPT.test(message) && !resolution ? Promise.reject(new Diverged(message)) : Promise.resolve(true),
             }),
@@ -477,8 +486,58 @@ export class Session {
         if (isAuthRequiredError(error)) return this.needSignin(() => this.send(resolution));
         this.deps.log("send failed", error);
         this.fail(plainError(error, "figma"), () => this.send(resolution), errorCode(error, "figma"));
+      } finally {
+        this.clearSendProgress();
       }
     });
+  }
+
+  /** Folds one push event into the send progress, feeds a plain line, and tells the window at most every 100 ms. */
+  private sendProgress(p: PushProgress): void {
+    const prev = this.sendProg;
+    const done = prev?.done ?? [];
+    const nameOf = (file: string): string => file.split("/").at(-1) ?? file;
+    const next: SendProgress = {
+      phase: p.phase,
+      op: p.op ?? null,
+      file: p.file ?? null,
+      name: p.file ? nameOf(p.file) : null,
+      index: p.index,
+      total: p.total,
+      completed: p.completed,
+      percent: p.percent,
+      startedAt: p.startedAt,
+      done: p.finished ? [...done, { file: p.finished.file, name: nameOf(p.finished.file), op: p.finished.op, ok: p.finished.ok }].slice(-MAX_SEND_DONE) : done,
+    };
+    this.sendProg = next;
+    if (!p.finished) {
+      if (p.phase === "checking") this.feed("Checking Figma for newer changes");
+      else if (p.phase === "saving") this.feed("Saving the changes in Figma");
+      else if (p.file) this.feed(`${p.op === "delete" ? "Removing" : "Sending"} ${nameOf(p.file)} (${p.index} of ${p.total})`);
+      else if (p.op) this.feed(`Sending ${p.total - p.completed} new files`);
+    }
+    if (this.sendProgTimer && p.percent < 100) {
+      this.sendProgDirty = true;
+      return;
+    }
+    if (this.sendProgTimer) clearTimeout(this.sendProgTimer);
+    this.sendProgDirty = false;
+    this.set({});
+    this.sendProgTimer = setTimeout(() => {
+      this.sendProgTimer = null;
+      if (this.sendProgDirty) {
+        this.sendProgDirty = false;
+        this.set({});
+      }
+    }, 100);
+    this.sendProgTimer.unref();
+  }
+
+  private clearSendProgress(): void {
+    this.sendProg = null;
+    this.sendProgDirty = false;
+    if (this.sendProgTimer) clearTimeout(this.sendProgTimer);
+    this.sendProgTimer = null;
   }
 
   cancel(): Promise<void> {
@@ -1298,6 +1357,7 @@ export class Session {
       this.startedAt = null;
       this.stepStartedAt = null;
     }
+    next["sendProgress"] = next["phase"] === "sending" ? this.sendProg : null;
     next["activity"] = { lines: [...this.activity], stepStartedAt: this.stepStartedAt, startedAt: this.startedAt };
     next["processes"] = buildProcesses({
       hasProject: Boolean(this.root) && next["phase"] !== "start",

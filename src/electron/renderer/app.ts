@@ -65,6 +65,7 @@ const sideToggle = h("button", { type: "button", class: "btn icon fm-sidetoggle"
 const toolbar = h("header", { class: "toolbar" }, h("div", { class: "ttl row-ttl" }, sideToggle, title, chip), h("div", { class: "tright" }, updateBtn, chatBtn, syncBtn, sendBtn, gearBtn));
 
 const banner = h("div", { class: "errbanner", role: "alert", hidden: true });
+const pgCard = h("div", { class: "pg-card", role: "group", "aria-label": "Sending to Figma", hidden: true });
 
 const welcomeInput = h("input", { class: "field", type: "text", placeholder: "https://www.figma.com/make/…", "aria-label": "Figma Make link", spellcheck: "false", autocomplete: "off" });
 const welcomeOpen = h("button", { type: "submit", class: "btn primary", disabled: true }, "Open");
@@ -110,7 +111,7 @@ const tabs = h("div", { class: "rail-tabs" }, h("div", { class: "seg", role: "ta
 const rail = h("section", { class: "rail", id: "rail-body", "aria-label": "Side panel" }, tabs, chatPanel.el, filesPanel.el, outputPanel.el);
 const resizer = h("div", { class: "resizer", role: "separator", "aria-orientation": "vertical", "aria-label": "Resize side panel", tabindex: "0" });
 const work = h("div", { class: "work" }, stage, resizer, rail);
-const main = h("div", { class: "main" }, toolbar, banner, work, statusBar);
+const main = h("div", { class: "main" }, toolbar, banner, pgCard, work, statusBar);
 const appEl = h("div", { class: "app" }, side, main);
 
 const sheetHost = h("div", { class: "sheet-host" });
@@ -202,8 +203,17 @@ document.addEventListener("pointerdown", (e) => {
 
 // ================= toolbar / banner / status =================
 
+/** The toolbar chip while sending: plain words and a real count. */
+function sendChipText(p: SessionState["sendProgress"]): string {
+  if (!p) return "Sending…";
+  if (p.phase === "checking") return "Checking Figma";
+  if (p.phase === "saving") return p.percent >= 100 ? "Sent" : "Saving in Figma";
+  return p.total > 0 ? `Sending ${Math.min(p.index, p.total)} of ${p.total}` : "Sending…";
+}
+
 function statusChip(s: SessionState): { text: string; tone: string; spin: boolean } {
   if (s.phase === "error" || s.phase === "needs-figma-signin" || s.phase === "needs-ai-signin" || s.phase === "conflict" || s.phase === "resolving" || s.phase === "needs-ai-choice") return { text: s.phase === "error" ? "Needs attention" : "Waiting for you", tone: s.phase === "error" ? "bad" : "chg", spin: false };
+  if (s.phase === "sending") return { text: sendChipText(s.sendProgress), tone: "busy", spin: true };
   if (busyNow(s)) return { text: "Working", tone: "busy", spin: true };
   return s.canSend ? { text: "Changes waiting", tone: "chg", spin: false } : { text: "Up to date", tone: "ok", spin: false };
 }
@@ -251,11 +261,100 @@ function renderBanner(s: SessionState): void {
   );
 }
 
+// ================= sending loader =================
+
+interface SendUi {
+  title: HTMLElement;
+  pct: HTMLElement;
+  clock: HTMLElement;
+  track: HTMLElement;
+  fill: HTMLElement;
+  count: HTMLElement;
+  toggle: HTMLButtonElement;
+  recent: HTMLElement;
+  all: HTMLElement;
+}
+let pgUi: SendUi | null = null;
+let pgAll = false;
+let pgStart = 0;
+let pgTick = 0;
+
+function buildSendCard(): SendUi {
+  const title = h("span", { class: "pg-title" });
+  const pct = h("span", { class: "pg-pct" }, "0%");
+  const clock = h("span", { class: "pg-clock" }, "0:00");
+  const fill = document.createElement("i");
+  fill.className = "pg-fill";
+  const track = h("div", { class: "pg-track", role: "progressbar", "aria-label": "Sending to Figma", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": "0" }, fill);
+  const count = h("span", { class: "pg-count" });
+  const toggle = h("button", { type: "button", class: "plain quiet pg-toggle", "aria-expanded": "false", onclick: () => { pgAll = !pgAll; if (state) renderSendCard(state); } }, "Show details");
+  const recent = h("ul", { class: "pg-list pg-recent", "aria-label": "Recently sent" });
+  const all = h("ul", { class: "pg-list pg-all", "aria-label": "All files", hidden: true });
+  const stop = h("button", { type: "button", class: "plain quiet pg-stop", onclick: () => void api.cancel() }, "Stop");
+  pgCard.replaceChildren(
+    h("div", { class: "pg-head" }, h("span", { class: "spin", "aria-hidden": "true" }), title, pct, clock, stop),
+    track,
+    h("div", { class: "pg-meta" }, count, toggle),
+    recent,
+    all,
+  );
+  return { title, pct, clock, track, fill, count, toggle, recent, all };
+}
+
+function sendTitle(p: NonNullable<SessionState["sendProgress"]>): string {
+  if (p.phase === "checking") return "Checking Figma for newer changes";
+  if (p.phase === "saving") return p.percent >= 100 ? "Sent" : "Saving your changes in Figma";
+  const verb = p.op === "delete" ? "Removing" : "Sending";
+  if (p.name) return `${verb} ${p.name}`;
+  if (p.op && p.total > 0) return `${verb} new files`;
+  return "Getting ready";
+}
+
+function sendRow(f: { file: string; name: string; ok: boolean }): HTMLElement {
+  return h("li", { class: f.ok ? "pg-done" : "pg-skip", title: f.file }, f.ok ? icon("check-b", true) : icon("warn", true), h("span", { class: "pg-name" }, f.name), f.ok ? null : h("span", { class: "pg-note" }, "Not sent"));
+}
+
+function tickSend(): void {
+  if (pgUi && state?.sendProgress) pgUi.clock.textContent = formatElapsed(Date.now() - state.sendProgress.startedAt);
+}
+
+function renderSendCard(s: SessionState): void {
+  const p = s.phase === "sending" ? s.sendProgress ?? null : null;
+  pgCard.hidden = s.phase !== "sending";
+  if (s.phase !== "sending") {
+    pgAll = false;
+    pgStart = 0;
+    window.clearInterval(pgTick);
+    pgTick = 0;
+    return;
+  }
+  const ui = (pgUi ??= buildSendCard());
+  if (!pgStart) pgStart = Date.now();
+  if (!pgTick) pgTick = window.setInterval(tickSend, 1000);
+  const pct = p ? p.percent : 0;
+  ui.title.textContent = p ? sendTitle(p) : "Getting ready";
+  ui.title.title = p?.file ?? "";
+  ui.pct.textContent = `${pct}%`;
+  ui.fill.style.width = `${pct}%`;
+  ui.track.setAttribute("aria-valuenow", String(pct));
+  ui.count.textContent = p && p.total > 0 ? `${p.completed} of ${p.total} ${p.total === 1 ? "file" : "files"} done` : "";
+  ui.clock.textContent = formatElapsed(Date.now() - (p?.startedAt ?? pgStart));
+  const done = p?.done ?? [];
+  ui.recent.replaceChildren(...done.slice(-3).map(sendRow));
+  ui.recent.hidden = pgAll || done.length === 0;
+  ui.all.replaceChildren(...done.map(sendRow));
+  ui.all.hidden = !pgAll;
+  ui.toggle.hidden = done.length === 0;
+  ui.toggle.textContent = pgAll ? "Hide details" : "Show details";
+  ui.toggle.setAttribute("aria-expanded", String(pgAll));
+  if (pgAll) ui.all.scrollTop = ui.all.scrollHeight;
+}
+
 const WORKING_TEXT: Partial<Record<Phase, (s: SessionState) => string>> = {
   connecting: () => "Getting your project…",
   preparing: (s) => (s.previewUrl || !s.projectName ? `Getting ${agentName(s.agent)} ready…` : "Setting things up…"),
   working: (s) => `${agentName(s.agent)} is making your change…`,
-  sending: () => "Sending to Figma…",
+  sending: (s) => (s.sendProgress && s.sendProgress.total > 0 ? `Sending to Figma… ${s.sendProgress.percent}%` : "Sending to Figma…"),
   syncing: () => "Syncing with Figma…",
 };
 
@@ -918,6 +1017,7 @@ function render(s: SessionState): void {
   renderSidebar(s);
   renderToolbar(s);
   renderBanner(s);
+  renderSendCard(s);
   renderStage(s);
   chatPanel.setSession(s);
   filesPanel.setSession(s);

@@ -89,6 +89,25 @@ export type ProjectConfig = z.output<typeof projectConfigSchema>;
 export type PullStrategy = ProjectConfig["sync"]["safePullStrategy"];
 export type LogLevel = ProjectConfig["logging"]["level"];
 
+/** Structured progress of a push, for a real loader. `completed` counts finished operations (skipped ones included). */
+export interface PushProgress {
+  phase: "checking" | "sending" | "saving";
+  /** The operation now running, if any. A batched upload has no single `file`. */
+  op?: "replace" | "create" | "delete" | "rename";
+  /** Project-relative path of the running operation. */
+  file?: string;
+  /** 1-based position of the running operation (never above `total`). */
+  index: number;
+  total: number;
+  completed: number;
+  /** completed / total, 0..100. Only the very last event of a successful push reads 100. */
+  percent: number;
+  /** Epoch ms the push began. */
+  startedAt: number;
+  /** An operation that just ended; `ok` is false when it was skipped or failed. */
+  finished?: { file: string; op: "replace" | "create" | "delete" | "rename"; ok: boolean };
+}
+
 export interface CommandRuntimeOptions {
   cwd?: string;
   projectRoot?: string;
@@ -99,6 +118,8 @@ export interface CommandRuntimeOptions {
   strategy?: PullStrategy;
   headless?: boolean;
   progress?: (message: string) => void;
+  /** Structured progress (push only). Must not throw; errors from it are ignored. */
+  onProgress?: (progress: PushProgress) => void;
   confirm?: (message: string, defaultValue?: boolean) => Promise<boolean>;
   waitForManualAction?: (message: string) => Promise<void>;
   /** Finish sign-in by itself once the browser shows a signed-in Figma page. */

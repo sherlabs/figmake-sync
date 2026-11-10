@@ -173,3 +173,33 @@ describe("extractTreeRows on the flat virtualised Figma tree", () => {
     }
   });
 });
+
+describe("resolveTreeChain over a scrolled, virtualised window", () => {
+  const row = (label: string, depth: number, kind: "file" | "folder" = "file") => ({ label, depth, kind, expanded: kind === "folder" ? true : null, active: false, activeSupported: true });
+  const base = { kind: "file" as const, expandLast: false, list: false, assumeExpandedAt: [] as number[] };
+
+  it("reports where the chain stopped when the file is below the window", async () => {
+    const { resolveTreeChain } = await import("../src/figma/adapter.js");
+    const top = [row("src", 193, "folder"), row("assets", 201, "folder"), row("App.tsx", 201)];
+    expect(resolveTreeChain(top, { ...base, segments: ["src", "Outlook.tsx"] })).toEqual({ status: "missing", at: 1, parentDepth: 193, childDepth: 201 });
+  });
+
+  it("finds it after the src row scrolled out of the page, and ignores same-named rows outside src", async () => {
+    const { resolveTreeChain } = await import("../src/figma/adapter.js");
+    // window: tail of src's children, then root-level files with the same names
+    const scrolled = [row("MyAccount.tsx", 201), row("Outlook.tsx", 201), row("zeta.ts", 201), row("AGENTS.md", 193), row("Outlook.tsx", 193)];
+    const resume = { at: 1, parentDepth: 193, childDepth: 201 };
+    const hit = resolveTreeChain(scrolled, { ...base, segments: ["src", "Outlook.tsx"], resume });
+    expect(hit).toMatchObject({ status: "found", index: 1, matchCount: 1 });
+    // a root-only name must not match inside src
+    expect(resolveTreeChain(scrolled, { ...base, segments: ["src", "AGENTS.md"], resume })).toMatchObject({ status: "missing" });
+  });
+
+  it("skips rows above the folder when the window still shows them", async () => {
+    const { resolveTreeChain } = await import("../src/figma/adapter.js");
+    const mixed = [row("public", 193, "folder"), row("Outlook.tsx", 193), row("src", 193, "folder"), row("a.ts", 201)];
+    const resume = { at: 1, parentDepth: 193, childDepth: 201 };
+    expect(resolveTreeChain(mixed, { ...base, segments: ["src", "Outlook.tsx"], resume })).toMatchObject({ status: "missing" });
+    expect(resolveTreeChain(mixed, { ...base, segments: ["src", "a.ts"], resume })).toMatchObject({ status: "found", index: 3 });
+  });
+});

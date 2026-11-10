@@ -285,6 +285,11 @@ export interface TreeQueryArgs {
   list: boolean;
   /** Segment positions that were clicked already and must not be expanded again. */
   assumeExpandedAt: number[];
+  /**
+   * The tree is a virtualised list: after scrolling, the ancestor rows may be gone from the page.
+   * Continue the chain at segment `at`, searching the subtree of an ancestor seen earlier at `parentDepth`.
+   */
+  resume?: { at: number; parentDepth: number; childDepth: number } | undefined;
 }
 
 export type TreeQueryResult =
@@ -297,7 +302,7 @@ export type TreeQueryResult =
       children: string[];
     }
   | { status: "expand"; index: number; at: number }
-  | { status: "missing"; at: number };
+  | { status: "missing"; at: number; parentDepth?: number; childDepth?: number };
 
 /**
  * Resolves a path segment by segment over a flat, document-ordered row list.
@@ -340,13 +345,35 @@ export function resolveTreeChain(
 
   let parentIdx = -1;
   let parentDepth = -1;
+  let startK = 0;
 
-  for (let k = 0; k < segs.length; k += 1) {
+  if (args.resume) {
+    startK = args.resume.at;
+    parentDepth = args.resume.parentDepth;
+  }
+
+  let step = Infinity;
+
+  for (let i = 1; i < rows.length; i += 1) {
+    const gap = Math.abs(rows[i]!.depth - rows[i - 1]!.depth);
+
+    if (gap > 0 && gap < step) {
+      step = gap;
+    }
+  }
+
+  if (step === Infinity) {
+    step = 1;
+  }
+
+  for (let k = startK; k < segs.length; k += 1) {
     const isLast = k === segs.length - 1;
     const wantKind = isLast ? args.kind : "folder";
+    const resuming = k === startK && args.resume !== undefined;
     let found = -1;
     let count = 0;
-    let childDepth: number | null = null;
+    let inSub = false;
+    let childDepth: number | null = resuming ? args.resume!.childDepth : null;
 
     for (let i = parentIdx + 1; i < rows.length; i += 1) {
       const row = rows[i]!;
@@ -357,8 +384,14 @@ export function resolveTreeChain(
         }
       } else {
         if (row.depth <= parentDepth) {
+          if (resuming && !inSub) {
+            continue;
+          }
+
           break;
         }
+
+        inSub = true;
 
         if (childDepth === null) {
           childDepth = row.depth;
@@ -385,7 +418,9 @@ export function resolveTreeChain(
     }
 
     if (found < 0) {
-      return { status: "missing", at: k };
+      return k > 0
+        ? { status: "missing", at: k, parentDepth, childDepth: childDepth ?? parentDepth + step }
+        : { status: "missing", at: k };
     }
 
     const row = rows[found]!;
@@ -2252,6 +2287,7 @@ export class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSessio
     const assumeExpandedAt: number[] = [];
     let scrollStep = -1;
     let originalScroll: number | null = null;
+    let resume: TreeQueryArgs["resume"];
 
     for (let iteration = 0; iteration < 400; iteration += 1) {
       this.throwIfAborted();
@@ -2262,8 +2298,14 @@ export class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSessio
         expandLast: options.expandLast ?? false,
         list: false,
         assumeExpandedAt,
+        resume,
       };
       const result = await this.queryTree(treeRoot, args);
+
+      // Remember where the folder chain got to: once we scroll, its ancestor rows leave the (virtualised) page.
+      if (result.status === "missing" && result.parentDepth !== undefined && result.childDepth !== undefined) {
+        resume = { at: result.at, parentDepth: result.parentDepth, childDepth: result.childDepth };
+      }
 
       if (result.status === "found") {
         return {

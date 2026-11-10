@@ -696,6 +696,44 @@ describe("renderer layout", () => {
       await bare.context().close();
     });
 
+    it("sending loader shows bar, percentage, file name and count; details list all files; no overflow narrow or wide", async (ctx) => {
+      if (!browser) return ctx.skip();
+      const longName = "AVeryLongComponentNameThatKeepsGoingAndGoingForeverAndEver.tsx";
+      const done = Array.from({ length: 8 }, (_, i) => ({ file: `src/components/File${i}.tsx`, name: `File${i}.tsx`, op: "replace", ok: i !== 3 }));
+      const sending = { ...READY, phase: "sending", sendProgress: { phase: "sending", op: "replace", file: `src/components/${longName}`, name: longName, index: 9, total: 12, completed: 8, percent: 66, startedAt: Date.now() - 23_000, done } };
+      for (const scheme of ["light", "dark"] as const) {
+        for (const size of [SIZE, { width: 560, height: 640 }]) {
+          const page = await open(sending, size, scheme);
+          await page.waitForSelector(".pg-card:not([hidden])");
+          expect(await page.locator(".chip.status").innerText()).toBe("Sending 9 of 12");
+          expect(await page.locator(".pg-title").innerText()).toBe(`Sending ${longName}`);
+          expect(await page.locator(".pg-title").getAttribute("title")).toBe(`src/components/${longName}`);
+          expect(await page.locator(".pg-pct").innerText()).toBe("66%");
+          expect(await page.locator(".pg-track").getAttribute("aria-valuenow")).toBe("66");
+          expect(await page.locator(".pg-count").innerText()).toBe("8 of 12 files done");
+          expect(await page.locator(".pg-recent li").count()).toBe(3);
+          expect(await page.locator(".pg-all").isHidden()).toBe(true);
+          const fill = await page.locator(".pg-fill").evaluate((el) => el.getBoundingClientRect().width / (el.parentElement as HTMLElement).getBoundingClientRect().width);
+          expect(fill).toBeGreaterThan(0.6);
+          expect(fill).toBeLessThan(0.72);
+          // One visible Stop only.
+          expect(await page.locator("button:visible", { hasText: /^Stop$/u }).count()).toBe(1);
+          const card = await rect(page, ".pg-card");
+          expect(card && card.x + card.w <= size.width && card.x >= 0).toBe(true);
+          expect(await page.locator(".pg-card").evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+          await page.click(".pg-toggle");
+          expect(await page.locator(".pg-all li").count()).toBe(8);
+          expect(await page.locator(".pg-recent").isHidden()).toBe(true);
+          expect(await overflowX(page)).toBeLessThanOrEqual(0);
+          await shot(page, `sending-${scheme}-${size.width}`);
+          await page.context().close();
+        }
+      }
+      const ready = await open(READY, SIZE, "light");
+      expect(await ready.locator(".pg-card").isHidden()).toBe(true);
+      await ready.context().close();
+    });
+
     it("Files tab: each running row has an Output disclosure with its recent lines", async (ctx) => {
       if (!browser) return ctx.skip();
       const procs = [
