@@ -2287,7 +2287,6 @@ export class PlaywrightFigmaMakeProjectSession implements FigmaMakeProjectSessio
         return null;
       }
 
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
       const scroll = await runPageScript<{ original: number; atEnd?: boolean; [k: string]: unknown }>(treeRoot, TREE_SCROLL_SCRIPT, {
         step: scrollStep + 1,
       });
