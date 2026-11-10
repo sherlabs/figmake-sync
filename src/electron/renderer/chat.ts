@@ -244,7 +244,7 @@ export function createChatPanel(host: ChatHost): ChatPanel {
     const body = open ? diffPanel((() => { const d = diffs.get(diffKey(c)); return Array.isArray(d) ? d : null; })()) : null;
     return h(
       "section",
-      { class: `chcard ${c.fate}${tail ? " tail" : ""}`, "aria-label": "Change made" },
+      { class: `chcard ${c.fate}${tail ? " last" : ""}`, "aria-label": "Change made" },
       h("div", { class: "chcard-top" }, h("span", { class: "tick" }, icon(c.fate === "undone" ? "undo" : "pencil", true)), h("div", { class: "chcard-t" }, h("p", { class: "chcard-title" }, c.summary), chips.length ? h("div", { class: "fchips" }, ...chips) : null)),
       h("div", { class: "chcard-foot" }, note, h("span", { class: "sp" }), view, undo),
       body,

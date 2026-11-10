@@ -110,9 +110,8 @@ describe("fake explorer fixture", { timeout: 30_000 }, () => {
     expect(await input.inputValue()).toBe("new-file-5.tsx");
     await input.fill("Fresh.tsx");
     await input.press("Enter");
-    const m = await model();
-    expect(m.files["src/Fresh.tsx"]).toBe("");
-    expect(m.pending).toBeNull();
+    await expect.poll(async () => (await model()).files["src/Fresh.tsx"], { timeout: 10_000 }).toBe("");
+    expect((await model()).pending).toBeNull();
   });
 });
 
