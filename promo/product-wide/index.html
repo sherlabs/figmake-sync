@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=1920, height=1080" />
-<title>figmake-sync wide</title>
+<title>Figmake Sync wide</title>
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
 <style>
 @font-face{font-family:"Inter";src:url(fonts/inter-latin-wght-normal.woff2) format("woff2");font-weight:100 900}
@@ -98,7 +98,7 @@ html.is-win { --top-inset: 0px; }
   padding: 0 8px 8px;
   min-height: 0;
 }
-.side-top { height: var(--top-inset); flex: none; display: flex; align-items: center; justify-content: flex-end; padding-right: 2px; }
+.side-top { height: max(var(--top-inset), 44px); flex: none; display: flex; align-items: center; justify-content: flex-end; padding-right: 2px; }
 .side-top .fm-sidetoggle { -webkit-app-region: no-drag; }
 .app.fm-side-rail .side-top { height: calc(var(--top-inset) + 44px); align-items: flex-end; justify-content: center; padding: 0 0 6px; }
 .side { overflow: hidden; min-width: 0; position: relative; }
@@ -106,6 +106,8 @@ html.is-win { --top-inset: 0px; }
 .app.side-drag { transition: none; cursor: col-resize; -webkit-user-select: none; user-select: none; }
 .fm-sidetoggle { flex: none; }
 .toolbar { transition: padding-left 150ms ease; }
+/* the macOS window buttons reach about 84px from the left: keep the title clear of them next to the narrow rail */
+html.is-mac .app.fm-side-rail .toolbar { padding-left: 36px; }
 .fm-namefield { margin-top: 8px; }
 html.is-mac .side-top, html.is-mac .toolbar { -webkit-app-region: drag; -webkit-user-select: none; user-select: none; }
 html.is-mac .toolbar button, html.is-mac .toolbar input { -webkit-app-region: no-drag; }
@@ -1074,6 +1076,18 @@ dialog.sheet.sy-sheet { width: min(760px, calc(100vw - 32px)); }
 .tasks-h .tk-mark { margin-top: 0; width: 18px; height: 18px; }
 .tasks-h .spin { border-color: var(--sep-2); border-top-color: var(--text); }
 
+/* ============ startup shell: shown from first paint until the first state arrives ============ */
+#boot { position: fixed; inset: 0; z-index: 100; display: grid; grid-template-columns: 228px minmax(0, 1fr); background: var(--win); }
+#boot .b-side { background: var(--side); border-right: 1px solid var(--side-edge); padding: 64px 14px 14px; display: flex; flex-direction: column; gap: 10px; }
+#boot .b-main { display: flex; flex-direction: column; min-width: 0; }
+#boot .b-top { height: 52px; padding: 0 20px; display: flex; align-items: center; }
+#boot .b-pane { flex: 1; padding: 28px 28px; display: flex; flex-direction: column; gap: 14px; }
+#boot .b-bar, #boot .b-row { display: block; height: 12px; border-radius: 6px; background: var(--text-3); opacity: 0.16; animation: b-pulse 1.4s ease-in-out infinite; }
+#boot .b-row { height: 34px; border-radius: 9px; }
+#boot .w30 { width: 30%; } #boot .w35 { width: 35%; } #boot .w40 { width: 40%; } #boot .w50 { width: 50%; } #boot .w60 { width: 60%; } #boot .w70 { width: 70%; }
+
+@media (prefers-reduced-motion: reduce) { #boot .b-bar, #boot .b-row { animation: none; } }
+
 *,*::before,*::after{animation:none!important;transition:none!important}
 html,body{height:auto}
 body{overflow:visible}
@@ -1109,36 +1123,40 @@ body{overflow:visible}
 .hfcur{position:absolute;left:0;top:0;width:22px;height:22px;opacity:0;z-index:60;filter:drop-shadow(0 1px 2px rgba(0,0,0,.4))}
 .rip{position:absolute;left:0;top:0;width:34px;height:34px;margin:-17px 0 0 -17px;border-radius:50%;border:2px solid #0b66cc;opacity:0;z-index:59}
 
-:root{--bg:#0b0b0c;--ink:#f5f5f7;--mute:#98989d;--blue:#4c9dff}
+:root{--bg:#0b0b0c;--ink:#f5f5f7;--mute:#98989d;--blue:#9d84ff}
 body>svg{position:absolute;width:0;height:0;overflow:hidden}
 body{margin:0;background:var(--bg)}
 #root{position:relative;width:1920px;height:1080px;overflow:hidden;background:var(--bg);font-family:"Inter",system-ui,sans-serif;color:var(--ink)}
 .stage .slot{position:absolute;inset:0}
-#glow{position:absolute;left:460px;top:-180px;width:1000px;height:700px;border-radius:50%;background:radial-gradient(circle,rgba(76,157,255,.16),rgba(76,157,255,0) 65%)}
+#glow{position:absolute;left:460px;top:-180px;width:1000px;height:700px;border-radius:50%;background:radial-gradient(circle,rgba(139,92,240,.2),rgba(139,92,240,0) 65%)}
 #win{position:absolute;left:288px;top:26px;width:1344px;height:866px;border-radius:16px;overflow:hidden;background:#fff;box-shadow:0 50px 120px rgba(0,0,0,.7),0 0 0 1px rgba(255,255,255,.12)}
 #cam{position:absolute;left:0;top:0;width:1180px;height:760px;transform-origin:0 0}
 .tl{position:absolute;left:20px;top:19px;display:flex;gap:8px;z-index:70}
 .tl i{display:block;width:12px;height:12px;border-radius:50%}
 .cap{position:absolute;left:0;top:918px;width:1920px;text-align:center;font:700 100px/1 "Inter",sans-serif;letter-spacing:-.04em;white-space:nowrap;opacity:0}
-.cap b{font-weight:700;color:var(--blue)}
+.cap b{font-weight:700;background:linear-gradient(90deg,#a98bff,#6db3ee);-webkit-background-clip:text;background-clip:text;color:transparent}
 #nw{position:absolute;left:288px;top:22px;width:1344px;height:874px;border-radius:16px;overflow:hidden;background:#fff;box-shadow:0 50px 120px rgba(0,0,0,.7),0 0 0 1px rgba(255,255,255,.12);opacity:0}
 #nw .zw{position:absolute;left:0;top:0;width:1344px;height:874px;transform-origin:0 0}
 #nw img{position:absolute;left:0;top:0;width:1344px;height:auto;display:block;opacity:0}
-#intro{position:absolute;inset:0}
-#intro .ico{position:absolute;left:960px;top:170px;width:170px;height:170px;margin-left:-85px;filter:drop-shadow(0 24px 50px rgba(76,157,255,.25))}
+#intro{position:absolute;inset:0;background:radial-gradient(900px 560px at 50% 6%,rgba(139,92,240,.2),transparent 70%),radial-gradient(620px 460px at 4% 100%,rgba(238,122,69,.12),transparent 70%),radial-gradient(620px 460px at 98% 98%,rgba(76,159,224,.13),transparent 70%)}
+#intro .ico{position:absolute;left:960px;top:150px;width:200px;height:200px;margin-left:-100px;filter:drop-shadow(0 24px 60px rgba(139,92,240,.4))}
 #intro h1{position:absolute;left:0;top:400px;width:1920px;text-align:center;margin:0;font:700 128px/1.06 "Inter",sans-serif;letter-spacing:-.045em}
-#intro h1 b{color:var(--blue);font-weight:700}
+#intro h1 b{font-weight:700;background:linear-gradient(90deg,#f59a6a,#a98bff 55%,#6db3ee);-webkit-background-clip:text;background-clip:text;color:transparent}
 #intro .sub{position:absolute;left:0;top:770px;width:1920px;text-align:center;font:500 62px/1.1 "Inter",sans-serif;color:var(--mute);letter-spacing:-.03em}
-#end{position:absolute;inset:0;opacity:0}
-#end .cta{position:absolute;left:0;top:775px;width:1920px;display:flex;justify-content:center}
-#end .cta span{font:600 40px/1 "Inter",sans-serif;color:#fff;background:#0b66cc;border-radius:999px;padding:22px 44px;letter-spacing:-.02em}
-#end .ico{position:absolute;left:960px;top:96px;width:240px;height:272px;margin-left:-120px;filter:drop-shadow(0 30px 60px rgba(76,157,255,.25))}
-#end h2{position:absolute;left:0;top:360px;width:1920px;text-align:center;margin:0;font:700 120px/1 "Inter",sans-serif;letter-spacing:-.045em}
-#end .sub{position:absolute;left:0;top:510px;width:1920px;text-align:center;font:500 62px/1.1 "Inter",sans-serif;color:var(--mute);letter-spacing:-.03em}
-#end .by{position:absolute;left:0;top:640px;width:1920px;display:flex;justify-content:center;align-items:center;gap:30px;font:500 44px/1 "Inter",sans-serif;color:var(--mute)}
-#end .by img{width:300px;height:auto;display:block}
-#end .un{position:absolute;left:0;top:930px;width:1920px;display:flex;justify-content:center;align-items:center;gap:20px;font:500 36px/1 "Inter",sans-serif;color:var(--mute)}
-#end .un img{height:44px;width:auto;display:block}
+#end{position:absolute;inset:0;opacity:0;background:radial-gradient(900px 600px at 50% 8%,rgba(139,92,240,.22),transparent 70%),radial-gradient(700px 500px at 6% 100%,rgba(238,122,69,.13),transparent 70%),radial-gradient(700px 500px at 96% 96%,rgba(76,159,224,.15),transparent 70%),var(--bg)}
+#end .halo{position:absolute;left:960px;top:228px;width:560px;height:560px;margin:-280px 0 0 -280px;border-radius:50%;background:conic-gradient(from 20deg,rgba(238,122,69,.55),rgba(139,92,240,.6),rgba(76,159,224,.55),rgba(88,183,136,.5),rgba(238,122,69,.55));filter:blur(78px);opacity:.55}
+#end .ico{position:absolute;left:960px;top:96px;width:264px;height:264px;margin-left:-132px;filter:drop-shadow(0 28px 50px rgba(0,0,0,.55))}
+#end h2{position:absolute;left:0;top:392px;width:1920px;text-align:center;margin:0;font:700 128px/1 "Inter",sans-serif;letter-spacing:-.045em}
+#end .sub{position:absolute;left:0;top:546px;width:1920px;text-align:center;font:500 52px/1.1 "Inter",sans-serif;color:#b3b5c6;letter-spacing:-.025em}
+#end .cta{position:absolute;left:0;top:670px;width:1920px;display:flex;justify-content:center}
+#end .cta span{display:flex;align-items:center;gap:22px;font:700 44px/1 "Inter",sans-serif;color:#0d0e14;background:#f6f3ec;border-radius:999px;padding:20px 46px 20px 22px;letter-spacing:-.025em;box-shadow:0 0 0 1px rgba(255,255,255,.35),0 18px 70px rgba(139,92,240,.5),0 0 140px rgba(76,159,224,.28)}
+#end .cta i{display:flex;align-items:center;justify-content:center;width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,#8b5cf0,#4c9fe0)}
+#end .cta i svg{width:30px;height:30px}
+#end .cta em{font-style:normal;color:#8a8c99;font-weight:600;padding:0 4px}
+#end .by{position:absolute;left:0;top:846px;width:1920px;display:flex;justify-content:center;align-items:center;gap:26px;font:500 36px/1 "Inter",sans-serif;color:#8d8fa0}
+#end .by img{height:44px;width:auto;display:block}
+#end .un{position:absolute;left:0;top:962px;width:1920px;display:flex;justify-content:center;align-items:center;gap:16px;font:500 30px/1 "Inter",sans-serif;color:#7f8191}
+#end .un img{height:36px;width:auto;display:block}
 </style>
 </head>
 <body>
@@ -1188,7 +1206,7 @@ body{margin:0;background:var(--bg)}
       <symbol id="i-claude" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2.5l1.6 6.4 5.9-3-3 5.9 6.1 1.6-6.1 1.6 3 5.9-5.9-3L12 21.5l-1.6-6.4-5.9 3 3-5.9L1.4 11.3l6.1-1.6-3-5.9 5.9 3z"/></symbol>
       <symbol id="i-gpt" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M12 3.2l7.2 4.1v8.4L12 19.8l-7.2-4.1V7.3z"/><path d="M12 3.2v7.2l7.2 4.1M12 10.4 4.8 14.6M12 10.4v9.4"/></g></symbol>
     </svg>
-<div id="root" data-composition-id="main" data-start="0" data-width="1920" data-height="1080" data-duration="49.2">
+<div id="root" data-composition-id="main" data-start="0" data-width="1920" data-height="1080" data-duration="48.1">
 <div id="glow"></div>
 <div id="win"><div id="cam" data-layout-ignore>
 <div class="tl"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
@@ -1203,23 +1221,24 @@ body{margin:0;background:var(--bg)}
 </div></div>
 <div id="nw"><div class="zw" data-layout-ignore><img id="n_ov" src="assets/screens/overview.png"><img id="n_co" src="assets/screens/composer.png"><img id="n_mo" src="assets/screens/models.png"><img id="n_si" src="assets/screens/signin.png"><img id="n_ra" src="assets/screens/rail.png"><img id="n_wo" src="assets/screens/working.png"></div></div>
 <div id="intro">
-  <img class="ico" src="assets/figmake-sync-icon.svg" alt="figmake-sync">
+  <img class="ico" src="assets/figmake-sync-icon.svg" alt="Figmake Sync">
   <h1>Figma Make spends<br><b>Figma's AI credits.</b></h1>
   <div class="sub">Use your own Claude or Codex instead.</div>
 </div>
 <div id="end">
-  <img class="ico" src="assets/figmake-sync-icon.svg" alt="figmake-sync">
-  <h2>figmake-sync</h2>
+  <div class="halo"></div>
+  <img class="ico" src="assets/figmake-sync-icon.svg" alt="Figmake Sync">
+  <h2>Figmake Sync</h2>
   <div class="sub">Edit Figma Make with your own AI.</div>
+  <div class="cta"><span><i><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg></i>Free download<em>&middot;</em>sherlabs.com</span></div>
   <div class="by"><span>by</span><img src="assets/sherlabs-wordmark-light.svg" alt="Sherlabs"></div>
-  <div class="cta"><span>Free download &middot; sherlabs.com</span></div>
   <div class="un"><img src="assets/figma-mark.svg" alt="Figma"><span>Unofficial. Not affiliated with Figma.</span></div>
 </div>
-<audio id="sfx" src="assets/sfx.wav" data-start="0" data-duration="49.2" data-track-index="1" data-volume="0.9"></audio>
-<audio id="bed" src="assets/bed.wav" data-start="0" data-duration="49.2" data-track-index="2" data-volume="0.16"></audio>
+<audio id="sfx" src="assets/sfx.wav" data-start="0" data-duration="48.1" data-track-index="1" data-volume="0.9"></audio>
+<audio id="bed" src="assets/bed.wav" data-start="0" data-duration="48.1" data-track-index="2" data-volume="0.16"></audio>
 </div>
 <script>
-const T={"dur": 49.2, "winOut": 27.7, "end": 44.6, "caps": [["Paste your <b>Figma Make</b> link.", 3.5, 9.9], ["<b>Ask</b> in plain words.", 10.3, 13.2], ["Your own AI. <b>No Figma credits.</b>", 13.3, 19.2], ["See <b>what changed</b>.", 19.4, 23.3], ["Send it <b>back</b>.", 23.5, 27.599999999999998]], "cur0": 3.9000000000000004, "addClick": 4.7, "sheetIn": 4.85, "inpClick": 5.800000000000001, "type1": [6.050000000000001, 34], "link": "figma.com/make/Hk3xQp/Oak-and-Ember", "openClick": 7.7, "prep0": 8.0, "prep1": 8.5, "prep2": 9.05, "prep3": 9.55, "prep4": 10.05, "ready": 10.15, "taClick1": 11.100000000000001, "p1": [11.399999999999999, 26], "prompt1": "Make the button blue and rounded", "send1": 12.95, "w1": 13.3, "a1": 13.7, "steps1": [14.3, 15.2, 16.1, 17.0], "pv1": 15.399999999999999, "text1": 17.7, "col1": 19.9, "card1": 19.4, "view0": 20.0, "viewClick": 21.0, "viewClose": 23.2, "sendCam": 23.5, "sendClick": 24.8, "sent": 25.7, "toastOut": 27.5, "win0": 3.2, "two": false, "nw0": 28.1, "beats": [[29.6, 34.0], [34.0, 36.4], [36.4, 38.8], [38.8, 41.6], [41.6, 44.4]], "ncaps": [["New in this <b>release</b>.", 28.3, 29.65], ["Paste a <b>screenshot</b>.", 29.8, 31.9], ["<b>Click</b> an element.", 32.0, 34.0], ["<b>Switch</b> models.", 34.1, 36.3], ["Sign in <b>in the app</b>.", 36.5, 38.7], ["Less chrome. <b>Fit</b> it.", 38.9, 41.5], ["Follow every <b>step</b>.", 41.7, 44.3]], "nwOut": 44.2};
+const T={"dur": 48.1, "winOut": 43.0, "end": 43.5, "caps": [["Paste your <b>Figma Make</b> link.", 3.5, 9.9], ["<b>Ask</b> in plain words.", 19.700000000000003, 22.6], ["Your own AI. <b>No Figma credits.</b>", 22.700000000000003, 28.6], ["See <b>what changed</b>.", 34.699999999999996, 38.6], ["Send it <b>back</b>.", 38.8, 42.9]], "cur0": 3.9000000000000004, "addClick": 4.7, "sheetIn": 4.85, "inpClick": 5.800000000000001, "type1": [6.050000000000001, 34], "link": "figma.com/make/Hk3xQp/Oak-and-Ember", "openClick": 7.7, "prep0": 8.0, "prep1": 8.5, "prep2": 9.05, "prep3": 9.55, "prep4": 10.05, "ready": 10.15, "taClick1": 20.5, "p1": [20.799999999999997, 26], "prompt1": "Make the button blue and rounded", "send1": 22.35, "w1": 22.700000000000003, "a1": 23.1, "steps1": [23.700000000000003, 24.6, 25.5, 26.4], "pv1": 24.799999999999997, "text1": 27.1, "col1": 35.199999999999996, "card1": 34.699999999999996, "view0": 35.3, "viewClick": 36.3, "viewClose": 38.5, "sendCam": 38.8, "sendClick": 40.1, "sent": 41.0, "toastOut": 42.8, "win0": 3.2, "two": false, "nwA": [10.25, 19.5], "nwB": [28.75, 34.45], "beats": [[10.4, 14.8], [14.8, 17.2], [17.2, 19.6], [28.9, 31.7], [31.7, 34.5]], "ncaps": [["Paste a <b>screenshot</b>.", 10.45, 12.5], ["<b>Click</b> an element.", 12.6, 14.7], ["Pick your <b>model</b>.", 14.9, 17.1], ["Sign in <b>in the app</b>.", 17.3, 19.4], ["Fit the <b>preview</b>.", 28.95, 31.6], ["Follow every <b>step</b>.", 31.8, 34.4]]};
 const $=s=>document.querySelector(s);
 const tl=gsap.timeline({paused:true});
 const FW=1344,FH=866,S0=FW/1180;
@@ -1496,48 +1515,51 @@ tl.fromTo('#r_toast',{y:12,opacity:0},{y:0,opacity:1,duration:.42,ease:"back.out
 tl.to('#r_toast',{opacity:0,y:6,duration:.35},T.toastOut);
 status(T.sent,'ok');footer(T.sent,'a');
 
-/* =================== new features montage =================== */
+/* =================== feature beats (cut into the live run) =================== */
 T.ncaps.forEach((c,i)=>addCap('nc'+i,c[0],c[1],c[2]));
-tl.fromTo('#nw',{opacity:0,y:30,scale:.97},{opacity:1,y:0,scale:1,duration:.6,ease:"power3.out"},T.nw0);
-tl.to('#nw',{opacity:0,y:-20,duration:.45,ease:"power2.in"},T.nwOut);
-tl.fromTo('#glow',{opacity:0},{opacity:1,duration:.6},T.nw0);tl.to('#glow',{opacity:0,duration:.5},T.nwOut);
 const NW=1344,NH=874;
 const ncam=(fx,fy,S)=>({x:Math.min(0,Math.max(NW-NW*S,NW/2-fx*NW*S)),y:Math.min(0,Math.max(NH-NH*S,NH/2-fy*NH*S)),scale:S});
 gsap.set('#nw .zw',ncam(.5,.5,1));
 const nGo=(t,d,fx,fy,S)=>tl.to('#nw .zw',{...ncam(fx,fy,S),duration:d,ease:"power3.inOut"},t);
 const nImg=(id,t)=>{tl.set('#'+id,{opacity:1},t)};
-nImg('n_ov',T.nw0);
+const nOnly=(id,t)=>{tl.set('#nw img',{opacity:0},t);tl.set('#'+id,{opacity:1},t)};
+const nIn=t=>{tl.fromTo('#nw',{opacity:0,y:30,scale:.97},{opacity:1,y:0,scale:1,duration:.5,ease:"power3.out",immediateRender:false},t)};
+const nOut=t=>{tl.to('#nw',{opacity:0,y:-20,duration:.4,ease:"power2.in"},t);tl.set('#nw img',{opacity:0},t+.45)};
 const B=T.beats;
-/* 1 composer: screenshot thumb, then the element picker + chip */
-nImg('n_co',B[0][0]);
-tl.set('#n_ov',{opacity:0},B[0][0]+.02);
-gsap.set('#nw .zw',ncam(.5,.5,1));
+/* A1 composer: screenshot thumb, then the element picker + chip */
+nIn(T.nwA[0]);
+nOnly('n_co',T.nwA[0]);
 nGo(B[0][0]+.1,.9,.76,.8,2.0);
 nGo(B[0][0]+2.3,.9,.53,.14,2.3);
 nGo(B[0][0]+3.3,.7,.8,.76,2.0);
-/* 2 models */
-nImg('n_mo',B[1][0]);tl.set('#n_co',{opacity:0},B[1][0]+.02);
+/* A2 models */
+nOnly('n_mo',B[1][0]);
 nGo(B[1][0],.01,.5,.5,1);nGo(B[1][0]+.2,.9,.78,.8,1.7);
-/* 3 sign in */
-nImg('n_si',B[2][0]);tl.set('#n_mo',{opacity:0},B[2][0]+.02);
+/* A3 sign in */
+nOnly('n_si',B[2][0]);
 nGo(B[2][0],.01,.5,.5,1);nGo(B[2][0]+.2,.9,.5,.2,1.5);
-/* 4 rail: expanded then collapsed, with Fit in the bar */
-nImg('n_ov',B[3][0]);tl.set('#n_si',{opacity:0},B[3][0]+.02);
-nGo(B[3][0],.01,.5,.5,1);
-tl.fromTo('#n_ra',{opacity:0},{opacity:1,duration:.2},B[3][0]+1.0);
+nOut(T.nwA[1]);
+/* B1 rail: expanded then collapsed, with Fit in the bar */
+nIn(T.nwB[0]);
+nOnly('n_ov',T.nwB[0]);
+nGo(T.nwB[0],.01,.5,.5,1);
+tl.fromTo('#n_ra',{opacity:0},{opacity:1,duration:.2,immediateRender:false},B[3][0]+1.0);
 nGo(B[3][0]+.2,1.2,.3,.2,1.7);
-/* 5 timeline */
-nImg('n_wo',B[4][0]);tl.set('#n_ov,#n_ra',{opacity:0},B[4][0]+.02);
+/* B2 timeline */
+nOnly('n_wo',B[4][0]);
 nGo(B[4][0],.01,.5,.5,1);nGo(B[4][0]+.2,.9,.85,.42,1.6);
+nOut(T.nwB[1]);
+gsap.set('#nw .zw',ncam(.5,.5,1));
 
 /* =================== end card =================== */
 tl.set('#end',{opacity:1},T.end);
+tl.from('#end .halo',{opacity:0,scale:.8,duration:1.1,ease:"power2.out"},T.end);
 tl.from('#end .ico',{opacity:0,y:24,scale:.92,duration:.6,ease:"power3.out"},T.end+.15);
 tl.from('#end h2',{opacity:0,y:26,duration:.6,ease:"power3.out"},T.end+.45);
-tl.from('#end .sub',{opacity:0,y:20,duration:.6,ease:"power3.out"},T.end+.85);
-tl.from('#end .by',{opacity:0,y:16,duration:.6,ease:"power3.out"},T.end+1.1);
-tl.from('#end .cta',{opacity:0,y:14,duration:.6,ease:"power3.out"},T.end+1.3);
-tl.from('#end .un',{opacity:0,duration:.6},T.end+1.35);
+tl.from('#end .sub',{opacity:0,y:20,duration:.6,ease:"power3.out"},T.end+.8);
+tl.from('#end .cta',{opacity:0,y:18,scale:.96,duration:.6,ease:"power3.out"},T.end+1.15);
+tl.from('#end .by',{opacity:0,y:14,duration:.6,ease:"power3.out"},T.end+1.45);
+tl.from('#end .un',{opacity:0,duration:.6},T.end+1.6);
 
 els.concat(['r_empty']).forEach(id=>{$('#'+id).style.display=INIT[id]});$('#r_tin').style.transform='';['r_aw1','r_aw2'].forEach(id=>$('#'+id).style.height='0px');
 window.__timelines["main"]=tl;

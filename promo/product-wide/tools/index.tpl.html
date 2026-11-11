@@ -3,42 +3,46 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=1920, height=1080" />
-<title>figmake-sync wide</title>
+<title>Figmake Sync wide</title>
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
 <style>
 @font-face{font-family:"Inter";src:url(fonts/inter-latin-wght-normal.woff2) format("woff2");font-weight:100 900}
 @font-face{font-family:"JetBrains Mono";src:url(fonts/jetbrains-mono-latin-400-normal.woff2) format("woff2");font-weight:400}
 %%CSS%%
-:root{--bg:#0b0b0c;--ink:#f5f5f7;--mute:#98989d;--blue:#4c9dff}
+:root{--bg:#0b0b0c;--ink:#f5f5f7;--mute:#98989d;--blue:#9d84ff}
 body>svg{position:absolute;width:0;height:0;overflow:hidden}
 body{margin:0;background:var(--bg)}
 #root{position:relative;width:1920px;height:1080px;overflow:hidden;background:var(--bg);font-family:"Inter",system-ui,sans-serif;color:var(--ink)}
 .stage .slot{position:absolute;inset:0}
-#glow{position:absolute;left:460px;top:-180px;width:1000px;height:700px;border-radius:50%;background:radial-gradient(circle,rgba(76,157,255,.16),rgba(76,157,255,0) 65%)}
+#glow{position:absolute;left:460px;top:-180px;width:1000px;height:700px;border-radius:50%;background:radial-gradient(circle,rgba(139,92,240,.2),rgba(139,92,240,0) 65%)}
 #win{position:absolute;left:288px;top:26px;width:1344px;height:866px;border-radius:16px;overflow:hidden;background:#fff;box-shadow:0 50px 120px rgba(0,0,0,.7),0 0 0 1px rgba(255,255,255,.12)}
 #cam{position:absolute;left:0;top:0;width:1180px;height:760px;transform-origin:0 0}
 .tl{position:absolute;left:20px;top:19px;display:flex;gap:8px;z-index:70}
 .tl i{display:block;width:12px;height:12px;border-radius:50%}
 .cap{position:absolute;left:0;top:918px;width:1920px;text-align:center;font:700 100px/1 "Inter",sans-serif;letter-spacing:-.04em;white-space:nowrap;opacity:0}
-.cap b{font-weight:700;color:var(--blue)}
+.cap b{font-weight:700;background:linear-gradient(90deg,#a98bff,#6db3ee);-webkit-background-clip:text;background-clip:text;color:transparent}
 #nw{position:absolute;left:288px;top:22px;width:1344px;height:874px;border-radius:16px;overflow:hidden;background:#fff;box-shadow:0 50px 120px rgba(0,0,0,.7),0 0 0 1px rgba(255,255,255,.12);opacity:0}
 #nw .zw{position:absolute;left:0;top:0;width:1344px;height:874px;transform-origin:0 0}
 #nw img{position:absolute;left:0;top:0;width:1344px;height:auto;display:block;opacity:0}
-#intro{position:absolute;inset:0}
-#intro .ico{position:absolute;left:960px;top:170px;width:170px;height:170px;margin-left:-85px;filter:drop-shadow(0 24px 50px rgba(76,157,255,.25))}
+#intro{position:absolute;inset:0;background:radial-gradient(900px 560px at 50% 6%,rgba(139,92,240,.2),transparent 70%),radial-gradient(620px 460px at 4% 100%,rgba(238,122,69,.12),transparent 70%),radial-gradient(620px 460px at 98% 98%,rgba(76,159,224,.13),transparent 70%)}
+#intro .ico{position:absolute;left:960px;top:150px;width:200px;height:200px;margin-left:-100px;filter:drop-shadow(0 24px 60px rgba(139,92,240,.4))}
 #intro h1{position:absolute;left:0;top:400px;width:1920px;text-align:center;margin:0;font:700 128px/1.06 "Inter",sans-serif;letter-spacing:-.045em}
-#intro h1 b{color:var(--blue);font-weight:700}
+#intro h1 b{font-weight:700;background:linear-gradient(90deg,#f59a6a,#a98bff 55%,#6db3ee);-webkit-background-clip:text;background-clip:text;color:transparent}
 #intro .sub{position:absolute;left:0;top:770px;width:1920px;text-align:center;font:500 62px/1.1 "Inter",sans-serif;color:var(--mute);letter-spacing:-.03em}
-#end{position:absolute;inset:0;opacity:0}
-#end .cta{position:absolute;left:0;top:775px;width:1920px;display:flex;justify-content:center}
-#end .cta span{font:600 40px/1 "Inter",sans-serif;color:#fff;background:#0b66cc;border-radius:999px;padding:22px 44px;letter-spacing:-.02em}
-#end .ico{position:absolute;left:960px;top:96px;width:240px;height:272px;margin-left:-120px;filter:drop-shadow(0 30px 60px rgba(76,157,255,.25))}
-#end h2{position:absolute;left:0;top:360px;width:1920px;text-align:center;margin:0;font:700 120px/1 "Inter",sans-serif;letter-spacing:-.045em}
-#end .sub{position:absolute;left:0;top:510px;width:1920px;text-align:center;font:500 62px/1.1 "Inter",sans-serif;color:var(--mute);letter-spacing:-.03em}
-#end .by{position:absolute;left:0;top:640px;width:1920px;display:flex;justify-content:center;align-items:center;gap:30px;font:500 44px/1 "Inter",sans-serif;color:var(--mute)}
-#end .by img{width:300px;height:auto;display:block}
-#end .un{position:absolute;left:0;top:930px;width:1920px;display:flex;justify-content:center;align-items:center;gap:20px;font:500 36px/1 "Inter",sans-serif;color:var(--mute)}
-#end .un img{height:44px;width:auto;display:block}
+#end{position:absolute;inset:0;opacity:0;background:radial-gradient(900px 600px at 50% 8%,rgba(139,92,240,.22),transparent 70%),radial-gradient(700px 500px at 6% 100%,rgba(238,122,69,.13),transparent 70%),radial-gradient(700px 500px at 96% 96%,rgba(76,159,224,.15),transparent 70%),var(--bg)}
+#end .halo{position:absolute;left:960px;top:228px;width:560px;height:560px;margin:-280px 0 0 -280px;border-radius:50%;background:conic-gradient(from 20deg,rgba(238,122,69,.55),rgba(139,92,240,.6),rgba(76,159,224,.55),rgba(88,183,136,.5),rgba(238,122,69,.55));filter:blur(78px);opacity:.55}
+#end .ico{position:absolute;left:960px;top:96px;width:264px;height:264px;margin-left:-132px;filter:drop-shadow(0 28px 50px rgba(0,0,0,.55))}
+#end h2{position:absolute;left:0;top:392px;width:1920px;text-align:center;margin:0;font:700 128px/1 "Inter",sans-serif;letter-spacing:-.045em}
+#end .sub{position:absolute;left:0;top:546px;width:1920px;text-align:center;font:500 52px/1.1 "Inter",sans-serif;color:#b3b5c6;letter-spacing:-.025em}
+#end .cta{position:absolute;left:0;top:670px;width:1920px;display:flex;justify-content:center}
+#end .cta span{display:flex;align-items:center;gap:22px;font:700 44px/1 "Inter",sans-serif;color:#0d0e14;background:#f6f3ec;border-radius:999px;padding:20px 46px 20px 22px;letter-spacing:-.025em;box-shadow:0 0 0 1px rgba(255,255,255,.35),0 18px 70px rgba(139,92,240,.5),0 0 140px rgba(76,159,224,.28)}
+#end .cta i{display:flex;align-items:center;justify-content:center;width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,#8b5cf0,#4c9fe0)}
+#end .cta i svg{width:30px;height:30px}
+#end .cta em{font-style:normal;color:#8a8c99;font-weight:600;padding:0 4px}
+#end .by{position:absolute;left:0;top:846px;width:1920px;display:flex;justify-content:center;align-items:center;gap:26px;font:500 36px/1 "Inter",sans-serif;color:#8d8fa0}
+#end .by img{height:44px;width:auto;display:block}
+#end .un{position:absolute;left:0;top:962px;width:1920px;display:flex;justify-content:center;align-items:center;gap:16px;font:500 30px/1 "Inter",sans-serif;color:#7f8191}
+#end .un img{height:36px;width:auto;display:block}
 </style>
 </head>
 <body>
@@ -54,16 +58,17 @@ body{margin:0;background:var(--bg)}
 </div></div>
 <div id="nw"><div class="zw" data-layout-ignore><img id="n_ov" src="assets/screens/overview.png"><img id="n_co" src="assets/screens/composer.png"><img id="n_mo" src="assets/screens/models.png"><img id="n_si" src="assets/screens/signin.png"><img id="n_ra" src="assets/screens/rail.png"><img id="n_wo" src="assets/screens/working.png"></div></div>
 <div id="intro">
-  <img class="ico" src="assets/figmake-sync-icon.svg" alt="figmake-sync">
+  <img class="ico" src="assets/figmake-sync-icon.svg" alt="Figmake Sync">
   <h1>Figma Make spends<br><b>Figma's AI credits.</b></h1>
   <div class="sub">Use your own Claude or Codex instead.</div>
 </div>
 <div id="end">
-  <img class="ico" src="assets/figmake-sync-icon.svg" alt="figmake-sync">
-  <h2>figmake-sync</h2>
+  <div class="halo"></div>
+  <img class="ico" src="assets/figmake-sync-icon.svg" alt="Figmake Sync">
+  <h2>Figmake Sync</h2>
   <div class="sub">Edit Figma Make with your own AI.</div>
+  <div class="cta"><span><i><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg></i>Free download<em>&middot;</em>sherlabs.com</span></div>
   <div class="by"><span>by</span><img src="assets/sherlabs-wordmark-light.svg" alt="Sherlabs"></div>
-  <div class="cta"><span>Free download &middot; sherlabs.com</span></div>
   <div class="un"><img src="assets/figma-mark.svg" alt="Figma"><span>Unofficial. Not affiliated with Figma.</span></div>
 </div>
 <audio id="sfx" src="assets/sfx.wav" data-start="0" data-duration="%%DUR%%" data-track-index="1" data-volume="0.9"></audio>
@@ -347,48 +352,51 @@ tl.fromTo('#r_toast',{y:12,opacity:0},{y:0,opacity:1,duration:.42,ease:"back.out
 tl.to('#r_toast',{opacity:0,y:6,duration:.35},T.toastOut);
 status(T.sent,'ok');footer(T.sent,'a');
 
-/* =================== new features montage =================== */
+/* =================== feature beats (cut into the live run) =================== */
 T.ncaps.forEach((c,i)=>addCap('nc'+i,c[0],c[1],c[2]));
-tl.fromTo('#nw',{opacity:0,y:30,scale:.97},{opacity:1,y:0,scale:1,duration:.6,ease:"power3.out"},T.nw0);
-tl.to('#nw',{opacity:0,y:-20,duration:.45,ease:"power2.in"},T.nwOut);
-tl.fromTo('#glow',{opacity:0},{opacity:1,duration:.6},T.nw0);tl.to('#glow',{opacity:0,duration:.5},T.nwOut);
 const NW=1344,NH=874;
 const ncam=(fx,fy,S)=>({x:Math.min(0,Math.max(NW-NW*S,NW/2-fx*NW*S)),y:Math.min(0,Math.max(NH-NH*S,NH/2-fy*NH*S)),scale:S});
 gsap.set('#nw .zw',ncam(.5,.5,1));
 const nGo=(t,d,fx,fy,S)=>tl.to('#nw .zw',{...ncam(fx,fy,S),duration:d,ease:"power3.inOut"},t);
 const nImg=(id,t)=>{tl.set('#'+id,{opacity:1},t)};
-nImg('n_ov',T.nw0);
+const nOnly=(id,t)=>{tl.set('#nw img',{opacity:0},t);tl.set('#'+id,{opacity:1},t)};
+const nIn=t=>{tl.fromTo('#nw',{opacity:0,y:30,scale:.97},{opacity:1,y:0,scale:1,duration:.5,ease:"power3.out",immediateRender:false},t)};
+const nOut=t=>{tl.to('#nw',{opacity:0,y:-20,duration:.4,ease:"power2.in"},t);tl.set('#nw img',{opacity:0},t+.45)};
 const B=T.beats;
-/* 1 composer: screenshot thumb, then the element picker + chip */
-nImg('n_co',B[0][0]);
-tl.set('#n_ov',{opacity:0},B[0][0]+.02);
-gsap.set('#nw .zw',ncam(.5,.5,1));
+/* A1 composer: screenshot thumb, then the element picker + chip */
+nIn(T.nwA[0]);
+nOnly('n_co',T.nwA[0]);
 nGo(B[0][0]+.1,.9,.76,.8,2.0);
 nGo(B[0][0]+2.3,.9,.53,.14,2.3);
 nGo(B[0][0]+3.3,.7,.8,.76,2.0);
-/* 2 models */
-nImg('n_mo',B[1][0]);tl.set('#n_co',{opacity:0},B[1][0]+.02);
+/* A2 models */
+nOnly('n_mo',B[1][0]);
 nGo(B[1][0],.01,.5,.5,1);nGo(B[1][0]+.2,.9,.78,.8,1.7);
-/* 3 sign in */
-nImg('n_si',B[2][0]);tl.set('#n_mo',{opacity:0},B[2][0]+.02);
+/* A3 sign in */
+nOnly('n_si',B[2][0]);
 nGo(B[2][0],.01,.5,.5,1);nGo(B[2][0]+.2,.9,.5,.2,1.5);
-/* 4 rail: expanded then collapsed, with Fit in the bar */
-nImg('n_ov',B[3][0]);tl.set('#n_si',{opacity:0},B[3][0]+.02);
-nGo(B[3][0],.01,.5,.5,1);
-tl.fromTo('#n_ra',{opacity:0},{opacity:1,duration:.2},B[3][0]+1.0);
+nOut(T.nwA[1]);
+/* B1 rail: expanded then collapsed, with Fit in the bar */
+nIn(T.nwB[0]);
+nOnly('n_ov',T.nwB[0]);
+nGo(T.nwB[0],.01,.5,.5,1);
+tl.fromTo('#n_ra',{opacity:0},{opacity:1,duration:.2,immediateRender:false},B[3][0]+1.0);
 nGo(B[3][0]+.2,1.2,.3,.2,1.7);
-/* 5 timeline */
-nImg('n_wo',B[4][0]);tl.set('#n_ov,#n_ra',{opacity:0},B[4][0]+.02);
+/* B2 timeline */
+nOnly('n_wo',B[4][0]);
 nGo(B[4][0],.01,.5,.5,1);nGo(B[4][0]+.2,.9,.85,.42,1.6);
+nOut(T.nwB[1]);
+gsap.set('#nw .zw',ncam(.5,.5,1));
 
 /* =================== end card =================== */
 tl.set('#end',{opacity:1},T.end);
+tl.from('#end .halo',{opacity:0,scale:.8,duration:1.1,ease:"power2.out"},T.end);
 tl.from('#end .ico',{opacity:0,y:24,scale:.92,duration:.6,ease:"power3.out"},T.end+.15);
 tl.from('#end h2',{opacity:0,y:26,duration:.6,ease:"power3.out"},T.end+.45);
-tl.from('#end .sub',{opacity:0,y:20,duration:.6,ease:"power3.out"},T.end+.85);
-tl.from('#end .by',{opacity:0,y:16,duration:.6,ease:"power3.out"},T.end+1.1);
-tl.from('#end .cta',{opacity:0,y:14,duration:.6,ease:"power3.out"},T.end+1.3);
-tl.from('#end .un',{opacity:0,duration:.6},T.end+1.35);
+tl.from('#end .sub',{opacity:0,y:20,duration:.6,ease:"power3.out"},T.end+.8);
+tl.from('#end .cta',{opacity:0,y:18,scale:.96,duration:.6,ease:"power3.out"},T.end+1.15);
+tl.from('#end .by',{opacity:0,y:14,duration:.6,ease:"power3.out"},T.end+1.45);
+tl.from('#end .un',{opacity:0,duration:.6},T.end+1.6);
 
 els.concat(['r_empty']).forEach(id=>{$('#'+id).style.display=INIT[id]});$('#r_tin').style.transform='';['r_aw1','r_aw2'].forEach(id=>$('#'+id).style.height='0px');
 window.__timelines["main"]=tl;

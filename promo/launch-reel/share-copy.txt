@@ -3,22 +3,19 @@ Figma Make lets you iterate on a prototype, but only through Figma's own AI cred
 
 We built Figmake Sync to get around that. It is a desktop app that pulls the project's code onto your computer, so you can change it with the Claude Code or ChatGPT Codex subscription you already pay for. No Figma AI credits are spent.
 
-New in this release:
-- Paste or attach screenshots straight into the chat
-- Click any element in the live preview and it becomes a chip (with details and a crop) the AI can see
-- Switch models whenever you like
-- Sign in to Claude or ChatGPT inside the app
-- A collapsible left rail and a Fit button that scales the preview to the window
-- Agent activity as a step-by-step timeline, so you can follow what it is doing
+How it works:
+- Paste your Figma Make link and the code comes local
+- Chat with your own AI: paste screenshots, click any element in the live preview, pick the model, sign in to Claude or ChatGPT inside the app
+- Watch the live preview update, and follow the agent step by step
+- See exactly what changed (diffs) before anything is sent
+- Send it back to Figma Make
 
-And the basics still work: live preview, see exactly what changed (diffs) before anything is sent, then send it back to Figma Make.
-
-It is free. The Windows build is made by CI; we have not tested it on Windows yet.
+It is free.
 
 Figmake Sync is an unofficial tool by Sherlabs. It is not affiliated with or endorsed by Figma.
 
 Download: sherlabs.com
 
 TIKTOK / INSTAGRAM
-Figma Make eats your AI credits. Figmake Sync pulls the code local so your own Claude or Codex does the editing. Now you can click an element in the preview, paste a screenshot, and switch models. Then send it back. Free. Unofficial, not affiliated with Figma. sherlabs.com
+Figma Make eats your AI credits. Figmake Sync pulls the code local so your own Claude or Codex does the editing. Paste a screenshot, click an element, pick a model, then send it back. Free. Unofficial, not affiliated with Figma. sherlabs.com
 #figma #figmamake #claudecode #buildinpublic

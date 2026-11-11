@@ -27,14 +27,24 @@ def sh(k, v):
     return v + OFF
 T = {k: sh(k, v) for k, v in T.items()}
 T["win0"] = OFF; T["two"] = False
-# new-features montage (absolute times, after the send scene)
-T["nw0"] = 28.1
-T["beats"] = [[29.6, 34.0], [34.0, 36.4], [36.4, 38.8], [38.8, 41.6], [41.6, 44.4]]
-T["ncaps"] = [["New in this <b>release</b>.", 28.3, 29.65], ["Paste a <b>screenshot</b>.", 29.8, 31.9], ["<b>Click</b> an element.", 32.0, 34.0],
-              ["<b>Switch</b> models.", 34.1, 36.3], ["Sign in <b>in the app</b>.", 36.5, 38.7], ["Less chrome. <b>Fit</b> it.", 38.9, 41.5], ["Follow every <b>step</b>.", 41.7, 44.3]]
-T["nwOut"] = 44.2
-T["end"] = 44.6
-T["dur"] = 49.2
+# end-to-end story: the live run is cut open twice for the feature beats.
+# A (after the project is pulled): chat inputs. B (after the preview changes): rail/Fit + step timeline.
+GA, GB, tA, tB = 9.4, 5.9, 10.2, 19.3
+def g(t): return t + (GA if t >= tA else 0) + (GB if t >= tB else 0)
+for k, v in list(T.items()):
+    if k in ("link", "prompt1", "prompt2", "two", "win0"): continue
+    if k == "caps": T[k] = [[c[0], g(c[1]), g(c[2])] for c in v]
+    elif k in ("type1", "p1", "p2"): T[k] = [g(v[0]), v[1]]
+    elif isinstance(v, list): T[k] = [g(x) for x in v]
+    else: T[k] = g(v)
+# montage A at 10.25-19.6 (pre-shift live clock frozen), B at 28.75-34.6
+T["nwA"] = [10.25, 19.5]
+T["nwB"] = [28.75, 34.45]
+T["beats"] = [[10.4, 14.8], [14.8, 17.2], [17.2, 19.6], [28.9, 31.7], [31.7, 34.5]]
+T["ncaps"] = [["Paste a <b>screenshot</b>.", 10.45, 12.5], ["<b>Click</b> an element.", 12.6, 14.7], ["Pick your <b>model</b>.", 14.9, 17.1], ["Sign in <b>in the app</b>.", 17.3, 19.4],
+              ["Fit the <b>preview</b>.", 28.95, 31.6], ["Follow every <b>step</b>.", 31.8, 34.4]]
+T["end"] = round(T["winOut"] + 0.5, 2)
+T["dur"] = round(T["end"] + 4.6, 2)
 tpl = (HERE / "index.tpl.html").read_text()
 html = (tpl.replace("%%CSS%%", ui.css()).replace("%%SPRITE%%", ui.sprite())
         .replace("%%START%%", ui.start_layer("s_"))

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=1080, height=1920" />
-<title>figmake-sync launch reel</title>
+<title>Figmake Sync launch reel</title>
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
 <style>
 :root{--ink:#14171c;--paper:#f5f5f3;--acc:#d9641a}
@@ -146,7 +146,7 @@ body{margin:0;background:#14171c;font-family:Inter,system-ui,sans-serif}
   padding: 0 8px 8px;
   min-height: 0;
 }
-.hfapp .side-top{ height: var(--top-inset); flex: none; display: flex; align-items: center; justify-content: flex-end; padding-right: 2px; }
+.hfapp .side-top{ height: max(var(--top-inset), 44px); flex: none; display: flex; align-items: center; justify-content: flex-end; padding-right: 2px; }
 .hfapp .side-top .fm-sidetoggle{ -webkit-app-region: no-drag; }
 .hfapp .app.fm-side-rail .side-top{ height: calc(var(--top-inset) + 44px); align-items: flex-end; justify-content: center; padding: 0 0 6px; }
 .hfapp .side{ overflow: hidden; min-width: 0; position: relative; }
@@ -154,6 +154,7 @@ body{margin:0;background:#14171c;font-family:Inter,system-ui,sans-serif}
 .hfapp .app.side-drag{ transition: none; cursor: col-resize; -webkit-user-select: none; user-select: none; }
 .hfapp .fm-sidetoggle{ flex: none; }
 .hfapp .toolbar{ transition: padding-left 150ms ease; }
+.hfapp .app.fm-side-rail .toolbar{ padding-left: 36px; }
 .hfapp .fm-namefield{ margin-top: 8px; }
 .hfapp .side-top,.hfapp .toolbar{ -webkit-app-region: drag; -webkit-user-select: none; user-select: none; }
 .hfapp .toolbar button,.hfapp .toolbar input{ -webkit-app-region: no-drag; }
@@ -1018,6 +1019,20 @@ body{margin:0;background:#14171c;font-family:Inter,system-ui,sans-serif}
 .hfapp .tk-mark.todo{ border: 1.5px dashed var(--text-3); }
 .hfapp .tasks-h .tk-mark{ margin-top: 0; width: 18px; height: 18px; }
 .hfapp .tasks-h .spin{ border-color: var(--sep-2); border-top-color: var(--text); }
+.hfapp #boot{ position: fixed; inset: 0; z-index: 100; display: grid; grid-template-columns: 228px minmax(0, 1fr); background: var(--win); }
+.hfapp #boot .b-side{ background: var(--side); border-right: 1px solid var(--side-edge); padding: 64px 14px 14px; display: flex; flex-direction: column; gap: 10px; }
+.hfapp #boot .b-main{ display: flex; flex-direction: column; min-width: 0; }
+.hfapp #boot .b-top{ height: 52px; padding: 0 20px; display: flex; align-items: center; }
+.hfapp #boot .b-pane{ flex: 1; padding: 28px 28px; display: flex; flex-direction: column; gap: 14px; }
+.hfapp #boot .b-bar,.hfapp #boot .b-row{ display: block; height: 12px; border-radius: 6px; background: var(--text-3); opacity: 0.16; animation: b-pulse 1.4s ease-in-out infinite; }
+.hfapp #boot .b-row{ height: 34px; border-radius: 9px; }
+.hfapp #boot .w30{ width: 30%; }
+.hfapp #boot .w35{ width: 35%; }
+.hfapp #boot .w40{ width: 40%; }
+.hfapp #boot .w50{ width: 50%; }
+.hfapp #boot .w60{ width: 60%; }
+.hfapp #boot .w70{ width: 70%; }
+@media (prefers-reduced-motion: reduce){.hfapp #boot .b-bar,.hfapp #boot .b-row{ animation: none; }}
 .hfapp *,.hfapp *::before{animation:none!important;transition:none!important}
 .hfapp .stk{display:inline-grid}
 .hfapp .stk>*{grid-area:1/1}
@@ -1143,7 +1158,7 @@ body{margin:0;background:#14171c;font-family:Inter,system-ui,sans-serif}
 <div id="cam8" style="position:absolute;left:0;top:0;width:1080px;height:1920px;transform-origin:822px 1110px"><div class="ucard" id="c8k" style="top:1000px;height:150px"><div class="hfapp wrap" data-layout-ignore id="w8" style="left:0;top:23px;width:500px;height:52px;transform:scale(2)"><div class="main" style="display:block;width:500px"><header class="toolbar"><div class="ttl row-ttl"><h1>Oak &amp; Ember</h1><span class="stk" id="x_chips"><span id="x_chip_ok"><span class="chip status ok" role="status"><span class="dot ok"></span>Up to date</span></span><span id="x_chip_busy"><span class="chip status busy" role="status"><span class="spin"></span>Working</span></span><span id="x_chip_chg"><span class="chip status chg" role="status"><span class="dot chg"></span>Changes waiting</span></span></span></div><div class="tright"><button type="button" class="plain update" hidden=""><svg class="i s" aria-hidden="true"><use href="#i-refresh"></use></svg>Restart to update</button><button type="button" class="btn icon chat-toggle on" aria-label="Side panel" aria-pressed="true" aria-keyshortcuts="Meta+J Control+J" title="Side panel (⌘J)"><svg class="i" aria-hidden="true"><use href="#i-panel"></use></svg><span class="pip" hidden=""></span></button><span class="stk sends-stk" id="x_sends"><span id="x_send_off"><button type="button" class="btn primary send" aria-keyshortcuts="" disabled=""><svg class="i" aria-hidden="true"><use href="#i-up"></use></svg><span class="bl">Send to Figma</span></button></span><span id="x_send_on" style="opacity:0"><button type="button" class="btn primary send" aria-keyshortcuts=""><svg class="i" aria-hidden="true"><use href="#i-up"></use></svg><span class="bl">Send to Figma</span><span class="stk"><span class="badge" id="x_b1">1</span><span class="badge" id="x_b2">2</span></span></button></span></span><button type="button" id="x_gear" class="btn icon gear" aria-label="Settings" title="Settings (⌘,)"><svg class="i" aria-hidden="true"><use href="#i-gear"></use></svg></button></div></header></div></div></div><div class="ring" id="r8"></div><div class="rip" id="p8" style="margin:-45px 0 0 -45px;width:90px;height:90px;border-width:7px;border-color:var(--acc)"></div><svg class="cur" id="c8" viewBox="0 0 24 24" style="width:54px;height:54px;position:absolute;left:0;top:0;opacity:0;z-index:6"><path d="M3 2l7 19 3-8 8-3z" fill="#fff" stroke="#111" stroke-width="1.6" stroke-linejoin="round"/></svg></div>
 <div class="hfapp wrap" data-layout-ignore id="l8" style="left:300px;top:1380px;width:150px;height:44px;transform:scale(3.2)"><div class="toast" id="x_toast" ><svg class="i" aria-hidden="true"><use href="#i-check"></use></svg>Sent to Figma</div></div></section>
 
-<section id="s9" class="scene ink clip" data-start="23.47" data-duration="2.3"><div class="grid"></div><div class="glow"></div><div id="row9" style="position:absolute;left:0;width:1080px;top:262px;height:320px;display:flex;align-items:center;justify-content:center;gap:56px"><img id="fg9" src="assets/figma-logo.svg" style="height:230px;width:auto;display:block"/><svg id="ar9" width="120" height="90" viewBox="0 0 120 90"><path d="M8 45H100M68 12L104 45L68 78" fill="none" stroke="#d9641a" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/></svg><img id="ic9" src="assets/figmake-sync-icon.svg" style="width:372px;height:372px;margin:-36px;filter:drop-shadow(0 30px 80px rgba(217,100,26,.35));display:block"/></div><div id="n9" class="big" style="left:0;width:1080px;top:600px;text-align:center;font-size:146px;color:#f3f4f6">figmake-sync</div><div id="f9" class="big" style="left:0;width:1080px;top:775px;text-align:center;font-size:88px;line-height:1.1;color:#f3f4f6">Free to <span class="hl">download.</span></div><div id="by9" style="position:absolute;left:0;width:1080px;top:940px;display:flex;flex-direction:column;align-items:center;gap:34px"><div style="font:600 44px/1 'JetBrains Mono',ui-monospace,monospace;letter-spacing:.1em;color:#aab1bd">by</div><img src="assets/sherlabs-wordmark-light.svg" style="width:680px;height:auto;display:block"/></div><div id="u9" style="position:absolute;left:0;width:1080px;top:1250px;text-align:center"><span style="display:inline-block;font:700 70px 'JetBrains Mono',ui-monospace,monospace;color:#14171c;background:#d9641a;padding:26px 60px;border-radius:999px">sherlabs.com</span></div><div id="dis9" style="position:absolute;left:0;width:1080px;top:1420px;text-align:center;font:500 38px/1.3 Inter,system-ui,sans-serif;color:#aab1bd">Unofficial. Not affiliated with Figma.</div></section>
+<section id="s9" class="scene ink clip" data-start="23.47" data-duration="2.3" style="background:radial-gradient(1000px 760px at 50% 18%,rgba(139,92,240,.26),transparent 70%),radial-gradient(760px 620px at 0% 100%,rgba(238,122,69,.15),transparent 70%),radial-gradient(760px 620px at 100% 92%,rgba(76,159,224,.17),transparent 70%),#0d0e14"><div class="glow" style="display:none"></div><div id="halo9" style="position:absolute;left:540px;top:440px;width:620px;height:620px;margin:-310px 0 0 -310px;border-radius:50%;background:conic-gradient(from 20deg,rgba(238,122,69,.55),rgba(139,92,240,.6),rgba(76,159,224,.55),rgba(88,183,136,.5),rgba(238,122,69,.55));filter:blur(90px);opacity:.5"></div><div id="row9" style="position:absolute;left:0;width:1080px;top:300px;height:300px;display:flex;align-items:center;justify-content:center;gap:48px"><img id="fg9" src="assets/figma-logo.svg" style="height:170px;width:auto;display:block"/><svg id="ar9" width="110" height="84" viewBox="0 0 120 90"><defs><linearGradient id="ag9" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#8b5cf0"/><stop offset="1" stop-color="#4c9fe0"/></linearGradient></defs><path d="M8 45H100M68 12L104 45L68 78" fill="none" stroke="url(#ag9)" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/></svg><img id="ic9" src="assets/figmake-sync-icon.svg" style="width:300px;height:300px;display:block;filter:drop-shadow(0 28px 50px rgba(0,0,0,.55))"/></div><div id="n9" class="big" style="left:0;width:1080px;top:660px;text-align:center;font-size:136px;color:#f5f5f7">Figmake Sync</div><div id="f9" style="position:absolute;left:0;width:1080px;top:830px;text-align:center;font:500 54px/1.15 Inter,system-ui,sans-serif;letter-spacing:-.025em;color:#b3b5c6">Edit Figma Make with your own AI.</div><div id="u9" style="position:absolute;left:0;width:1080px;top:990px;display:flex;justify-content:center"><span style="display:flex;align-items:center;gap:20px;font:700 46px/1 Inter,system-ui,sans-serif;letter-spacing:-.025em;color:#0d0e14;background:#f6f3ec;border-radius:999px;padding:18px 42px 18px 18px;box-shadow:0 0 0 1px rgba(255,255,255,.35),0 20px 80px rgba(139,92,240,.5),0 0 140px rgba(76,159,224,.28)"><i style="display:flex;align-items:center;justify-content:center;width:72px;height:72px;border-radius:50%;background:linear-gradient(135deg,#8b5cf0,#4c9fe0)"><svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg></i>Free download<em style="font-style:normal;color:#8a8c99;font-weight:600">&middot;</em>sherlabs.com</span></div><div id="by9" style="position:absolute;left:0;width:1080px;top:1190px;display:flex;justify-content:center;align-items:center;gap:26px;font:500 38px/1 Inter,system-ui,sans-serif;color:#8d8fa0"><span>by</span><img src="assets/sherlabs-wordmark-light.svg" style="height:50px;width:auto;display:block"/></div><div id="dis9" style="position:absolute;left:0;width:1080px;top:1300px;text-align:center;font:500 32px/1.3 Inter,system-ui,sans-serif;color:#7f8191">Unofficial. Not affiliated with Figma.</div></section>
 
 <div id="wipe"></div>
 <div id="wipe2"></div>
@@ -1433,6 +1448,7 @@ tl.fromTo("#stb", { scale: 1.2, opacity: 0, y: 40 }, { scale: 1, opacity: 1, y: 
 
 // S9 end card 19.64 -> 21.4
 t0 = T[10];
+tl.from("#halo9", { opacity: 0, scale: .8, duration: .8, ease: "power2.out" }, t0 + .1);
 tl.from("#fg9", { scale: .6, opacity: 0, duration: .4, ease: "back.out(2)" }, t0 + .1);
 tl.from("#ar9", { x: -40, opacity: 0, duration: .3, ease: "power3.out" }, t0 + .32);
 // beat-locked: icon slam at 19.64s (beat grid; click at 18.55 is the strong cue)
