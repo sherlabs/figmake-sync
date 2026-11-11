@@ -136,6 +136,8 @@ html.is-win { --top-inset: 0px; }
 .app.side-drag { transition: none; cursor: col-resize; -webkit-user-select: none; user-select: none; }
 .fm-sidetoggle { flex: none; }
 .toolbar { transition: padding-left 150ms ease; }
+/* the macOS window buttons reach about 84px from the left: keep the title clear of them next to the narrow rail */
+html.is-mac .app.fm-side-rail .toolbar { padding-left: 36px; }
 .fm-namefield { margin-top: 8px; }
 html.is-mac .side-top, html.is-mac .toolbar { -webkit-app-region: drag; -webkit-user-select: none; user-select: none; }
 html.is-mac .toolbar button, html.is-mac .toolbar input { -webkit-app-region: no-drag; }
@@ -1103,3 +1105,15 @@ dialog.sheet.sy-sheet { width: min(760px, calc(100vw - 32px)); }
 .tk-mark.todo { border: 1.5px dashed var(--text-3); }
 .tasks-h .tk-mark { margin-top: 0; width: 18px; height: 18px; }
 .tasks-h .spin { border-color: var(--sep-2); border-top-color: var(--text); }
+
+/* ============ startup shell: shown from first paint until the first state arrives ============ */
+#boot { position: fixed; inset: 0; z-index: 100; display: grid; grid-template-columns: 228px minmax(0, 1fr); background: var(--win); }
+#boot .b-side { background: var(--side); border-right: 1px solid var(--side-edge); padding: 64px 14px 14px; display: flex; flex-direction: column; gap: 10px; }
+#boot .b-main { display: flex; flex-direction: column; min-width: 0; }
+#boot .b-top { height: 52px; padding: 0 20px; display: flex; align-items: center; }
+#boot .b-pane { flex: 1; padding: 28px 28px; display: flex; flex-direction: column; gap: 14px; }
+#boot .b-bar, #boot .b-row { display: block; height: 12px; border-radius: 6px; background: var(--text-3); opacity: 0.16; animation: b-pulse 1.4s ease-in-out infinite; }
+#boot .b-row { height: 34px; border-radius: 9px; }
+#boot .w30 { width: 30%; } #boot .w35 { width: 35%; } #boot .w40 { width: 40%; } #boot .w50 { width: 50%; } #boot .w60 { width: 60%; } #boot .w70 { width: 70%; }
+@keyframes b-pulse { 0%, 100% { opacity: 0.1; } 50% { opacity: 0.22; } }
+@media (prefers-reduced-motion: reduce) { #boot .b-bar, #boot .b-row { animation: none; } }

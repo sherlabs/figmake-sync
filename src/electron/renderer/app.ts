@@ -1182,6 +1182,7 @@ function render(s: SessionState): void {
   lastMessage = s.message;
   if (s.phase === "start" && !dialog && !paletteOpen) welcomeInput.focus();
   else if (s.phase === "ready" && wasBusy && !dialog && !paletteOpen && document.activeElement === document.body) chatPanel.focusComposer();
+  document.getElementById("boot")?.remove();
 }
 
 document.addEventListener("keydown", (e) => {
