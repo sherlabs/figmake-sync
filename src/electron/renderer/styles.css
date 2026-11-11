@@ -741,30 +741,27 @@ button.trow:focus-visible { box-shadow: var(--ring); }
 .acts-list li.edit .i, .acts-list li.add .i { color: var(--chg-dot); }
 
 /* change card */
-.chcard { border: 1px solid var(--sep); border-radius: 12px; background: var(--raised); box-shadow: var(--card-shadow); padding: 10px 12px; margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.chcard { border: 1px solid var(--sep); border-radius: 12px; background: var(--raised); box-shadow: var(--card-shadow); padding: 12px 12px 8px 12px; margin-top: 12px; }
 .chcard.undone { background: var(--inset); box-shadow: none; }
 .chcard.undone .chcard-title { color: var(--text-2); text-decoration: line-through; text-decoration-color: var(--text-3); }
-.chcard-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
-.chcard-kind { display: inline-flex; align-items: center; gap: 7px; font-size: 11.5px; font-weight: 600; letter-spacing: 0.01em; color: var(--text-2); }
-.chcard .tick { flex: none; width: 20px; height: 20px; border-radius: 6px; background: var(--chg-bg); color: var(--chg-text); display: grid; place-items: center; margin-top: 0; }
+.chcard-top { display: flex; gap: 10px; align-items: flex-start; }
+.chcard .tick { flex: none; width: 22px; height: 22px; border-radius: 7px; background: var(--chg-bg); color: var(--chg-text); display: grid; place-items: center; margin-top: 0; }
 .chcard.sent .tick { background: var(--ok-bg); color: var(--ok-text); }
 .chcard.undone .tick { background: var(--inset-2); color: var(--text-2); }
 .chcard-t { min-width: 0; flex: 1; }
-.chcard-title { margin: 0; font-size: 13.5px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
-.fchips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chcard-title { font-weight: 550; line-height: 1.4; overflow-wrap: anywhere; }
+.fchips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .fchip { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px 0 6px; border-radius: 6px; background: var(--inset-2); color: var(--text-2); font-size: 11.5px; max-width: 100%; }
 .fchip .i { width: 12px; height: 12px; flex: none; color: var(--text-3); }
 .fchip.edited .i { color: var(--chg-dot); }
 .fchip.added .i { color: var(--ok-dot); }
 .fchip.removed .i { color: var(--bad-dot); }
 .fchip.more { padding: 0 8px; }
-.chcard-foot { display: flex; align-items: center; gap: 4px; margin: 0 -4px; padding-top: 6px; border-top: 1px solid var(--sep); min-height: 28px; flex-wrap: wrap; }
+.chcard-foot { display: flex; align-items: center; gap: 4px; margin-top: 6px; min-height: 28px; flex-wrap: wrap; }
 .chcard-foot .sp { flex: 1; }
 .chcard-foot .plain { height: 26px; padding: 0 8px; font-size: 12px; }
-.cnote { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 8px 0 6px; border-radius: 10px; font-size: 11px; font-weight: 550; color: var(--text-2); background: var(--inset-2); white-space: nowrap; }
-.cnote.sent { background: var(--ok-bg); color: var(--ok-text); }
+.cnote { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--text-3); padding-left: 32px; }
 .cnote .i { color: var(--ok-dot); }
-.cnote.sent .i { color: var(--ok-text); }
 .cnote.undone .i { color: var(--text-3); }
 .chcard .cdiff { margin: 8px 0 6px; }
 .chcard .dfile .diffbody { max-height: 220px; }
