@@ -63,3 +63,84 @@ describe("browserReducer", () => {
     expect(tabLabel({ title: "", url: "http://localhost:5173/x" })).toBe("localhost:5173/x");
   });
 });
+
+import { computeViewport, parseViewport, VIEWPORT_MODES } from "../src/app/browser.js";
+import { clampSide, initials, readSide, sizeForKey, sizeForPointer } from "../src/app/sidebar.js";
+
+describe("preview viewport", () => {
+  it("parses stored values and falls back to Fit", () => {
+    for (const m of VIEWPORT_MODES) expect(parseViewport(m)).toBe(m);
+    for (const bad of [null, undefined, "", "wide", 3, {}]) expect(parseViewport(bad)).toBe("fit");
+  });
+
+  it("Fit lays out at 1280 and scales down in a narrow pane, uses the real width in a wide one (never upscaled)", () => {
+    expect(computeViewport("fit", 640, 500)).toEqual({ offsetX: 0, width: 640, height: 500, cssWidth: 1280, cssHeight: 1000, scale: 0.5 });
+    expect(computeViewport("fit", 1280, 700)?.scale).toBe(1);
+    expect(computeViewport("fit", 1920, 900)).toMatchObject({ cssWidth: 1920, cssHeight: 900, scale: 1, offsetX: 0, width: 1920 });
+  });
+
+  it("Desktop is the same with a 1440 minimum", () => {
+    expect(computeViewport("desktop", 720, 400)).toMatchObject({ cssWidth: 1440, scale: 0.5, cssHeight: 800 });
+    expect(computeViewport("desktop", 1500, 400)).toMatchObject({ cssWidth: 1500, scale: 1 });
+  });
+
+  it("Tablet and Phone keep their width, centered, and scale down only when the pane is narrower", () => {
+    expect(computeViewport("phone", 900, 600)).toMatchObject({ cssWidth: 390, scale: 1, width: 390, offsetX: 255, cssHeight: 600 });
+    expect(computeViewport("tablet", 1000, 600)).toMatchObject({ cssWidth: 768, scale: 1, width: 768, offsetX: 116 });
+    const narrow = computeViewport("tablet", 384, 600);
+    expect(narrow).toMatchObject({ cssWidth: 768, scale: 0.5, width: 384, offsetX: 0, cssHeight: 1200 });
+  });
+
+  it("the scaled page always covers the pane exactly (css size x scale == view size)", () => {
+    for (const mode of VIEWPORT_MODES) {
+      for (const w of [200, 390, 641, 777, 1280, 1441, 2560]) {
+        const l = computeViewport(mode, w, 733)!;
+        expect(Math.abs(l.cssWidth * l.scale - l.width)).toBeLessThan(1);
+        expect(Math.abs(l.cssHeight * l.scale - l.height)).toBeLessThan(1);
+        expect(l.scale).toBeLessThanOrEqual(1);
+        expect(l.offsetX + l.width).toBeLessThanOrEqual(w);
+      }
+    }
+  });
+
+  it("an empty pane has no layout", () => {
+    expect(computeViewport("fit", 0, 500)).toBeNull();
+    expect(computeViewport("phone", 500, 0)).toBeNull();
+  });
+});
+
+describe("sidebar sizing", () => {
+  it("clamps the width and collapses below the threshold", () => {
+    expect(clampSide(100)).toBe(200);
+    expect(clampSide(999)).toBe(360);
+    expect(sizeForPointer(139)).toEqual({ rail: true });
+    expect(sizeForPointer(150)).toEqual({ rail: false, width: 200 });
+    expect(sizeForPointer(290)).toEqual({ rail: false, width: 290 });
+    expect(sizeForPointer(2000)).toEqual({ rail: false, width: 360 });
+    expect(sizeForPointer(2000, 300)).toEqual({ rail: false, width: 300 });
+  });
+
+  it("keyboard: arrows step by 16, collapse past the minimum, Home is the rail, End the widest", () => {
+    expect(sizeForKey("ArrowRight", { rail: false, width: 228 }, 228)).toEqual({ rail: false, width: 244 });
+    expect(sizeForKey("ArrowLeft", { rail: false, width: 228 }, 228)).toEqual({ rail: false, width: 212 });
+    expect(sizeForKey("ArrowLeft", { rail: false, width: 205 }, 205)).toEqual({ rail: true });
+    expect(sizeForKey("ArrowRight", { rail: true }, 300)).toEqual({ rail: false, width: 300 });
+    expect(sizeForKey("ArrowLeft", { rail: true }, 300)).toEqual({ rail: true });
+    expect(sizeForKey("Home", { rail: false, width: 300 }, 300)).toEqual({ rail: true });
+    expect(sizeForKey("End", { rail: true }, 300)).toEqual({ rail: false, width: 360 });
+    expect(sizeForKey("a", { rail: true }, 300)).toBeNull();
+  });
+
+  it("reads stored values, treating the old hidden state as the rail", () => {
+    expect(readSide(null, null, null)).toEqual({ width: 228, rail: false });
+    expect(readSide("300", "1", null)).toEqual({ width: 300, rail: true });
+    expect(readSide("5000", null, "0")).toEqual({ width: 360, rail: true });
+    expect(readSide("junk", "0", "0")).toEqual({ width: 228, rail: false });
+  });
+
+  it("makes initials", () => {
+    expect(initials("Checkout Flow")).toBe("CF");
+    expect(initials("dashboard")).toBe("DA");
+    expect(initials("  ")).toBe("?");
+  });
+});

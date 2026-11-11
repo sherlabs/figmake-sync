@@ -97,3 +97,55 @@ export function tabLabel(tab: Pick<BrowserTab, "title" | "url">): string {
     return "New tab";
   }
 }
+
+/* ---- Preview viewport: every page lays out at a fixed CSS width and is scaled to fit the pane ---- */
+
+export const VIEWPORT_MODES = ["fit", "desktop", "tablet", "phone"] as const;
+export type ViewportMode = (typeof VIEWPORT_MODES)[number];
+export const DEFAULT_VIEWPORT: ViewportMode = "fit";
+
+/**
+ * Width (CSS px) a page is laid out at.
+ * `fill` modes (Fit, Desktop) use at least this width and the whole pane; on a wider pane they use the pane's real width (never upscaled).
+ * Device modes (Tablet, Phone) always use exactly this width and sit centered in the pane.
+ */
+export const VIEWPORT_WIDTH: Record<ViewportMode, { width: number; fill: boolean; label: string }> = {
+  fit: { width: 1280, fill: true, label: "Fit" },
+  desktop: { width: 1440, fill: true, label: "Desktop 1440" },
+  tablet: { width: 768, fill: false, label: "Tablet 768" },
+  phone: { width: 390, fill: false, label: "Phone 390" },
+};
+
+/** Anything stored or received that is not a known mode becomes the default. */
+export function parseViewport(raw: unknown): ViewportMode {
+  return typeof raw === "string" && (VIEWPORT_MODES as readonly string[]).includes(raw) ? (raw as ViewportMode) : DEFAULT_VIEWPORT;
+}
+
+export interface ViewportLayout {
+  /** Where the native view sits inside the pane, in pane pixels (centered for device modes). */
+  offsetX: number;
+  width: number;
+  height: number;
+  /** The CSS size the page lays out at, and the factor it is drawn at (<= 1). */
+  cssWidth: number;
+  cssHeight: number;
+  scale: number;
+}
+
+const MIN_SCALE = 0.1;
+
+/** Pure scale math behind the preview's device emulation. Returns null when the pane has no size. */
+export function computeViewport(mode: ViewportMode, paneWidth: number, paneHeight: number): ViewportLayout | null {
+  const paneW = Math.floor(paneWidth);
+  const paneH = Math.floor(paneHeight);
+  if (!(paneW > 0) || !(paneH > 0)) return null;
+  const spec = VIEWPORT_WIDTH[mode];
+  if (spec.fill) {
+    const cssWidth = Math.max(spec.width, paneW);
+    const scale = Math.max(MIN_SCALE, paneW / cssWidth);
+    return { offsetX: 0, width: paneW, height: paneH, cssWidth, cssHeight: Math.round(paneH / scale), scale };
+  }
+  const scale = Math.max(MIN_SCALE, Math.min(1, paneW / spec.width));
+  const width = Math.min(paneW, Math.round(spec.width * scale));
+  return { offsetX: Math.floor((paneW - width) / 2), width, height: paneH, cssWidth: spec.width, cssHeight: Math.round(paneH / scale), scale };
+}

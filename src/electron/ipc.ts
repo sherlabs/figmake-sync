@@ -1,4 +1,5 @@
 import { MAX_IMAGES, MAX_IMAGE_BYTES, IMAGE_NAME } from "../app/attachmentKinds.js";
+import { VIEWPORT_MODES } from "../app/browser.js";
 import { MODEL_ID } from "../app/modelIds.js";
 import { z } from "zod";
 
@@ -14,6 +15,7 @@ export type ProjectPathArg = z.infer<typeof projectPathArg>;
 
 export const browserAddressArg = z.string().max(2048);
 export const browserCommandArg = z.enum(["back", "forward", "reload", "stop", "retry", "external"]);
+export const browserViewportArg = z.enum(VIEWPORT_MODES);
 export const browserTabIdArg = z.number().int().min(1).max(1_000_000);
 
 export const projectNameArg = z.string().trim().min(1).max(80);

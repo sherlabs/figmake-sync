@@ -88,6 +88,7 @@ async function open(state: object, size: { width: number; height: number }, sche
       browserGo: (addr: string) => { (window as unknown as { __went: string[] }).__went = [...((window as unknown as { __went?: string[] }).__went ?? []), addr]; return Promise.resolve(/^(localhost|\d)/u.test(addr)); },
       browserDo: (a: string) => { (window as unknown as { __did: string[] }).__did = [...((window as unknown as { __did?: string[] }).__did ?? []), a]; return Promise.resolve(); },
       browserNewTab: noop, browserSwitch: noop, browserClose: noop,
+      browserViewport: (m: string) => { const w = window as unknown as { __vp?: string[] }; w.__vp = [...(w.__vp ?? []), m]; return Promise.resolve(); },
       describeChange: () => Promise.resolve([]),
       listFolder: (p: string) => Promise.resolve({ path: p, entries: a.tree[p] ?? [], truncated: false }),
       readFile: (p: string) => Promise.resolve({ kind: "text", path: p, text: a.cart, lines: a.cart.split("\n").length - 1 }),
@@ -195,30 +196,128 @@ describe("renderer layout", () => {
     await page.context().close();
   });
 
-  it("sidebar collapses with the toggle and Ctrl+B, widens the content and tells the preview", async (ctx) => {
+  it("sidebar collapses to a rail with the toggle and Ctrl+B (never fully hidden), widens the content and tells the preview", async (ctx) => {
     if (!browser) return ctx.skip();
     for (const width of [1180, 640]) {
       const page = await open(READY, { width, height: 760 }, "light");
       const before = await rect(page, ".main");
       expect(await page.locator(".side").isVisible()).toBe(true);
-      await page.getByRole("button", { name: "Hide sidebar" }).click();
-      await page.waitForFunction(() => document.querySelector(".main")!.getBoundingClientRect().x === 0);
+      await page.getByRole("button", { name: "Collapse sidebar" }).click();
+      await page.waitForFunction(() => document.querySelector(".main")!.getBoundingClientRect().x < 60);
       const after = await rect(page, ".main");
-      expect(await page.locator(".side").isVisible()).toBe(false);
-      expect(after && after.x).toBe(0);
+      expect(await page.locator(".side").isVisible()).toBe(true);
+      expect(after && after.x).toBe(52);
       expect(after && before && after.w).toBeGreaterThan((before as { w: number }).w);
       expect(await overflowX(page)).toBeLessThanOrEqual(0);
-      expect(await page.evaluate(() => window.localStorage.getItem("figmake.side.open"))).toBe("0");
-      expect(await page.getByRole("button", { name: "Show sidebar" }).getAttribute("aria-expanded")).toBe("false");
+      expect(await page.evaluate(() => window.localStorage.getItem("figmake.side.rail"))).toBe("1");
+      expect(await page.getByRole("button", { name: "Expand sidebar" }).getAttribute("aria-expanded")).toBe("false");
+      await page.reload();
+      await page.waitForSelector(".app");
+      expect((await rect(page, ".main"))?.x).toBe(52);
       await page.keyboard.press("Control+b");
       await page.waitForFunction(() => document.querySelector(".main")!.getBoundingClientRect().x > 100);
       expect(await page.locator(".side").isVisible()).toBe(true);
       await page.reload();
       await page.waitForSelector(".app");
-      expect(await page.locator(".side").isVisible()).toBe(true);
+      expect((await rect(page, ".main"))?.x).toBeGreaterThan(100);
       await page.context().close();
     }
   });
+
+  for (const scheme of ["light", "dark"] as const) {
+    it(`sidebar drag handle: resizes between 200 and 360, collapses to the rail, remembers its width, keyboard works (${scheme})`, async (ctx) => {
+      if (!browser) return ctx.skip();
+      const page = await open(READY, { width: 1180, height: 760 }, scheme);
+      const handle = page.getByRole("separator", { name: "Resize sidebar" });
+      expect(await handle.getAttribute("aria-orientation")).toBe("vertical");
+      expect(await handle.getAttribute("aria-valuemax")).toBe("360");
+      expect(await handle.getAttribute("aria-valuenow")).toBe("228");
+      const hb = (await handle.boundingBox())!;
+      expect(hb.width).toBe(6);
+      expect(await handle.evaluate((el) => getComputedStyle(el).cursor)).toBe("col-resize");
+      const drag = async (toX: number): Promise<void> => {
+        const b = (await handle.boundingBox())!;
+        await page.mouse.move(b.x + 3, 300);
+        await page.mouse.down();
+        await page.mouse.move(toX, 300, { steps: 6 });
+        await page.mouse.up();
+        await page.waitForTimeout(60);
+      };
+      const sideW = async (): Promise<number> => (await rect(page, ".side"))!.w;
+      await drag(300);
+      expect(Math.round(await sideW())).toBe(300);
+      expect(await page.evaluate(() => window.localStorage.getItem("figmake.side.w"))).toBe("300");
+      await drag(900);
+      expect(Math.round(await sideW())).toBe(360);
+      await drag(170);
+      expect(Math.round(await sideW())).toBe(200);
+      await drag(60);
+      expect(Math.round(await sideW())).toBe(52);
+      expect(await page.locator(".app.fm-side-rail").count()).toBe(1);
+      expect(await handle.getAttribute("aria-valuenow")).toBe("52");
+      await drag(400);
+      expect(Math.round(await sideW())).toBe(360);
+      expect(await page.locator(".app.fm-side-rail").count()).toBe(0);
+      await page.reload();
+      await page.waitForSelector(".app");
+      expect(Math.round(await sideW())).toBe(360);
+      await handle.focus();
+      await page.keyboard.press("ArrowLeft");
+      expect(await handle.getAttribute("aria-valuenow")).toBe("344");
+      await page.keyboard.press("ArrowRight");
+      await page.keyboard.press("ArrowRight");
+      expect(await handle.getAttribute("aria-valuenow")).toBe("360");
+      await page.keyboard.press("Home");
+      expect(await handle.getAttribute("aria-valuenow")).toBe("52");
+      await page.keyboard.press("ArrowRight");
+      expect(await handle.getAttribute("aria-valuenow")).toBe("360");
+      for (let i = 0; i < 10; i += 1) await page.keyboard.press("ArrowLeft");
+      expect(await handle.getAttribute("aria-valuenow")).toBe("200");
+      await page.keyboard.press("ArrowLeft");
+      expect(await handle.getAttribute("aria-valuenow")).toBe("52");
+      await page.keyboard.press("End");
+      expect(await handle.getAttribute("aria-valuenow")).toBe("360");
+      await handle.dblclick();
+      await page.waitForFunction(() => document.querySelector(".side")!.getBoundingClientRect().width === 52);
+      await handle.dblclick();
+      await page.waitForFunction(() => document.querySelector(".side")!.getBoundingClientRect().width === 360);
+      expect(await overflowX(page)).toBeLessThanOrEqual(0);
+      await page.context().close();
+    });
+
+    it(`sidebar rail: avatars, status, tooltip names, switching and the context menu still work (${scheme})`, async (ctx) => {
+      if (!browser) return ctx.skip();
+      const two = { ...READY, projects: [{ key: "a", name: "Checkout Flow", status: "synced", syncedAt: null }, { key: "b", name: "Landing", status: "changes", syncedAt: null }] };
+      const page = await open(two, { width: 1180, height: 760 }, scheme);
+      await page.evaluate(() => window.localStorage.setItem("figmake.side.rail", "1"));
+      await page.reload();
+      await page.waitForSelector(".app.fm-side-rail");
+      const rows = page.locator(".prow");
+      expect(await rows.count()).toBe(2);
+      expect(await rows.nth(0).getAttribute("title")).toBe("Checkout Flow");
+      expect(await rows.nth(0).getAttribute("aria-label")).toMatch(/^Checkout Flow, /u);
+      expect(await rows.nth(0).locator(".av").innerText()).toBe("CF");
+      expect(await rows.nth(1).locator(".nm").isVisible()).toBe(false);
+      expect(await rows.nth(1).locator(".dot.chg").isVisible()).toBe(true);
+      expect(await rows.nth(0).getAttribute("aria-selected")).toBe("true");
+      const rb = (await rows.nth(1).boundingBox())!;
+      expect(rb.width).toBe(36);
+      expect((await rect(page, ".side"))!.w).toBe(52);
+      expect(await page.getByRole("button", { name: "Add project" }).isVisible()).toBe(true);
+      expect(await page.getByRole("button", { name: "Support Sherlabs" }).isVisible()).toBe(true);
+      expect(await page.locator(".support .t").isVisible()).toBe(false);
+      expect(await overflowX(page)).toBeLessThanOrEqual(0);
+      await rows.nth(1).click();
+      expect(await page.evaluate(() => (window as unknown as { __switched: string[] }).__switched)).toEqual(["b"]);
+      await rows.nth(1).click({ button: "right" });
+      await page.getByRole("menuitem", { name: "Rename…" }).waitFor();
+      expect(await page.getByRole("menuitem", { name: /Remove from list/u }).isVisible()).toBe(true);
+      await page.keyboard.press("Escape");
+      await page.getByRole("button", { name: "Add project" }).click();
+      await page.waitForSelector("dialog[open]");
+      await page.context().close();
+    });
+  }
 
   it("the preview rect follows the sidebar collapsing", async (ctx) => {
     if (!browser) return ctx.skip();
@@ -232,8 +331,19 @@ describe("renderer layout", () => {
     await page.waitForFunction(() => (window as unknown as { __rects: unknown[] }).__rects.length > 0);
     const rects = await page.evaluate(() => (window as unknown as { __rects: ({ x: number; width: number } | null)[] }).__rects);
     const last = rects.at(-1);
-    expect(last && last.x).toBeLessThan(10);
+    expect(last && last.x).toBe(52);
     expect(last && last.width).toBeGreaterThan(700);
+    // dragging the edge keeps the rect in step with the layout
+    const handle = (await page.getByRole("separator", { name: "Resize sidebar" }).boundingBox())!;
+    await page.mouse.move(handle.x + 3, 300);
+    await page.mouse.down();
+    await page.mouse.move(300, 300, { steps: 5 });
+    await page.mouse.up();
+    await page.waitForTimeout(100);
+    const slot = (await rect(page, ".slot"))!;
+    const now = await page.evaluate(() => (window as unknown as { __rects: ({ x: number; width: number } | null)[] }).__rects.at(-1));
+    expect(Math.abs((now?.x ?? 0) - slot.x)).toBeLessThan(1);
+    expect(Math.abs((now?.width ?? 0) - slot.w)).toBeLessThan(1);
     await page.context().close();
   });
 
@@ -550,13 +660,37 @@ describe("renderer layout", () => {
       await page.locator(".pv-btn[aria-label='Stop']").click();
       expect(await page.evaluate(() => (window as unknown as { __did: string[] }).__did)).toEqual(["stop"]);
 
+      // the width control: starts on Fit, tells main, remembers the choice, draws a frame for a phone narrower than the pane
+      const vp = page.getByRole("combobox", { name: "Preview width" });
+      expect(await vp.inputValue()).toBe("fit");
+      expect(await vp.locator("option").allInnerTexts()).toEqual(["Fit", "Desktop 1440", "Tablet 768", "Phone 390"]);
+      expect(await page.evaluate(() => (window as unknown as { __vp: string[] }).__vp)).toEqual(["fit"]);
+      const vb = (await vp.boundingBox())!;
+      expect(vb.height).toBeLessThanOrEqual(28);
+      expect(vb.x + vb.width).toBeLessThanOrEqual(900);
+      expect(await page.locator(".pv-frame").isVisible()).toBe(false);
+      await vp.selectOption("phone");
+      expect(await page.evaluate(() => (window as unknown as { __vp: string[] }).__vp)).toEqual(["fit", "phone"]);
+      expect(await page.evaluate(() => window.localStorage.getItem("figmake.pv.viewport"))).toBe("phone");
+      await page.waitForSelector(".pv-frame:not([hidden])");
+      const fr = (await rect(page, ".pv-frame"))!;
+      const sl = (await rect(page, ".slot"))!;
+      expect(fr.w).toBe(390);
+      expect(Math.abs(fr.x + fr.w / 2 - (sl.x + sl.w / 2))).toBeLessThanOrEqual(1);
+      expect(await overflowX(page)).toBeLessThanOrEqual(0);
+      await page.reload();
+      await page.waitForSelector(".pv-vp");
+      expect(await page.getByRole("combobox", { name: "Preview width" }).inputValue()).toBe("phone");
+      expect(await page.evaluate(() => (window as unknown as { __vp: string[] }).__vp)).toEqual(["phone"]);
+      await page.getByRole("combobox", { name: "Preview width" }).selectOption("fit");
+
       await page.evaluate((st) => (window as unknown as { __pushBrowser: (s: object) => void }).__pushBrowser(st), { tabs: [tab(1, { failed: true })], activeId: 1 });
       await page.waitForSelector(".pv-fail:not([hidden])");
       const fail = await rect(page, ".pv-fail");
       expect(fail && slot && Math.abs(fail.h - (slot as { h: number }).h)).toBeLessThan(2);
       expect(await page.locator(".pv-fail").innerText()).toMatch(/can't be reached[\s\S]*localhost:5173[\s\S]*Retry/u);
       await page.getByRole("button", { name: "Retry" }).click();
-      expect(await page.evaluate(() => (window as unknown as { __did: string[] }).__did)).toEqual(["stop", "retry"]);
+      expect(await page.evaluate(() => (window as unknown as { __did: string[] }).__did)).toEqual(["retry"]); // (the page was reloaded above)
       await page.context().close();
     });
   }

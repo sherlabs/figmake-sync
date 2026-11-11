@@ -1,4 +1,4 @@
-import type { BrowserState } from "../app/browser.js";
+import type { BrowserState, ViewportMode } from "../app/browser.js";
 import type { UpdateState } from "../updater/contracts.js";
 
 export type AgentChoice = "claude" | "codex";
@@ -404,6 +404,8 @@ export interface FigmakeApi {
   browserNewTab(): Promise<void>;
   browserSwitch(id: number): Promise<void>;
   browserClose(id: number): Promise<void>;
+  /** How wide pages are laid out in the preview (all tabs); the pane scales them to fit. */
+  browserViewport(mode: ViewportMode): Promise<void>;
 }
 
 declare global {

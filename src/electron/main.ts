@@ -33,16 +33,19 @@ import { createUpdater, loadAutoUpdater, updatesSupported, type Updater } from "
 import { UPDATE_CHECK_CHANNEL, UPDATE_GET_CHANNEL, UPDATE_INSTALL_CHANNEL, UPDATE_STATE_CHANNEL, type UpdateState } from "../updater/contracts.js";
 import { trackEvent } from "./analytics.js";
 import { DesktopAppStateStore } from "./appState.js";
+import type { ViewportMode } from "../app/browser.js";
 import type { MenuCommand, PreviewRect } from "./contracts.js";
 import { MAX_IMAGE_BYTES, MSG_NOT_PICTURE, MSG_TOO_BIG } from "../app/attachmentKinds.js";
 import { APP_CSP } from "./csp.js";
-import { modelArg, attachBytesArg, attachmentNameArg, attachmentsArg, browserAddressArg, browserCommandArg, browserTabIdArg, cleanupActionArg, ignoreFileArgs, mergeChoicesArg, processIdArg, projectKeyArg, projectNameArg, projectPathArg, syncModeArg } from "./ipc.js";
+import { modelArg, attachBytesArg, attachmentNameArg, attachmentsArg, browserAddressArg, browserCommandArg, browserTabIdArg, browserViewportArg, cleanupActionArg, ignoreFileArgs, mergeChoicesArg, processIdArg, projectKeyArg, projectNameArg, projectPathArg, syncModeArg } from "./ipc.js";
 import { PreviewView } from "./preview.js";
 
 const APP_ID = "com.figmake.sync";
 
 let mainWindow: BrowserWindow | null = null;
 let preview: PreviewView | null = null;
+/** The preview width choice outlives the preview view (the window can be recreated on macOS). */
+let viewportMode: ViewportMode = "fit";
 let appSession: Session | null = null;
 let harness: HarnessService | null = null;
 let updater: Updater | null = null;
@@ -350,6 +353,12 @@ function registerIpc(s: Session): void {
     const parsed = browserTabIdArg.safeParse(id);
     if (parsed.success) preview?.close(parsed.data);
   });
+  ipcMain.handle("figmake:browser-viewport", (_e, mode: unknown) => {
+    const parsed = browserViewportArg.safeParse(mode);
+    if (!parsed.success) return;
+    viewportMode = parsed.data;
+    preview?.setViewport(viewportMode);
+  });
   ipcMain.on("figmake:preview-rect", (_e, rect: unknown) => {
     const r = rect as Partial<PreviewRect> | null;
     const ok = r && [r.x, r.y, r.width, r.height].every((n) => typeof n === "number" && Number.isFinite(n));
@@ -416,6 +425,7 @@ async function bootstrap(): Promise<void> {
   registerUpdateIpc();
   mainWindow = await createWindow();
   preview = new PreviewView(mainWindow, (st) => send("figmake:browser", st));
+  preview.setViewport(viewportMode);
   let lastUrl: string | null = null;
   live.onState((state) => {
     if (state.previewUrl !== lastUrl) {
@@ -468,6 +478,7 @@ app.on("activate", () => {
     void createWindow().then((window) => {
       mainWindow = window;
       preview = new PreviewView(window, (st) => send("figmake:browser", st));
+      preview.setViewport(viewportMode);
       if (appSession) preview.setUrl(appSession.state.previewUrl);
     });
   }

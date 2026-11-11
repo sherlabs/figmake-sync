@@ -2,6 +2,7 @@ import type { AgentChoice, ChatState, Phase, ProjectStatus, SessionState } from 
 import type { UpdateState } from "../../updater/contracts.js";
 import { aiRowActions, type AiAction } from "./aiRow.js";
 import { MODEL_OPTIONS } from "../../app/modelIds.js";
+import { clampSide, initials, readSide, SIDE_MAX, SIDE_MIN, SIDE_RAIL, sizeForKey, sizeForPointer, type SideSize } from "../../app/sidebar.js";
 import { buildModelMenu, isCustomModel, modelForm, modelLocked } from "./modelMenu.js";
 import { createBrowserBar } from "./browserBar.js";
 import { createChatPanel } from "./chat.js";
@@ -55,9 +56,10 @@ const reportProblem = (): void => void api.reportIssue({ errorCode: "unknown", m
 
 const plist = h("ul", { class: "plist", role: "listbox", "aria-labelledby": "projects-h" });
 const sideEmpty = h("p", { class: "side-empty" }, "No projects yet. Paste a Figma Make link to start.");
-const addBtn = h("button", { type: "button", class: "sbtn", onclick: () => openSheet({ kind: "add" }) }, icon("plus"), "Add project");
-const supportBtn = h("button", { type: "button", class: "support", title: "Opens sherlabs.com in your browser", onclick: () => openSupport() }, icon("heart"), h("span", { class: "t" }, h("b", {}, "Support Sherlabs"), h("span", {}, "Free app. Chip in if it helps.")));
-const side = h("aside", { class: "side", id: "fm-side", "aria-label": "Projects" }, h("div", { class: "side-top", "aria-hidden": "true" }), h("h2", { id: "projects-h", class: "side-h" }, "Projects"), plist, sideEmpty, addBtn, h("div", { class: "spacer" }), supportBtn);
+const addBtn = h("button", { type: "button", class: "sbtn", "aria-label": "Add project", onclick: () => openSheet({ kind: "add" }) }, icon("plus"), h("span", { class: "lbl" }, "Add project"));
+const supportBtn = h("button", { type: "button", class: "support", "aria-label": "Support Sherlabs", title: "Support Sherlabs: opens sherlabs.com in your browser", onclick: () => openSupport() }, icon("heart"), h("span", { class: "t" }, h("b", {}, "Support Sherlabs"), h("span", {}, "Free app. Chip in if it helps.")));
+const sideHandle = h("div", { class: "side-handle", role: "separator", "aria-orientation": "vertical", "aria-label": "Resize sidebar", "aria-controls": "fm-side", tabindex: "0", title: "Drag to resize, double-click to collapse or expand" });
+const side = h("aside", { class: "side", id: "fm-side", "aria-label": "Projects" }, h("div", { class: "side-top", "aria-hidden": "true" }), h("h2", { id: "projects-h", class: "side-h" }, "Projects"), plist, sideEmpty, addBtn, h("div", { class: "spacer" }), supportBtn, sideHandle);
 
 const title = h("h1", {}, "figmake-sync");
 const chip = h("span", { class: "chip status", role: "status" });
@@ -66,7 +68,7 @@ const sendBtn = h("button", { type: "button", class: "btn primary send", "aria-k
 const gearBtn = h("button", { type: "button", class: "btn icon gear", "aria-label": "Settings", title: `Settings (${MOD},)`, onclick: () => openSheet({ kind: "settings" }) }, icon("gear"));
 const syncBtn = h("button", { type: "button", class: "btn sy-btn", "aria-haspopup": "menu", onclick: () => showSyncMenu() }, icon("refresh", true), h("span", { class: "bl" }, "Sync with Figma"));
 const chatBtn = h("button", { type: "button", class: "btn icon chat-toggle", "aria-label": "Side panel", "aria-pressed": "true", "aria-keyshortcuts": "Meta+J Control+J", title: `Side panel (${MOD}J)`, onclick: () => setChatOpen(!chatOpen) }, icon("panel"), h("span", { class: "pip", hidden: true }));
-const sideToggle = h("button", { type: "button", class: "btn icon fm-sidetoggle", "aria-controls": "fm-side", "aria-expanded": "true", "aria-label": "Hide sidebar", "aria-keyshortcuts": "Meta+B Control+B", title: `Hide sidebar (${MOD}B)`, onclick: () => setSideOpen(!sideOpen) }, icon("sidebar"));
+const sideToggle = h("button", { type: "button", class: "btn icon fm-sidetoggle", "aria-controls": "fm-side", "aria-expanded": "true", "aria-label": "Collapse sidebar", "aria-keyshortcuts": "Meta+B Control+B", title: `Collapse sidebar (${MOD}B)`, onclick: () => toggleSide() }, icon("sidebar"));
 const toolbar = h("header", { class: "toolbar" }, h("div", { class: "ttl row-ttl" }, sideToggle, title, chip), h("div", { class: "tright" }, updateBtn, chatBtn, syncBtn, sendBtn, gearBtn));
 
 const banner = h("div", { class: "errbanner", role: "alert", hidden: true });
@@ -194,8 +196,9 @@ function projectRow(p: SessionState["projects"][number], s: SessionState): HTMLE
   const tail = working ? h("span", { class: "spin s", "aria-hidden": "true" }) : h("span", { class: `dot ${DOT[status]}`, title: STATUS_TEXT[status], "aria-hidden": "true" });
   const row = h(
     "button",
-    { type: "button", class: "prow", role: "option", "aria-selected": selected ? "true" : "false", "aria-label": `${p.name}, ${working ? "working" : STATUS_TEXT[status].toLowerCase()}`, onclick: () => !selected && switchTo(p.key), ondblclick: () => openSheet({ kind: "rename", key: p.key }) },
+    { type: "button", class: "prow", role: "option", "aria-selected": selected ? "true" : "false", title: p.name, "aria-label": `${p.name}, ${working ? "working" : STATUS_TEXT[status].toLowerCase()}`, onclick: () => !selected && switchTo(p.key), ondblclick: () => openSheet({ kind: "rename", key: p.key }) },
     icon("folder"),
+    h("span", { class: "av", "aria-hidden": "true" }, initials(p.name)),
     h("span", { class: "nm" }, p.name),
     h("span", { class: "ptail" }, tail),
   );
@@ -876,7 +879,7 @@ function commands(s: SessionState): Cmd[] {
     { group: "Do", label: "Merge Figma's changes into mine", glyph: "refresh", off: s.phase !== "ready", run: () => void api.syncWithFigma("merge") },
     { group: "Do", label: "Discard my changes and use Figma's", glyph: "undo", off: s.phase !== "ready", run: () => askReplace() },
     { group: "Do", label: "New chat", glyph: "compose", off: !(s.phase === "ready" && chatState.messages.length > 0), run: () => void api.newChat() },
-    { group: "Do", label: "Toggle sidebar", glyph: "sidebar", keys: [`${MOD}B`], run: () => setSideOpen(!sideOpen) },
+    { group: "Do", label: "Toggle sidebar", glyph: "sidebar", keys: [`${MOD}B`], run: () => toggleSide() },
     { group: "Do", label: "Toggle side panel", glyph: "panel", keys: [`${MOD}J`], off: !hasChat(s), run: () => setChatOpen(!chatOpen) },
     { group: "Do", label: "Show project files", glyph: "folder", off: !hasChat(s), run: () => { chatOpen = true; store.set("chat.open", "1"); setTab("files", true); layoutChat(); } },
     { group: "Do", label: "Undo last change", glyph: "undo", off: !(s.phase === "ready" && s.canUndo), run: () => void api.undo() },
@@ -945,21 +948,79 @@ const store = {
     try { window.localStorage.setItem(`figmake.${key}`, value); } catch { /* private mode: layout just isn't remembered */ }
   },
 };
-let sideOpen = store.get("side.open") !== "0";
-function setSideOpen(open: boolean): void {
-  sideOpen = open;
-  store.set("side.open", open ? "1" : "0");
+// ---- sidebar: an expanded column (drag its right edge to resize) or a narrow rail ----
+const savedSide = readSide(store.get("side.w"), store.get("side.rail"), store.get("side.open"));
+let sideW = savedSide.width;
+let sideRail = savedSide.rail;
+let sideDrag = false;
+const sideMax = (): number => Math.max(SIDE_MIN, Math.min(SIDE_MAX, window.innerWidth - 560));
+const sideNow = (): SideSize => (sideRail ? { rail: true } : { rail: false, width: clampSide(sideW, sideMax()) });
+function applySide(size: SideSize, save: boolean): void {
+  if (size.rail) sideRail = true;
+  else { sideRail = false; sideW = size.width; }
+  if (save) {
+    store.set("side.rail", sideRail ? "1" : "0");
+    store.set("side.w", String(sideW));
+  }
   paintSide();
 }
+/** The toggle (Cmd/Ctrl+B) and a double-click on the edge: expanded <-> rail. The sidebar is never fully hidden. */
+function toggleSide(): void { applySide(sideRail ? { rail: false, width: sideW } : { rail: true }, true); }
 function paintSide(): void {
-  appEl.classList.toggle("fm-side-off", !sideOpen);
-  side.toggleAttribute("inert", !sideOpen);
-  sideToggle.setAttribute("aria-expanded", String(sideOpen));
-  sideToggle.setAttribute("aria-label", sideOpen ? "Hide sidebar" : "Show sidebar");
-  sideToggle.title = `${sideOpen ? "Hide" : "Show"} sidebar (${MOD}B)`;
-  sideToggle.classList.toggle("on", !sideOpen);
+  const width = sideRail ? SIDE_RAIL : clampSide(sideW, sideMax());
+  appEl.style.setProperty("--side-w", `${width}px`);
+  appEl.classList.toggle("fm-side-rail", sideRail);
+  sideToggle.setAttribute("aria-expanded", String(!sideRail));
+  sideToggle.setAttribute("aria-label", sideRail ? "Expand sidebar" : "Collapse sidebar");
+  sideToggle.title = `${sideRail ? "Expand" : "Collapse"} sidebar (${MOD}B)`;
+  sideToggle.classList.toggle("on", sideRail);
+  sideHandle.setAttribute("aria-valuemin", String(SIDE_RAIL));
+  sideHandle.setAttribute("aria-valuemax", String(sideMax()));
+  sideHandle.setAttribute("aria-valuenow", String(width));
+  sideHandle.setAttribute("aria-valuetext", sideRail ? "Collapsed" : `${width} pixels wide`);
   layoutChat();
 }
+// Pointer drag: the width follows the pointer at most once per frame; the CSS transition is off while dragging.
+sideHandle.addEventListener("pointerdown", (e) => {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  sideHandle.setPointerCapture(e.pointerId);
+  sideDrag = true;
+  appEl.classList.add("side-drag");
+  let frame = 0;
+  let latest = e.clientX;
+  const flush = (): void => {
+    frame = 0;
+    const size = sizeForPointer(latest, sideMax());
+    if (size.rail) sideRail = true;
+    else { sideRail = false; sideW = size.width; }
+    paintSide();
+  };
+  const move = (ev: PointerEvent): void => {
+    latest = ev.clientX;
+    if (!frame) frame = window.requestAnimationFrame(flush);
+  };
+  const up = (): void => {
+    if (frame) { window.cancelAnimationFrame(frame); flush(); }
+    sideDrag = false;
+    appEl.classList.remove("side-drag");
+    sideHandle.removeEventListener("pointermove", move);
+    sideHandle.removeEventListener("pointerup", up);
+    sideHandle.removeEventListener("pointercancel", up);
+    applySide(sideNow(), true);
+  };
+  sideHandle.addEventListener("pointermove", move);
+  sideHandle.addEventListener("pointerup", up);
+  sideHandle.addEventListener("pointercancel", up);
+});
+sideHandle.addEventListener("dblclick", () => { if (!sideDrag) toggleSide(); });
+sideHandle.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); toggleSide(); return; }
+  const next = sizeForKey(e.key, sideNow(), sideW, sideMax());
+  if (!next) return;
+  e.preventDefault();
+  applySide(next, true);
+});
 const MIN_CHAT = 300;
 const MAX_CHAT = 640;
 const MIN_STAGE = 340;
@@ -1078,7 +1139,7 @@ resizer.addEventListener("keydown", (e) => {
   store.set("chat.h", String(chatH));
 });
 compactQuery.addEventListener("change", layoutChat);
-window.addEventListener("resize", layoutChat);
+window.addEventListener("resize", () => { paintSide(); });
 
 // ================= preview slot =================
 
@@ -1089,8 +1150,14 @@ function syncPreview(): void {
   previewShown = Boolean(s?.previewUrl) && s?.phase !== "start";
   slot.classList.toggle("paused", overlay && previewShown);
   const r = slot.getBoundingClientRect();
-  api.previewRect(previewShown && !overlay && r.width > 0 ? { x: r.x, y: r.y, width: r.width, height: r.height } : null);
+  const rect = previewShown && !overlay && r.width > 0 ? { x: r.x, y: r.y, width: r.width, height: r.height } : null;
+  // The native view follows this rect (main re-applies the page width on every change): say nothing when it has not moved.
+  const key = rect ? `${rect.x},${rect.y},${rect.width},${rect.height}` : "none";
+  if (key === lastRectKey) return;
+  lastRectKey = key;
+  api.previewRect(rect);
 }
+let lastRectKey = "";
 new ResizeObserver(syncPreview).observe(slot);
 
 // ================= render =================
@@ -1119,7 +1186,7 @@ function render(s: SessionState): void {
 
 document.addEventListener("keydown", (e) => {
   const mod = e.metaKey || e.ctrlKey;
-  if (mod && e.key.toLowerCase() === "b") { e.preventDefault(); closePalette(); setSideOpen(!sideOpen); }
+  if (mod && e.key.toLowerCase() === "b") { e.preventDefault(); closePalette(); toggleSide(); }
   else if (mod && e.key.toLowerCase() === "j") { e.preventDefault(); closePalette(); setChatOpen(!chatOpen); }
   else if (mod && e.key.toLowerCase() === "k") { e.preventDefault(); if (paletteOpen) closePalette(); else openPalette(); }
   else if (mod && e.key.toLowerCase() === "n") { e.preventDefault(); closePalette(); openSheet({ kind: "add" }); }

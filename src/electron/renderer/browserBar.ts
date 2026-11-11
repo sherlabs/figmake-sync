@@ -1,8 +1,13 @@
-import { tabLabel, type BrowserState, type BrowserTab } from "../../app/browser.js";
+import { computeViewport, DEFAULT_VIEWPORT, parseViewport, tabLabel, VIEWPORT_MODES, VIEWPORT_WIDTH, type BrowserState, type BrowserTab, type ViewportMode } from "../../app/browser.js";
 import type { FigmakeApi } from "../contracts.js";
 import { h, icon } from "./dom.js";
 
 /* The browser bar above the preview: tabs, back/forward/reload, address, and the "can't reach this page" pane. */
+
+const VIEWPORT_KEY = "figmake.pv.viewport";
+const readViewport = (): ViewportMode => {
+  try { return parseViewport(window.localStorage.getItem(VIEWPORT_KEY)); } catch { return DEFAULT_VIEWPORT; }
+};
 
 const REJECTED = "Only pages on this computer can be opened here.";
 
@@ -26,7 +31,14 @@ export function createBrowserBar(api: FigmakeApi, slot: HTMLElement): BrowserBar
   const address = h("input", { class: "pv-address", type: "text", "aria-label": "Address", spellcheck: "false", autocomplete: "off", autocapitalize: "off" });
   const note = h("div", { class: "pv-note", role: "status", hidden: true });
   const field = h("form", { class: "pv-field", onsubmit: (e: Event) => { e.preventDefault(); void submit(); } }, address);
-  const bar = h("div", { class: "pv-bar" }, back, fwd, reload, field, external, note);
+  /* How wide pages are laid out (a native <select>, so its list opens above the native preview view). */
+  let viewport = readViewport();
+  const vpSelect = h("select", { class: "pv-vp", "aria-label": "Preview width", title: "Preview width: pages are laid out at this width and scaled to fit" }, ...VIEWPORT_MODES.map((m) => h("option", { value: m }, VIEWPORT_WIDTH[m].label)));
+  vpSelect.value = viewport;
+  const vpWrap = h("span", { class: "pv-vpw" }, icon("laptop", true), vpSelect, icon("chev-d", true));
+  const frame = h("div", { class: "pv-frame", "aria-hidden": "true", hidden: true });
+  slot.prepend(frame);
+  const bar = h("div", { class: "pv-bar" }, back, fwd, reload, field, vpWrap, external, note);
   const progress = h("div", { class: "pv-progress", "aria-hidden": "true" }, h("i", {}));
 
   const failTitle = h("h3", {}, "This page can't be reached");
@@ -115,6 +127,30 @@ export function createBrowserBar(api: FigmakeApi, slot: HTMLElement): BrowserBar
       failText.textContent = `Nothing is answering at ${host}. It may still be starting.`;
     }
   }
+
+  /** The subtle frame behind a phone/tablet-sized page that is narrower than the pane (the native view itself sits on top of it). */
+  function drawFrame(): void {
+    const lay = computeViewport(viewport, slot.clientWidth, slot.clientHeight);
+    const device = !VIEWPORT_WIDTH[viewport].fill;
+    slot.classList.toggle("pv-device", device);
+    frame.hidden = !(device && lay && lay.offsetX > 0);
+    if (lay && !frame.hidden) {
+      frame.style.left = `${lay.offsetX}px`;
+      frame.style.width = `${lay.width}px`;
+    }
+  }
+  function setViewport(next: ViewportMode, remember: boolean): void {
+    viewport = next;
+    vpSelect.value = next;
+    if (remember) {
+      try { window.localStorage.setItem(VIEWPORT_KEY, next); } catch { /* not remembered */ }
+    }
+    drawFrame();
+    void api.browserViewport(next);
+  }
+  vpSelect.addEventListener("change", () => setViewport(parseViewport(vpSelect.value), true));
+  new ResizeObserver(drawFrame).observe(slot);
+  setViewport(viewport, false);
 
   render(state);
   void api.browser().then(render);

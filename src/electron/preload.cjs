@@ -62,5 +62,6 @@ contextBridge.exposeInMainWorld("figmake", {
   browserNewTab: call("figmake:browser-new-tab"),
   browserSwitch: call("figmake:browser-switch"),
   browserClose: call("figmake:browser-close"),
+  browserViewport: call("figmake:browser-viewport"),
   previewRect: (rect) => ipcRenderer.send("figmake:preview-rect", rect),
 });

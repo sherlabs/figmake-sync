@@ -1,17 +1,21 @@
 import { shell, WebContentsView, type BrowserWindow } from "electron";
 
-import { browserReducer, emptyBrowser, HOME_TAB, isLocalUrl, normalizeAddress, type BrowserAction, type BrowserState } from "../app/browser.js";
+import { browserReducer, computeViewport, DEFAULT_VIEWPORT, emptyBrowser, HOME_TAB, isLocalUrl, normalizeAddress, type BrowserAction, type BrowserState, type ViewportLayout, type ViewportMode } from "../app/browser.js";
 import type { BrowserCommand, PreviewRect } from "./contracts.js";
 
 const RETRY_MS = 1500;
 const MAX_RETRIES = 60;
 /** The first failures stay quiet (the dev server is often still starting); after this many the pane says so. */
 const QUIET_FAILURES = 3;
+/** While the pane is being resized, the (heavier) device emulation follows after this quiet gap; the view bounds follow at once. */
+const EMULATION_DEBOUNCE_MS = 50;
 
 interface Tab {
   view: WebContentsView;
   retries: number;
   timer: ReturnType<typeof setTimeout> | null;
+  /** What device emulation is currently applied ("off" or "WxH@scale"); null = not applied yet. */
+  emu: string | null;
 }
 
 /**
@@ -25,6 +29,8 @@ export class PreviewView {
   private url: string | null = null;
   private rect: PreviewRect | null = null;
   private nextId = HOME_TAB + 1;
+  private viewport: ViewportMode = DEFAULT_VIEWPORT;
+  private emuTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly window: BrowserWindow,
@@ -52,6 +58,13 @@ export class PreviewView {
   setRect(rect: PreviewRect | null): void {
     this.rect = rect;
     this.layout();
+  }
+
+  /** Applies to every tab of the project; the renderer remembers the choice and sends it again on every start. */
+  setViewport(mode: ViewportMode): void {
+    if (mode === this.viewport) return;
+    this.viewport = mode;
+    this.layout(true);
   }
 
   /** The AI changed files: refresh every page (a page that never loaded is tried again). */
@@ -171,7 +184,7 @@ export class PreviewView {
       },
     });
     const wc = view.webContents;
-    const tab: Tab = { view, retries: 0, timer: null };
+    const tab: Tab = { view, retries: 0, timer: null, emu: null };
     this.tabs.set(id, tab);
 
     const guard = (event: { preventDefault(): void }, target: string): void => {
@@ -201,7 +214,12 @@ export class PreviewView {
       this.patch(id, { loading: false });
       sync();
     });
-    wc.on("did-navigate", sync);
+    // A new page may come from a new renderer process: make sure it is laid out at the chosen width too.
+    wc.on("did-navigate", () => {
+      tab.emu = null;
+      this.applyEmulation(true);
+      sync();
+    });
     wc.on("did-navigate-in-page", sync);
     wc.on("page-title-updated", (_event, title) => this.patch(id, { title }));
     wc.on("did-finish-load", () => {
@@ -224,14 +242,56 @@ export class PreviewView {
     void wc.loadURL(url).catch(() => undefined);
   }
 
-  private layout(): void {
+  private layout(immediate = false): void {
     const r = this.rect;
     const active = this.state.activeId;
+    const lay = r ? computeViewport(this.viewport, Math.round(r.width), Math.round(r.height)) : null;
     for (const [id, tab] of this.tabs) {
       const failed = this.tabState(id)?.failed ?? false;
       tab.view.setVisible(Boolean(r) && id === active && !failed);
-      if (r) tab.view.setBounds({ x: Math.round(r.x), y: Math.round(r.y), width: Math.max(0, Math.round(r.width)), height: Math.max(0, Math.round(r.height)) });
+      if (r) {
+        const width = lay ? lay.width : Math.max(0, Math.round(r.width));
+        tab.view.setBounds({ x: Math.round(r.x) + (lay?.offsetX ?? 0), y: Math.round(r.y), width, height: Math.max(0, Math.round(r.height)) });
+      }
     }
+    this.applyEmulation(immediate);
+  }
+
+  /**
+   * Every tab lays out at a fixed CSS width and is drawn scaled to the pane (see computeViewport), so a page designed for a wide
+   * screen does not scroll sideways in a narrow pane. enableDeviceEmulation({ viewSize, scale }) is what does it: the page sees
+   * the emulated width (document.documentElement.clientWidth, media queries), and Chromium maps mouse/keyboard input back through
+   * the scale. At scale 1 the emulation is switched off and the page simply fills the view.
+   * Note for the future element picker: Chrome's inspect overlay (Overlay domain) works on top of this emulation, so keep the emulation
+   * on the view rather than scaling the view's bounds or using CSS zoom.
+   * Bounds change at once on every layout; the emulation follows a moment later while the pane is still being dragged.
+   */
+  private applyEmulation(immediate: boolean): void {
+    if (this.emuTimer) clearTimeout(this.emuTimer);
+    this.emuTimer = null;
+    const pending = [...this.tabs.values()].some((t) => t.emu === null);
+    if (!immediate && !pending) {
+      this.emuTimer = setTimeout(() => this.applyEmulation(true), EMULATION_DEBOUNCE_MS);
+      return;
+    }
+    const r = this.rect;
+    const lay = r ? computeViewport(this.viewport, Math.round(r.width), Math.round(r.height)) : null;
+    if (!lay) return;
+    for (const tab of this.tabs.values()) this.emulate(tab, lay);
+  }
+
+  private emulate(tab: Tab, lay: ViewportLayout): void {
+    const wc = tab.view.webContents;
+    if (wc.isDestroyed()) return;
+    const key = lay.scale >= 1 ? "off" : `${lay.cssWidth}x${lay.cssHeight}@${lay.scale}`;
+    if (tab.emu === key) return;
+    tab.emu = key;
+    if (key === "off") {
+      wc.disableDeviceEmulation();
+      return;
+    }
+    const size = { width: lay.cssWidth, height: lay.cssHeight };
+    wc.enableDeviceEmulation({ screenPosition: "desktop", screenSize: size, viewSize: size, viewPosition: { x: 0, y: 0 }, deviceScaleFactor: 0, scale: lay.scale });
   }
 
   private destroyTab(id: number): void {
@@ -244,6 +304,8 @@ export class PreviewView {
   }
 
   private destroyAll(): void {
+    if (this.emuTimer) clearTimeout(this.emuTimer);
+    this.emuTimer = null;
     for (const id of [...this.tabs.keys()]) this.destroyTab(id);
   }
 }
