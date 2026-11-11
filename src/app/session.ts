@@ -13,7 +13,9 @@ import type { DevStatus } from "../harness/types.js";
 import { reapStaleDevServer } from "../harness/devserver.js";
 import type { AgentChoice, AttachResult, Attachment, ChangedFile, ChatFile, ChatMessage, ChatState, DesktopAppState, ErrorCode, FileView, FolderListing, Phase, ProcessId, ProjectSummary, ReviewDiff, ReviewItem, SendProgress, SessionState, SignOutAgentResult, SwitchResult } from "../electron/contracts.js";
 import { isAuthRequiredError } from "../electron/authState.js";
-import { DEFAULT_IMAGE_PROMPT, MAX_IMAGES } from "./attachmentKinds.js";
+import { DEFAULT_IMAGE_PROMPT } from "./attachmentKinds.js";
+import { MAX_ATTACHMENTS, attachmentImage } from "./elementKinds.js";
+import { buildElementBlock } from "./elementPick.js";
 import { AttachmentError, attachmentPath, imageExists, pruneImages, readImageDataUrl, removeAllImages, removeImage, saveImage } from "./attachments.js";
 import { applyAgentEvent, baseName, capMessages, dropSummaryRepeat, emptyAssistant, finishLive, newId, userMessage } from "./chat.js";
 import type { ChatStore } from "./chatStore.js";
@@ -177,6 +179,10 @@ export class Session {
   private ctl: AbortController | null = null;
   private busy = false;
   private root: string | null = null;
+  /** The open project's folder (the element picker looks for a component's file in it). */
+  get projectRoot(): string | null {
+    return this.root;
+  }
   private workspaceDir: string;
   private stack: Entry[] = [];
   private agentReady: AgentChoice | null = null;
@@ -321,7 +327,7 @@ export class Session {
 
   /** Deletes a picture that was attached but never sent; pictures a message refers to are kept. */
   async discardAttachment(name: string): Promise<void> {
-    if (!this.root || this.messages.some((m) => m.attachments?.some((a) => a.kind === "image" && a.name === name))) return;
+    if (!this.root || this.messages.some((m) => m.attachments?.some((a) => attachmentImage(a) === name))) return;
     await removeImage(this.root, name);
   }
 
@@ -415,13 +421,26 @@ export class Session {
     const retried = retryOf ? this.messages.find((m) => m.id === retryOf && m.role === "user") : undefined;
     const given = retried ? (retried.attachments ?? []) : attached;
     // Only pictures that are really saved in this project count; anything else is dropped quietly.
+    // A picked element is kept with or without its cropped picture (the picture may be gone; the details are in the chip).
     const kept: Attachment[] = [];
-    for (const a of given.slice(0, MAX_IMAGES)) {
-      if (a.kind === "image" && root0 && !kept.some((k) => k.kind === "image" && k.name === a.name) && (await imageExists(root0, a.name))) kept.push({ kind: "image", name: a.name });
+    const hasName = (name: string): boolean => kept.some((k) => attachmentImage(k) === name);
+    for (const a of given.slice(0, MAX_ATTACHMENTS)) {
+      if (!root0) break;
+      if (a.kind === "image") {
+        if (!hasName(a.name) && (await imageExists(root0, a.name))) kept.push({ kind: "image", name: a.name });
+      } else if (a.kind === "element" && !kept.some((k) => k.kind === "element" && k.id === a.id)) {
+        const here = a.image && !hasName(a.image) && (await imageExists(root0, a.image));
+        kept.push({ kind: "element", id: a.id, info: a.info, ...(here && a.image ? { image: a.image } : {}) });
+      }
     }
     const typedText = prompt.trim();
-    const images = kept.flatMap((a) => (a.kind === "image" && root0 ? [attachmentPath(root0, a.name) ?? ""] : [])).filter(Boolean);
-    const text = typedText || (images.length > 0 ? DEFAULT_IMAGE_PROMPT : "");
+    const pathOf = (name: string): string => (root0 ? (attachmentPath(root0, name) ?? "") : "");
+    const userImages = kept.flatMap((a) => (a.kind === "image" ? [pathOf(a.name)] : [])).filter(Boolean);
+    const elements = kept.flatMap((a) => (a.kind === "element" ? [a] : []));
+    // The crops of picked elements go to the AI like any screenshot, after the person's own pictures.
+    const images = [...userImages, ...elements.flatMap((a) => (a.image ? [pathOf(a.image)] : [])).filter(Boolean)];
+    const text = typedText || (userImages.length > 0 ? DEFAULT_IMAGE_PROMPT : "");
+    const elementBlock = buildElementBlock(elements.map((a) => a.info));
     const agent = this.s.agent;
     const model = agent ? this.models[agent] : null;
     // A failed turn leaves a calm error in the chat; typing again simply carries on.
@@ -443,7 +462,7 @@ export class Session {
           return end("stopped");
         }
         this.set({ phase: "working", message: undefined });
-        const { done } = await this.deps.harness.startRun({ rootDir: root, prompt: `${PROMPT_PREFACE}\n\n${text}${images.length > 0 ? `\n\n${attachmentNote(images)}` : ""}`, ...(images.length > 0 ? { images } : {}), ...(model ? { model } : {}), agent, ...(this.fresh ? { newSession: true } : {}) }, signal);
+        const { done } = await this.deps.harness.startRun({ rootDir: root, prompt: `${PROMPT_PREFACE}\n\n${text}${elementBlock ? `\n\n${elementBlock}` : ""}${images.length > 0 ? `\n\n${attachmentNote(images)}` : ""}`, ...(images.length > 0 ? { images } : {}), ...(model ? { model } : {}), agent, ...(this.fresh ? { newSession: true } : {}) }, signal);
         const outcome = await done;
         if (outcome.sessionId) this.fresh = false;
         if (outcome.cancelled || !outcome.success) {

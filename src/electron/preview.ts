@@ -2,6 +2,7 @@ import { shell, WebContentsView, type BrowserWindow } from "electron";
 
 import { browserReducer, computeViewport, DEFAULT_VIEWPORT, MAX_FIT_WIDTH, VIEWPORT_WIDTH, emptyBrowser, HOME_TAB, isLocalUrl, normalizeAddress, type BrowserAction, type BrowserState, type ViewportLayout, type ViewportMode } from "../app/browser.js";
 import type { BrowserCommand, PreviewRect } from "./contracts.js";
+import { ElementPicker, type PickResult } from "./elementPicker.js";
 
 const RETRY_MS = 1500;
 const MAX_RETRIES = 60;
@@ -11,6 +12,15 @@ const QUIET_FAILURES = 3;
 const EMULATION_DEBOUNCE_MS = 50;
 /** The modes that lay a page out at the pane's own width (Fit, Desktop), where a too-wide page is measured and fitted. */
 const VIEWPORT_FILLS: ReadonlySet<ViewportMode> = new Set((Object.keys(VIEWPORT_WIDTH) as ViewportMode[]).filter((m) => VIEWPORT_WIDTH[m].fill));
+
+/** What the preview tells its owner about "Select element". All optional. */
+export interface PreviewHooks {
+  /** The project folder (to find the file of a picked component). */
+  root?(): string | null;
+  /** The mode switched on or off; `message` is a plain sentence when it ended because something went wrong. */
+  onPickMode?(active: boolean, message?: string): void;
+  onPick?(result: PickResult): void;
+}
 
 interface Tab {
   view: WebContentsView;
@@ -36,11 +46,53 @@ export class PreviewView {
   private nextId = HOME_TAB + 1;
   private viewport: ViewportMode = DEFAULT_VIEWPORT;
   private emuTimer: ReturnType<typeof setTimeout> | null = null;
+  private picker: { id: number; picker: ElementPicker } | null = null;
 
   constructor(
     private readonly window: BrowserWindow,
     private readonly onChange: (state: BrowserState) => void = () => undefined,
+    private readonly hooks: PreviewHooks = {},
   ) {}
+
+  /** True while "Select element" is on. */
+  get picking(): boolean {
+    return this.picker !== null;
+  }
+
+  /**
+   * Turns "Select element" on for the active tab: Chrome highlights what the pointer is over and the next click picks it
+   * (the page never sees that click). Only local pages, never a page that could not load. Returns false when it could not start.
+   */
+  async startPick(): Promise<boolean> {
+    if (this.picker) return true;
+    const id = this.state.activeId;
+    const tab = this.tabs.get(id);
+    const st = this.tabState(id);
+    if (!tab || !st || st.failed || !isLocalUrl(st.url) || tab.view.webContents.isDestroyed()) return false;
+    const picker = new ElementPicker(tab.view.webContents, {
+      root: () => this.hooks.root?.() ?? null,
+      onPick: (result) => this.hooks.onPick?.(result),
+      onEnd: (_reason, message) => {
+        if (this.picker?.picker === picker) this.picker = null;
+        // Taking the element's picture makes Chromium drop the preview's device emulation: put it back (and measure again).
+        if (this.tabs.get(id) === tab) {
+          tab.emu = null;
+          this.applyEmulation(true);
+        }
+        this.hooks.onPickMode?.(false, message);
+      },
+    });
+    this.picker = { id, picker };
+    if (!(await picker.start())) return false;
+    // Only the page that has the keyboard hears Esc.
+    if (!tab.view.webContents.isDestroyed()) tab.view.webContents.focus();
+    this.hooks.onPickMode?.(true);
+    return true;
+  }
+
+  stopPick(): void {
+    void this.picker?.picker.stop();
+  }
 
   getState(): BrowserState {
     return this.state;
@@ -125,6 +177,7 @@ export class PreviewView {
   }
 
   switchTo(id: number): void {
+    if (id !== this.state.activeId) this.stopPick();
     this.apply({ type: "switch", id });
     this.layout();
   }
@@ -214,6 +267,9 @@ export class PreviewView {
         canGoForward: wc.navigationHistory.canGoForward(),
       });
     };
+    wc.on("render-process-gone", () => {
+      if (this.picker?.id === id) this.stopPick();
+    });
     wc.on("did-start-loading", () => this.patch(id, { loading: true }));
     wc.on("did-stop-loading", () => {
       this.patch(id, { loading: false });
@@ -221,6 +277,7 @@ export class PreviewView {
     });
     // A new page may come from a new renderer process: make sure it is laid out at the chosen width too.
     wc.on("did-navigate", () => {
+      if (this.picker?.id === id) this.stopPick();
       tab.contentWidth = 0;
       tab.emu = null;
       this.applyEmulation(true);
@@ -236,6 +293,7 @@ export class PreviewView {
     // The dev server can accept connections a moment before it can serve the page: retry quietly, never leave a blank view.
     wc.on("did-fail-load", (_event, code, _desc, failedUrl, isMainFrame) => {
       if (!isMainFrame || code === -3 || this.tabs.get(id) !== tab) return; // -3 = aborted by a newer navigation
+      if (this.picker?.id === id) this.stopPick();
       tab.retries += 1;
       this.patch(id, { loading: false, ...(isLocalUrl(failedUrl) ? { url: failedUrl } : {}), ...(tab.retries >= QUIET_FAILURES ? { failed: true } : {}) });
       if (tab.retries >= MAX_RETRIES) return;
@@ -336,6 +394,7 @@ export class PreviewView {
     const tab = this.tabs.get(id);
     if (!tab) return;
     for (const t of tab.measureTimers) clearTimeout(t);
+    if (this.picker?.id === id) this.stopPick();
     this.tabs.delete(id);
     if (tab.timer) clearTimeout(tab.timer);
     this.window.contentView.removeChildView(tab.view);

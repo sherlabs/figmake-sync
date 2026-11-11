@@ -28,6 +28,9 @@ export function createBrowserBar(api: FigmakeApi, slot: HTMLElement): BrowserBar
   const fwd = h("button", { type: "button", class: "pv-btn", "aria-label": "Forward", title: "Forward", onclick: () => void api.browserDo("forward") }, icon("fwd"));
   const reload = h("button", { type: "button", class: "pv-btn", "aria-label": "Reload", title: "Reload", onclick: () => void api.browserDo(active()?.loading ? "stop" : "reload") }, icon("refresh"));
   const external = h("button", { type: "button", class: "pv-btn", "aria-label": "Open in browser", title: "Open in browser", onclick: () => void api.browserDo("external") }, icon("ext"));
+  /* "Select element": click a part of the page to tell the AI about it. Off by default; Esc turns it off. */
+  let picking = false;
+  const pick = h("button", { type: "button", class: "pv-btn pv-pick", "aria-label": "Select element", "aria-pressed": "false", title: "Select element: click a part of the page to tell the AI about it (Esc to stop)", onclick: () => void api.pickElement(!picking).then(setPicking, () => setPicking(false)) }, icon("target"));
   const address = h("input", { class: "pv-address", type: "text", "aria-label": "Address", spellcheck: "false", autocomplete: "off", autocapitalize: "off" });
   const note = h("div", { class: "pv-note", role: "status", hidden: true });
   const field = h("form", { class: "pv-field", onsubmit: (e: Event) => { e.preventDefault(); void submit(); } }, address);
@@ -38,7 +41,7 @@ export function createBrowserBar(api: FigmakeApi, slot: HTMLElement): BrowserBar
   const vpWrap = h("span", { class: "pv-vpw" }, icon("laptop", true), vpSelect, icon("chev-d", true));
   const frame = h("div", { class: "pv-frame", "aria-hidden": "true", hidden: true });
   slot.prepend(frame);
-  const bar = h("div", { class: "pv-bar" }, back, fwd, reload, field, vpWrap, external, note);
+  const bar = h("div", { class: "pv-bar" }, back, fwd, reload, field, pick, vpWrap, external, note);
   const progress = h("div", { class: "pv-progress", "aria-hidden": "true" }, h("i", {}));
 
   const failTitle = h("h3", {}, "This page can't be reached");
@@ -68,6 +71,24 @@ export function createBrowserBar(api: FigmakeApi, slot: HTMLElement): BrowserBar
       say(REJECTED);
     }
   }
+
+  function setPicking(on: boolean): void {
+    picking = on;
+    pick.setAttribute("aria-pressed", String(on));
+    pick.classList.toggle("on", on);
+  }
+  api.onPickState((st) => {
+    setPicking(st.active);
+    if (st.message) say(st.message);
+  });
+  // While picking, Esc only ends picking (it must not also stop the AI). Capture phase, so it runs first.
+  window.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || !picking) return;
+    e.stopPropagation();
+    e.preventDefault();
+    void api.pickElement(false);
+    setPicking(false);
+  }, true);
 
   address.addEventListener("input", () => note.hidden || say(""));
   address.addEventListener("focus", () => address.select());
@@ -109,6 +130,7 @@ export function createBrowserBar(api: FigmakeApi, slot: HTMLElement): BrowserBar
     back.disabled = !tab?.canGoBack;
     fwd.disabled = !tab?.canGoForward;
     external.disabled = !tab;
+    pick.disabled = !tab || Boolean(tab.failed);
     const loading = Boolean(tab?.loading);
     reload.replaceChildren(icon(loading ? "x" : "refresh"));
     reload.setAttribute("aria-label", loading ? "Stop" : "Reload");

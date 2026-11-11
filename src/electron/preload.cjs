@@ -63,5 +63,8 @@ contextBridge.exposeInMainWorld("figmake", {
   browserSwitch: call("figmake:browser-switch"),
   browserClose: call("figmake:browser-close"),
   browserViewport: call("figmake:browser-viewport"),
+  pickElement: call("figmake:pick-element"),
+  onPickState: listen("figmake:pick-state"),
+  onElementPicked: listen("figmake:element-picked"),
   previewRect: (rect) => ipcRenderer.send("figmake:preview-rect", rect),
 });

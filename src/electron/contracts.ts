@@ -1,4 +1,5 @@
 import type { BrowserState, ViewportMode } from "../app/browser.js";
+import type { ElementAttachment } from "../app/elementKinds.js";
 import type { UpdateState } from "../updater/contracts.js";
 
 export type AgentChoice = "claude" | "codex";
@@ -251,10 +252,17 @@ export interface ChatPlanStep {
  * can join later: they share the composer strip, the remove button, the send request and the saved chat.
  */
 export type ImageAttachment = { kind: "image"; name: string };
-export type Attachment = ImageAttachment;
+export type { ElementAttachment };
+export type Attachment = ImageAttachment | ElementAttachment;
+
+/** "Select element" in the preview: whether it is on, and a plain sentence when it ended because something went wrong. */
+export interface PickState {
+  active: boolean;
+  message?: string;
+}
 
 /** Result of handing a picture to main: the saved attachment, or one plain sentence on why not. */
-export type AttachResult = { ok: true; attachment: Attachment } | { ok: false; message: string };
+export type AttachResult = { ok: true; attachment: ImageAttachment } | { ok: false; message: string };
 
 export type ChatStatus = "done" | "streaming" | "stopped" | "error";
 
@@ -406,6 +414,11 @@ export interface FigmakeApi {
   browserClose(id: number): Promise<void>;
   /** How wide pages are laid out in the preview (all tabs); the pane scales them to fit. */
   browserViewport(mode: ViewportMode): Promise<void>;
+  /** Turns "Select element" on or off for the active preview tab. Resolves to whether it is on now. */
+  pickElement(on: boolean): Promise<boolean>;
+  onPickState(listener: (state: PickState) => void): () => void;
+  /** A page element the person clicked in the preview, ready to be a chip in the composer. */
+  onElementPicked(listener: (attachment: ElementAttachment) => void): () => void;
 }
 
 declare global {

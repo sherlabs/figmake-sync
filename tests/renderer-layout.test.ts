@@ -88,6 +88,9 @@ async function open(state: object, size: { width: number; height: number }, sche
       browserGo: (addr: string) => { (window as unknown as { __went: string[] }).__went = [...((window as unknown as { __went?: string[] }).__went ?? []), addr]; return Promise.resolve(/^(localhost|\d)/u.test(addr)); },
       browserDo: (a: string) => { (window as unknown as { __did: string[] }).__did = [...((window as unknown as { __did?: string[] }).__did ?? []), a]; return Promise.resolve(); },
       browserNewTab: noop, browserSwitch: noop, browserClose: noop,
+      pickElement: (on: boolean) => { const w = window as unknown as { __picks?: boolean[] }; w.__picks = [...(w.__picks ?? []), on]; return Promise.resolve(on); },
+      onPickState: (cb: (st: object) => void) => { (window as unknown as { __pushPickState: unknown }).__pushPickState = cb; return () => undefined; },
+      onElementPicked: (cb: (a: object) => void) => { (window as unknown as { __pushPick: unknown }).__pushPick = cb; return () => undefined; },
       browserViewport: (m: string) => { const w = window as unknown as { __vp?: string[] }; w.__vp = [...(w.__vp ?? []), m]; return Promise.resolve(); },
       describeChange: () => Promise.resolve([]),
       listFolder: (p: string) => Promise.resolve({ path: p, entries: a.tree[p] ?? [], truncated: false }),
@@ -1177,6 +1180,79 @@ describe("sync with Figma", () => {
       await page.waitForSelector(".thumbs .thumb.msg img");
       expect(await page.locator(".thumbs .thumb.gone").innerText()).toBe("Picture no longer available");
       expect(await page.locator(".bubble").innerText()).toBe("Fix this");
+      expect(await overflowX(page)).toBeLessThanOrEqual(0);
+      await page.context().close();
+    });
+  }
+  for (const scheme of ["light", "dark"] as const) {
+    it(`select element: toggle on the browser bar, chips in the composer and in the message (${scheme})`, async (ctx) => {
+      if (!browser) return ctx.skip();
+      const page = await open(READY, { width: 1180, height: 760 }, scheme);
+      await page.evaluate(() => (window as unknown as { __pushBrowser: (s: object) => void }).__pushBrowser({ tabs: [{ id: 1, title: "App", url: "http://localhost:5173/", loading: false, canGoBack: false, canGoForward: false, failed: false }], activeId: 1 }));
+      const toggle = page.locator(".pv-pick");
+      expect(await toggle.getAttribute("aria-pressed")).toBe("false");
+      expect(await toggle.getAttribute("title")).toContain("Select element");
+      await toggle.click();
+      expect(await page.evaluate(() => (window as unknown as { __picks: boolean[] }).__picks)).toEqual([true]);
+      expect(await toggle.getAttribute("aria-pressed")).toBe("true");
+      // Esc ends picking and does not do anything else.
+      await page.keyboard.press("Escape");
+      expect(await page.evaluate(() => (window as unknown as { __picks: boolean[] }).__picks)).toEqual([true, false]);
+      expect(await toggle.getAttribute("aria-pressed")).toBe("false");
+      // Main reports the mode ending after a pick, or an error sentence.
+      await toggle.click();
+      await page.evaluate(() => (window as unknown as { __pushPickState: (s: object) => void }).__pushPickState({ active: false, message: "Couldn't pick that element. Try another one." }));
+      expect(await toggle.getAttribute("aria-pressed")).toBe("false");
+      expect(await page.locator(".pv-note").innerText()).toContain("Couldn't pick");
+      // Picked elements become chips; the crop is shown as a thumbnail; a missing crop just has none.
+      const info = (text: string) => ({ tag: "button", classes: ["btn"], selector: "main > button.btn", text, attrs: {}, box: { x: 1, y: 2, width: 96, height: 40 }, styles: {}, page: "/", components: ["SendButton"] });
+      const pick = (a: object) => page.evaluate((x) => (window as unknown as { __pushPick: (v: object) => void }).__pushPick(x), a);
+      await pick({ kind: "element", id: "11111111-2222-4333-8444-555555555551", image: "00000000-0000-4000-8000-000000000001.png", info: info("Send") });
+      await pick({ kind: "element", id: "11111111-2222-4333-8444-555555555552", image: "00000000-0000-4000-8000-000000000009.png", info: { ...info(""), tag: "div" } });
+      await page.waitForSelector(".achip.el .echip-pic img");
+      expect(await page.locator(".achip.el").count()).toBe(2);
+      expect(await page.locator(".echip-t").allInnerTexts()).toEqual(['<button> "Send"', "SendButton"]);
+      expect(await page.locator(".echip-pic:not([hidden])").count()).toBe(1);
+      expect(await page.locator(".achip-x").first().getAttribute("aria-label")).toBe('Remove <button> "Send"');
+      expect(await page.locator(".echip-ico svg use").first().getAttribute("href")).toBe("#i-target");
+      // The same element twice is one chip.
+      await pick({ kind: "element", id: "11111111-2222-4333-8444-555555555551", info: info("Send") });
+      expect(await page.locator(".achip.el").count()).toBe(2);
+      // Chips alone do not enable Send; the hint says what to do.
+      expect(await page.locator(".sendbtn:not(.stop)").isDisabled()).toBe(true);
+      expect(await page.locator(".ta").getAttribute("placeholder")).toBe("Tell me what to change about this");
+      await page.locator(".ta").fill("make this bigger");
+      expect(await page.locator(".sendbtn:not(.stop)").isDisabled()).toBe(false);
+      expect(await overflowX(page)).toBeLessThanOrEqual(0);
+      // Limit of five chips in all (pictures count too).
+      for (let i = 3; i <= 7; i += 1) await pick({ kind: "element", id: `11111111-2222-4333-8444-55555555555${i}`, info: info(`B${i}`) });
+      expect(await page.locator(".achip").count()).toBe(5);
+      expect(await page.locator(".anote").innerText()).toBe("You can add up to 5 pictures or elements to one message.");
+      expect(await page.locator(".attbtn").isDisabled()).toBe(true);
+      // Remove one with the x: its crop is discarded.
+      await page.locator(".achip-x").first().click();
+      expect(await page.locator(".achip").count()).toBe(4);
+      expect(await page.evaluate(() => (window as unknown as { __disc?: string[] }).__disc)).toEqual(["00000000-0000-4000-8000-000000000001.png"]);
+      // Send: the request carries the element chips.
+      await page.locator(".sendbtn:not(.stop)").click();
+      const asked = await page.evaluate(() => (window as unknown as { __asked: { t: string; att: { kind: string }[] }[] }).__asked);
+      expect(asked[0]?.t).toBe("make this bigger");
+      expect(asked[0]?.att).toHaveLength(4);
+      expect(asked[0]?.att.every((a) => a.kind === "element")).toBe(true);
+      expect(await page.locator(".achip").count()).toBe(0);
+      // The sent message shows the chips; a chip with its picture gone shows no broken image.
+      await page.evaluate((c) => (window as unknown as { __pushChat: (v: object) => void }).__pushChat(c), {
+        projectKey: "a", active: false, fresh: false,
+        messages: [{ id: "u1", role: "user", at: "2026-01-01T00:00:00Z", text: "make this bigger", parts: [], status: "done", attachments: [
+          { kind: "element", id: "11111111-2222-4333-8444-555555555551", image: "00000000-0000-4000-8000-000000000001.png", info: info("Send") },
+          { kind: "element", id: "11111111-2222-4333-8444-555555555552", image: "00000000-0000-4000-8000-000000000009.png", info: info("Gone") },
+          { kind: "element", id: "11111111-2222-4333-8444-555555555553", info: { broken: true } },
+        ] }],
+      });
+      await page.waitForSelector(".thumbs .echip-pic img");
+      expect(await page.locator(".thumbs .echip-body").count()).toBe(3);
+      expect(await page.locator(".thumbs .echip-pic:not([hidden])").count()).toBe(1);
+      expect(await page.locator(".bubble").innerText()).toBe("make this bigger");
       expect(await overflowX(page)).toBeLessThanOrEqual(0);
       await page.context().close();
     });

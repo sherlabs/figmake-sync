@@ -1,4 +1,6 @@
-import { MAX_IMAGES, MAX_IMAGE_BYTES, IMAGE_NAME } from "../app/attachmentKinds.js";
+import { MAX_IMAGE_BYTES, IMAGE_NAME } from "../app/attachmentKinds.js";
+import { elementAttachmentSchema } from "../app/elementPick.js";
+import { MAX_ATTACHMENTS } from "../app/elementKinds.js";
 import { VIEWPORT_MODES } from "../app/browser.js";
 import { MODEL_ID } from "../app/modelIds.js";
 import { z } from "zod";
@@ -28,8 +30,9 @@ export const mergeChoicesArg = z.array(z.object({ path: z.string().min(1).max(10
 export const attachBytesArg = z.custom<Uint8Array>((v) => v instanceof Uint8Array && v.byteLength > 0 && v.byteLength <= MAX_IMAGE_BYTES);
 export const attachmentNameArg = z.string().regex(IMAGE_NAME);
 /** Everything a message may carry besides text; one member per kind. */
-export const attachmentArg = z.discriminatedUnion("kind", [z.object({ kind: z.literal("image"), name: attachmentNameArg })]);
-export const attachmentsArg = z.array(attachmentArg).max(MAX_IMAGES);
+export const attachmentArg = z.discriminatedUnion("kind", [z.object({ kind: z.literal("image"), name: attachmentNameArg }), elementAttachmentSchema]);
+export const attachmentsArg = z.array(attachmentArg).max(MAX_ATTACHMENTS);
+export const pickElementArg = z.boolean();
 
 /** A model name, or null for the AI's own default. The same rule is checked again in the session and in the adapters. */
 export const modelArg = z.string().regex(MODEL_ID).nullable();

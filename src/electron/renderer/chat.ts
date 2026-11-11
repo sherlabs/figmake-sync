@@ -1,6 +1,7 @@
 import { activitySummary } from "../../app/activitySummary.js";
 import { parseMarkdown, type Inline } from "../../app/markdown.js";
 import type { AgentChoice, ChangedFile, ChatChange, ChatMessage, ChatPart, ChatState, FigmakeApi, SessionState } from "../contracts.js";
+import { ELEMENT_HINT } from "../../app/elementKinds.js";
 import { createAttachStrip, messageThumbs } from "./attach.js";
 import { diffPanel } from "./diff.js";
 import { h, icon, nodes, type Child } from "./dom.js";
@@ -100,6 +101,11 @@ export function createChatPanel(host: ChatHost): ChatPanel {
   const composer = h("footer", { class: "composer" }, cbox, hint);
   const el = h("aside", { class: "chat", "aria-label": "Chat with your AI helper" }, head, wrap, composer);
   strip.wire(ta, el, () => !ta.disabled);
+  // An element clicked in the preview becomes a chip here, and the cursor is ready for what to change about it.
+  api.onElementPicked((picked) => {
+    strip.addElement(picked);
+    if (!ta.disabled) ta.focus();
+  });
 
   // ---- scrolling ----
   const atEnd = (): boolean => thread.scrollHeight - thread.scrollTop - thread.clientHeight <= PINNED_SLACK;
@@ -127,7 +133,7 @@ export function createChatPanel(host: ChatHost): ChatPanel {
   function submit(): void {
     const text = ta.value.trim();
     const attachments = strip.items();
-    if ((!text && attachments.length === 0) || strip.busy() || !sess || ta.disabled || chat.active) return;
+    if ((!text && !strip.hasImage()) || strip.busy() || !sess || ta.disabled || chat.active) return;
     ta.value = "";
     strip.clear();
     recall = -1;
@@ -172,7 +178,7 @@ export function createChatPanel(host: ChatHost): ChatPanel {
     const blocked = !chat.active && !setup && s.phase !== "ready" && !turnError;
     const was = ta.disabled;
     ta.disabled = setup || blocked;
-    ta.placeholder = setup ? (s.phase === "sending" ? "Sending to Figma…" : "Getting things ready…") : blocked ? "Finish the step in the window to keep going" : chat.active ? "Working… you can type your next message" : "Describe a change, like “make the buttons rounded”";
+    ta.placeholder = setup ? (s.phase === "sending" ? "Sending to Figma…" : "Getting things ready…") : blocked ? "Finish the step in the window to keep going" : chat.active ? "Working… you can type your next message" : strip.items().some((a) => a.kind === "element") ? ELEMENT_HINT : "Describe a change, like “make the buttons rounded”";
     if (was && !ta.disabled && document.activeElement === document.body) ta.focus();
     const agent = s.agent ? AGENTS[s.agent] : null;
     const model = s.model ?? null;
@@ -184,7 +190,7 @@ export function createChatPanel(host: ChatHost): ChatPanel {
     sendBtn.hidden = chat.active;
     stopBtn.hidden = !chat.active;
     strip.setDisabled(ta.disabled);
-    const ready = !ta.disabled && !chat.active && !strip.busy() && (ta.value.trim().length > 0 || strip.items().length > 0);
+    const ready = !ta.disabled && !chat.active && !strip.busy() && (ta.value.trim().length > 0 || strip.hasImage());
     sendBtn.disabled = !ready;
     kbd.hidden = !ready;
     cbox.classList.toggle("off", ta.disabled);

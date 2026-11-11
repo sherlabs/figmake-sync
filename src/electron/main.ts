@@ -37,8 +37,10 @@ import type { ViewportMode } from "../app/browser.js";
 import type { MenuCommand, PreviewRect } from "./contracts.js";
 import { MAX_IMAGE_BYTES, MSG_NOT_PICTURE, MSG_TOO_BIG } from "../app/attachmentKinds.js";
 import { APP_CSP } from "./csp.js";
-import { modelArg, attachBytesArg, attachmentNameArg, attachmentsArg, browserAddressArg, browserCommandArg, browserTabIdArg, browserViewportArg, cleanupActionArg, ignoreFileArgs, mergeChoicesArg, processIdArg, projectKeyArg, projectNameArg, projectPathArg, syncModeArg } from "./ipc.js";
-import { PreviewView } from "./preview.js";
+import { modelArg, attachBytesArg, attachmentNameArg, attachmentsArg, pickElementArg, browserAddressArg, browserCommandArg, browserTabIdArg, browserViewportArg, cleanupActionArg, ignoreFileArgs, mergeChoicesArg, processIdArg, projectKeyArg, projectNameArg, projectPathArg, syncModeArg } from "./ipc.js";
+import { PreviewView, type PreviewHooks } from "./preview.js";
+import { newId } from "../app/chat.js";
+import type { PickResult } from "./elementPicker.js";
 
 const APP_ID = "com.figmake.sync";
 
@@ -85,6 +87,22 @@ async function log(message: string, error?: unknown): Promise<void> {
     .ensureDir(userData())
     .then(() => fs.appendFile(userData("startup.log"), `[${new Date().toISOString()}] ${message}${detail}\n\n`))
     .catch(() => undefined);
+}
+
+/** What the preview needs from the app for "Select element": the project folder, and where to send the answers. */
+function previewHooks(): PreviewHooks {
+  return {
+    root: () => appSession?.projectRoot ?? null,
+    onPickMode: (active, message) => send("figmake:pick-state", { active, ...(message ? { message } : {}) }),
+    onPick: (result) => void deliverPick(result),
+  };
+}
+
+/** Saves the element's cropped picture like any attached picture, then hands the chip to the window. Nothing here is logged. */
+async function deliverPick(result: PickResult): Promise<void> {
+  const saved = result.png && appSession ? await appSession.attachImage(result.png) : null;
+  const image = saved?.ok && saved.attachment.kind === "image" ? saved.attachment.name : undefined;
+  send("figmake:element-picked", { kind: "element", id: newId(), ...(image ? { image } : {}), info: result.info });
 }
 
 function send(channel: string, payload?: unknown): void {
@@ -359,6 +377,15 @@ function registerIpc(s: Session): void {
     viewportMode = parsed.data;
     preview?.setViewport(viewportMode);
   });
+  ipcMain.handle("figmake:pick-element", async (_e, on: unknown) => {
+    const parsed = pickElementArg.safeParse(on);
+    if (!parsed.success) return false;
+    if (!parsed.data) {
+      preview?.stopPick();
+      return false;
+    }
+    return (await preview?.startPick()) ?? false;
+  });
   ipcMain.on("figmake:preview-rect", (_e, rect: unknown) => {
     const r = rect as Partial<PreviewRect> | null;
     const ok = r && [r.x, r.y, r.width, r.height].every((n) => typeof n === "number" && Number.isFinite(n));
@@ -424,7 +451,7 @@ async function bootstrap(): Promise<void> {
   registerIpc(live);
   registerUpdateIpc();
   mainWindow = await createWindow();
-  preview = new PreviewView(mainWindow, (st) => send("figmake:browser", st));
+  preview = new PreviewView(mainWindow, (st) => send("figmake:browser", st), previewHooks());
   preview.setViewport(viewportMode);
   let lastUrl: string | null = null;
   live.onState((state) => {
@@ -477,7 +504,7 @@ app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     void createWindow().then((window) => {
       mainWindow = window;
-      preview = new PreviewView(window, (st) => send("figmake:browser", st));
+      preview = new PreviewView(window, (st) => send("figmake:browser", st), previewHooks());
       preview.setViewport(viewportMode);
       if (appSession) preview.setUrl(appSession.state.previewUrl);
     });

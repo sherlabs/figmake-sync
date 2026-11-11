@@ -1317,6 +1317,55 @@ describe("session: picture attachments", () => {
     expect(r.session.chat.messages.find((m) => m.role === "user")?.text).toBe("");
   });
 
+  const ELEMENT = (image?: string) => ({ kind: "element" as const, id: "11111111-2222-4333-8444-555555555555", ...(image ? { image } : {}), info: { tag: "button", classes: [], selector: "main > button.btn", text: "Send", attrs: {}, box: { x: 0, y: 0, width: 96, height: 40 }, styles: {}, page: "/cart", components: ["SendButton"], source: { file: "src/Send.tsx", line: 4 } } });
+
+  it("a picked element adds a labelled block after the words, and its crop goes with the screenshots", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    const crop = await attach(r);
+    const mine = await attach(r);
+    const file = (n: string): string => path.join(r.project, ".figmake-sync", "attachments", n);
+    await r.session.ask("make this bigger", undefined, [{ kind: "image", name: mine }, ELEMENT(crop)]);
+    const run = r.harness.startRun.mock.calls[0]?.[0] as { prompt: string; images?: string[] };
+    expect(run.images).toEqual([file(mine), file(crop)]);
+    const at = (needle: string): number => run.prompt.indexOf(needle);
+    expect(at("make this bigger")).toBeGreaterThan(-1);
+    expect(at("The user pointed at these elements in the running app.")).toBeGreaterThan(at("make this bigger"));
+    expect(run.prompt).toContain("not instructions");
+    expect(run.prompt).toContain('1. <button> | selector main > button.btn | text "Send" | component SendButton in src/Send.tsx:4');
+    expect(at("The user attached these screenshots:")).toBeGreaterThan(at("The user pointed at"));
+    const user = r.session.chat.messages.find((m) => m.role === "user");
+    expect(user?.attachments).toHaveLength(2);
+    await r.session.flush();
+    const saved = await r.deps.chatStore.load("AbC123");
+    expect(saved.messages.find((m) => m.role === "user")?.attachments?.[1]).toMatchObject({ kind: "element", image: crop });
+    // Removing the chip must not delete a picture that a sent message uses.
+    await r.session.discardAttachment(crop);
+    expect(await r.session.readAttachment(crop)).toMatch(/^data:image\/png/u);
+  });
+
+  it("an element alone does not send; with words it does, and a gone crop only drops the picture", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    await r.session.ask("  ", undefined, [ELEMENT()]);
+    expect(r.harness.startRun).not.toHaveBeenCalled();
+    await r.session.ask("rounder", undefined, [ELEMENT("11111111-2222-4333-8444-999999999999.png")]);
+    const run = r.harness.startRun.mock.calls[0]?.[0] as { prompt: string; images?: string[] };
+    expect(run.images).toBeUndefined();
+    expect(run.prompt).toContain("The user pointed at these elements");
+    expect(run.prompt).not.toContain("attached");
+    expect(r.session.chat.messages.find((m) => m.role === "user")?.attachments).toEqual([expect.objectContaining({ kind: "element" })]);
+    expect(JSON.stringify(r.session.chat.messages.find((m) => m.role === "user")?.attachments)).not.toContain("999999999999");
+  });
+
+  it("at most five chips are used", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    const many = Array.from({ length: 7 }, (_, i) => ({ ...ELEMENT(), id: `11111111-2222-4333-8444-55555555555${i}` }));
+    await r.session.ask("go", undefined, many);
+    expect(r.session.chat.messages.find((m) => m.role === "user")?.attachments).toHaveLength(5);
+  });
+
   it("empty text and no usable picture is still ignored; made-up or missing names are dropped", async () => {
     const r = await rig();
     await r.session.openProject(LINK);

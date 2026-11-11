@@ -5,7 +5,9 @@ import { z } from "zod";
 
 import type { ChatMessage } from "../electron/contracts.js";
 import { ERROR_CODES } from "../electron/contracts.js";
-import { IMAGE_NAME, MAX_IMAGES } from "./attachmentKinds.js";
+import { IMAGE_NAME } from "./attachmentKinds.js";
+import { elementAttachmentSchema } from "./elementPick.js";
+import { MAX_ATTACHMENTS, attachmentImage } from "./elementKinds.js";
 import { capMessages } from "./chat.js";
 import { redactSecrets } from "./report.js";
 
@@ -21,7 +23,7 @@ const part = z.discriminatedUnion("type", [
 ]);
 
 /** One entry per kind; a new kind of attachment adds its member here. Unknown or malformed entries are dropped. */
-const attachment = z.discriminatedUnion("kind", [z.object({ kind: z.literal("image"), name: z.string().regex(IMAGE_NAME) })]);
+const attachment = z.discriminatedUnion("kind", [z.object({ kind: z.literal("image"), name: z.string().regex(IMAGE_NAME) }), elementAttachmentSchema]);
 
 const message = z.object({
   id: z.string().min(1).max(100),
@@ -30,7 +32,7 @@ const message = z.object({
   text: z.string().default(""),
   attachments: z
     .array(z.unknown())
-    .max(MAX_IMAGES * 2)
+    .max(MAX_ATTACHMENTS * 2)
     .transform((items) => items.flatMap((item) => {
       const parsed = attachment.safeParse(item);
       return parsed.success ? [parsed.data] : [];
@@ -127,7 +129,7 @@ export class ChatStore {
     for (const file of [this.file(key), this.file(key, true)]) {
       try {
         const parsed = chatFileSchema.parse(await fs.readJson(file));
-        for (const m of parsed.messages) for (const a of m.attachments ?? []) if (a.kind === "image") names.add(a.name);
+        for (const m of parsed.messages) for (const a of m.attachments ?? []) { const n = attachmentImage(a); if (n) names.add(n); }
       } catch {
         // missing or unreadable: it refers to nothing
       }

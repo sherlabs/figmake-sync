@@ -1,9 +1,10 @@
-import { MAX_IMAGES, MAX_IMAGE_BYTES, MSG_NOT_PICTURE, MSG_TOO_BIG, MSG_TOO_MANY } from "../../app/attachmentKinds.js";
+import { MAX_IMAGE_BYTES, MSG_NOT_PICTURE, MSG_TOO_BIG, MSG_TOO_MANY } from "../../app/attachmentKinds.js";
+import { MAX_ATTACHMENTS, MSG_TOO_MANY_ITEMS, attachmentImage, elementLabel, type ElementAttachment } from "../../app/elementKinds.js";
 import type { Attachment, FigmakeApi } from "../contracts.js";
 import { dataImage, h, icon } from "./dom.js";
 
 /* The composer's attachment strip and the thumbnails in sent messages. Everything here is keyed on `Attachment.kind`
-   so a new kind (for example a picked page element) only adds a case to `chipBody` / `thumbBody`; the strip, the
+   (a picture, or a picked page element) in `thumbBody`; the strip, the
    remove button, the limits note and the send request are shared. The window never touches files: it hands bytes to
    main and gets names back. */
 
@@ -12,10 +13,12 @@ const PICTURE_TYPES = "image/png,image/jpeg,image/webp,image/gif";
 /** Display data for one attachment, fetched once per name. null = the file is gone. */
 const previews = new Map<string, Promise<string | null>>();
 export function previewOf(api: FigmakeApi, a: Attachment): Promise<string | null> {
-  const key = `${a.kind}:${a.name}`;
+  const name = attachmentImage(a);
+  if (!name) return Promise.resolve(null);
+  const key = `image:${name}`;
   let hit = previews.get(key);
   if (!hit) {
-    hit = api.readAttachment(a.name).catch(() => null);
+    hit = api.readAttachment(name).catch(() => null);
     previews.set(key, hit);
   }
   return hit;
@@ -25,8 +28,21 @@ function missing(): HTMLElement {
   return h("span", { class: "thumb gone", role: "img", "aria-label": "Picture no longer available", title: "Picture no longer available" }, icon("image", true), h("span", {}, "Picture no longer available"));
 }
 
+/** A picked page element: a small target icon, its name, and the cropped picture when there is one (a missing picture is simply left out). */
+function elementBody(api: FigmakeApi, a: ElementAttachment): HTMLElement {
+  const label = elementLabel(a.info);
+  const pic = h("span", { class: "echip-pic", hidden: true });
+  void previewOf(api, a).then((url) => {
+    if (!url) return;
+    pic.replaceChildren(dataImage(url, "Picture of the element"));
+    pic.hidden = false;
+  });
+  return h("span", { class: "echip-body", title: label }, h("span", { class: "echip-ico" }, icon("target", true)), h("span", { class: "echip-t" }, label), pic);
+}
+
 /** Body of one thumbnail, by kind. */
 function thumbBody(api: FigmakeApi, a: Attachment, size: "chip" | "msg"): HTMLElement {
+  if (a.kind === "element") return elementBody(api, a);
   const box = h("span", { class: `thumb ${size}` });
   box.append(h("span", { class: "thumb-ph", "aria-hidden": "true" }));
   void previewOf(api, a).then((url) => {
@@ -39,7 +55,7 @@ function thumbBody(api: FigmakeApi, a: Attachment, size: "chip" | "msg"): HTMLEl
 /** The pictures of a sent message, for its bubble. */
 export function messageThumbs(api: FigmakeApi, attachments: readonly Attachment[]): HTMLElement | null {
   if (attachments.length === 0) return null;
-  return h("div", { class: "thumbs", role: "list", "aria-label": "Attached pictures" }, ...attachments.map((a) => h("div", { role: "listitem" }, thumbBody(api, a, "msg"))));
+  return h("div", { class: "thumbs", role: "list", "aria-label": "Attachments" }, ...attachments.map((a) => h("div", { role: "listitem" }, thumbBody(api, a, "msg"))));
 }
 
 /** Cheap content fingerprint, so pasting the same picture twice adds it once. */
@@ -62,7 +78,11 @@ export interface AttachStrip {
   /** Wires paste on the text box and drag-and-drop on the whole panel. */
   wire(input: HTMLTextAreaElement, panel: HTMLElement, enabled: () => boolean): void;
   add(files: readonly Blob[]): Promise<void>;
+  /** Puts a picked page element in the strip (its cropped picture was already saved). */
+  addElement(element: ElementAttachment): void;
   items(): Attachment[];
+  /** True when the strip holds a picture of the person's own (a picked element alone does not make a message). */
+  hasImage(): boolean;
   /** True while a picture is still being saved. */
   busy(): boolean;
   /** Forgets everything in the strip (after a send or a project change). */
@@ -76,7 +96,7 @@ export function createAttachStrip(api: FigmakeApi, onChange: () => void): Attach
   let disabled = false;
   let noteTimer = 0;
   const note = h("p", { class: "anote", role: "alert", hidden: true });
-  const row = h("div", { class: "athumbs", role: "list", "aria-label": "Attached pictures", hidden: true });
+  const row = h("div", { class: "athumbs", role: "list", "aria-label": "Attachments", hidden: true });
   const el = h("div", { class: "astrip" }, row, note);
   const picker = h("input", { type: "file", accept: PICTURE_TYPES, multiple: true, class: "sr-only", tabindex: "-1", "aria-hidden": "true" });
   const button = h("button", { type: "button", class: "attbtn", "aria-label": "Attach a picture", title: "Attach a picture", onclick: () => picker.click() }, icon("clip", true));
@@ -96,18 +116,19 @@ export function createAttachStrip(api: FigmakeApi, onChange: () => void): Attach
     row.hidden = list.length === 0;
     row.replaceChildren(
       ...list.map((it, i) =>
-        h("div", { class: "achip", role: "listitem" },
+        h("div", { class: `achip${it.attachment.kind === "element" ? " el" : ""}`, role: "listitem" },
           thumbBody(api, it.attachment, "chip"),
-          h("button", { type: "button", class: "achip-x", "aria-label": `Remove picture ${i + 1}`, title: "Remove", onclick: () => remove(it) }, icon("x", true))),
+          h("button", { type: "button", class: "achip-x", "aria-label": it.attachment.kind === "element" ? `Remove ${elementLabel(it.attachment.info)}` : `Remove picture ${i + 1}`, title: "Remove", onclick: () => remove(it) }, icon("x", true))),
       ),
     );
-    button.disabled = disabled || list.length + pending >= MAX_IMAGES;
+    button.disabled = disabled || list.length + pending >= MAX_ATTACHMENTS;
     onChange();
   }
 
   function remove(it: Item): void {
     list = list.filter((x) => x !== it);
-    void api.discardAttachment(it.attachment.name);
+    const saved = attachmentImage(it.attachment);
+    if (saved) void api.discardAttachment(saved);
     say("");
     draw();
   }
@@ -132,8 +153,8 @@ export function createAttachStrip(api: FigmakeApi, onChange: () => void): Attach
   async function add(files: readonly Blob[]): Promise<void> {
     if (files.length === 0) return;
     for (const file of files) {
-      if (list.length + pending >= MAX_IMAGES) {
-        say(MSG_TOO_MANY);
+      if (list.length + pending >= MAX_ATTACHMENTS) {
+        say(list.some((x) => x.attachment.kind === "element") ? MSG_TOO_MANY_ITEMS : MSG_TOO_MANY);
         break;
       }
       pending += 1;
@@ -144,6 +165,18 @@ export function createAttachStrip(api: FigmakeApi, onChange: () => void): Attach
         pending -= 1;
       }
     }
+    draw();
+  }
+
+  function addElement(element: ElementAttachment): void {
+    if (disabled || list.some((x) => x.print === `el:${element.id}`)) return;
+    if (list.length + pending >= MAX_ATTACHMENTS) {
+      if (element.image) void api.discardAttachment(element.image);
+      say(MSG_TOO_MANY_ITEMS);
+      return;
+    }
+    list = [...list, { attachment: element, print: `el:${element.id}` }];
+    say("");
     draw();
   }
 
@@ -197,6 +230,8 @@ export function createAttachStrip(api: FigmakeApi, onChange: () => void): Attach
     button,
     wire,
     add,
+    addElement,
+    hasImage: () => list.some((x) => x.attachment.kind === "image"),
     items: () => list.map((x) => x.attachment),
     busy: () => pending > 0,
     clear() {
@@ -206,7 +241,7 @@ export function createAttachStrip(api: FigmakeApi, onChange: () => void): Attach
     },
     setDisabled(off) {
       disabled = off;
-      button.disabled = off || list.length + pending >= MAX_IMAGES;
+      button.disabled = off || list.length + pending >= MAX_ATTACHMENTS;
     },
   };
 }
