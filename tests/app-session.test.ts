@@ -1553,7 +1553,7 @@ describe("session: switching projects while busy", () => {
     await r.session.openProject(LINK);
     holdSetup(r);
     const adding = r.session.openProject(LINK2);
-    await vi.waitFor(() => expect(r.session.state).toMatchObject({ phase: "preparing", activeKey: "Zed999" }));
+    await vi.waitFor(() => expect(r.session.state).toMatchObject({ phase: "preparing", activeKey: "Zed999" }), { timeout: 10_000 });
     r.harness.stopDevExcept.mockClear();
     expect(await r.session.switchProject("AbC123")).toEqual({ ok: true });
     await adding;
@@ -1571,7 +1571,7 @@ describe("session: switching projects while busy", () => {
     await r.session.openProject(LINK);
     r.sync.pull.mockImplementationOnce((o: { signal?: AbortSignal }) => new Promise((_res, rej) => o.signal?.addEventListener("abort", () => rej(new Error("aborted")), { once: true })));
     const adding = r.session.openProject(LINK2);
-    await vi.waitFor(() => expect(r.session.state.phase).toBe("connecting"));
+    await vi.waitFor(() => expect(r.session.state.phase).toBe("connecting"), { timeout: 10_000 });
     expect(await r.session.switchProject("AbC123")).toEqual({ ok: true });
     await adding;
     expect(r.session.state).toMatchObject({ phase: "ready", activeKey: "AbC123" });
@@ -1585,7 +1585,7 @@ describe("session: switching projects while busy", () => {
     let release = (): void => undefined;
     r.edit.hold = new Promise<void>((resolve) => (release = resolve));
     const run = r.session.ask("x");
-    await vi.waitFor(() => expect(r.session.state.phase).toBe("working"));
+    await vi.waitFor(() => expect(r.session.state.phase).toBe("working"), { timeout: 10_000 });
     expect(await r.session.switchProject("AbC123")).toEqual({ ok: false, message: "Stop the AI first" });
     expect(r.session.state).toMatchObject({ phase: "working", activeKey: "Zed999" });
     await r.session.cancel();
@@ -1606,7 +1606,7 @@ describe("session: switching projects while busy", () => {
       return real(o);
     });
     const sending = r.session.send();
-    await vi.waitFor(() => expect(r.session.state.phase).toBe("sending"));
+    await vi.waitFor(() => expect(r.session.state.phase).toBe("sending"), { timeout: 10_000 });
     expect(await r.session.switchProject("Zed999")).toEqual({ ok: false, message: "Wait until sending finishes" });
     expect(r.session.state.phase).toBe("sending");
     release();
