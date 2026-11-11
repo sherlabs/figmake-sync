@@ -1277,3 +1277,116 @@ describe("session: activity feed", () => {
     expect(r.session.state.activity.lines).toContain("Error: ENOSPC no space left on device");
   });
 });
+
+describe("session: picture attachments", () => {
+  const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+  const attach = async (r: Rig): Promise<string> => {
+    const res = await r.session.attachImage(PNG);
+    if (!res.ok) throw new Error(res.message);
+    return res.attachment.name;
+  };
+
+  it("asking with a picture hands its path to the agent, shows it in the message and saves it with the chat", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    const name = await attach(r);
+    const file = path.join(r.project, ".figmake-sync", "attachments", name);
+    await r.session.ask("fix this", undefined, [{ kind: "image", name }]);
+    const run = r.harness.startRun.mock.calls[0]?.[0] as { prompt: string; images?: string[] };
+    expect(run.images).toEqual([file]);
+    expect(run.prompt).toContain("fix this");
+    expect(run.prompt).toContain(`The user attached these screenshot:\n- ${file}`);
+    const user = r.session.chat.messages.find((m) => m.role === "user");
+    expect(user).toMatchObject({ text: "fix this", attachments: [{ kind: "image", name }] });
+    await r.session.flush();
+    const saved = await r.deps.chatStore.load("AbC123");
+    expect(saved.messages.find((m) => m.role === "user")?.attachments).toEqual([{ kind: "image", name }]);
+    // The AI's edit does not count the picture as a project change, and it never shows up for sending.
+    expect(await r.session.changedPaths()).not.toContain(path.posix.join(".figmake-sync", "attachments", name));
+    expect((await r.session.reviewChanges()).some((i) => i.path.includes("attachments"))).toBe(false);
+  });
+
+  it("a picture with no words uses the default instruction and shows no empty bubble text", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    const name = await attach(r);
+    await r.session.ask("   ", undefined, [{ kind: "image", name }]);
+    const run = r.harness.startRun.mock.calls[0]?.[0] as { prompt: string };
+    expect(run.prompt).toContain("Look at this screenshot and fix or match what it shows.");
+    expect(r.session.chat.messages.find((m) => m.role === "user")?.text).toBe("");
+  });
+
+  it("empty text and no usable picture is still ignored; made-up or missing names are dropped", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    await r.session.ask("  ", undefined, [{ kind: "image", name: "11111111-2222-4333-8444-555555555555.png" }]);
+    expect(r.harness.startRun).not.toHaveBeenCalled();
+    await r.session.ask("hello", undefined, [{ kind: "image", name: "11111111-2222-4333-8444-555555555555.png" }]);
+    const run = r.harness.startRun.mock.calls[0]?.[0] as { prompt: string; images?: string[] };
+    expect(run.images).toBeUndefined();
+    expect(run.prompt).not.toContain("attached");
+  });
+
+  it("no project open: a picture cannot be added; a busy turn ignores a second ask", async () => {
+    const r = await rig();
+    expect(await r.session.attachImage(PNG)).toEqual({ ok: false, message: "Open a project first." });
+    await r.session.openProject(LINK);
+    expect((await r.session.attachImage(Uint8Array.from([1, 2, 3]))).ok).toBe(false);
+    const name = await attach(r);
+    r.edit.hold = new Promise(() => undefined);
+    const turn = r.session.ask("one");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await r.session.ask("two", undefined, [{ kind: "image", name }]);
+    expect(r.harness.startRun).toHaveBeenCalledTimes(1);
+    await r.session.cancel();
+    await turn;
+  });
+
+  it("reads thumbnails safely, and discarding keeps pictures a message uses", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    const used = await attach(r);
+    const spare = await attach(r);
+    expect(await r.session.readAttachment(used)).toMatch(/^data:image\/png;base64,/u);
+    expect(await r.session.readAttachment("../../package.json")).toBeNull();
+    await r.session.ask("x", undefined, [{ kind: "image", name: used }]);
+    await r.session.discardAttachment(used);
+    await r.session.discardAttachment(spare);
+    expect(await r.session.readAttachment(used)).not.toBeNull();
+    expect(await r.session.readAttachment(spare)).toBeNull();
+  });
+
+  it("removing the project or resetting the app deletes its pictures", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    await attach(r);
+    const dir = path.join(r.project, ".figmake-sync", "attachments");
+    await r.session.removeProject("AbC123", false);
+    expect(await fs.pathExists(r.project)).toBe(true);
+    expect(await fs.pathExists(dir)).toBe(false);
+
+    const again = await rig();
+    await again.session.openProject(LINK);
+    await attach(again);
+    (again.deps.trashFolder as unknown as ReturnType<typeof vi.fn>).mockImplementation(async () => undefined);
+    await again.session.resetApp();
+    expect(await fs.pathExists(path.join(again.project, ".figmake-sync", "attachments"))).toBe(false);
+  });
+
+  it("at start, old pictures no saved chat refers to are pruned; referenced ones stay", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    const kept = await attach(r);
+    const gone = await attach(r);
+    await r.session.ask("x", undefined, [{ kind: "image", name: kept }]);
+    await r.session.flush();
+    const old = new Date(Date.now() - 45 * 24 * 3600 * 1000);
+    for (const n of [kept, gone]) await fs.utimes(path.join(r.project, ".figmake-sync", "attachments", n), old, old);
+    const next = new Session(r.deps);
+    sessions.push(next);
+    await next.start();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(await fs.pathExists(path.join(r.project, ".figmake-sync", "attachments", kept))).toBe(true);
+    expect(await fs.pathExists(path.join(r.project, ".figmake-sync", "attachments", gone))).toBe(false);
+  });
+});

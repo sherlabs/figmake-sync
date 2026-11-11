@@ -1,6 +1,7 @@
 import { activitySummary } from "../../app/activitySummary.js";
 import { parseMarkdown, type Inline } from "../../app/markdown.js";
 import type { AgentChoice, ChangedFile, ChatChange, ChatMessage, ChatPart, ChatState, FigmakeApi, SessionState } from "../contracts.js";
+import { createAttachStrip, messageThumbs } from "./attach.js";
 import { diffPanel } from "./diff.js";
 import { h, icon, nodes, type Child } from "./dom.js";
 
@@ -90,10 +91,12 @@ export function createChatPanel(host: ChatHost): ChatPanel {
   const kbd = h("span", { class: "kbd", "aria-hidden": "true", hidden: true }, "↵");
   const sendBtn = h("button", { type: "button", class: "sendbtn", "aria-label": "Send", title: "Send (Enter)", onclick: () => submit() }, icon("up"));
   const stopBtn = h("button", { type: "button", class: "sendbtn stop", "aria-label": "Stop", title: "Stop (Esc)", hidden: true, onclick: () => void api.cancel() }, icon("stop"));
-  const cbox = h("div", { class: "cbox" }, ta, h("div", { class: "crow" }, agentChip, h("span", { class: "sp" }), kbd, sendBtn, stopBtn));
+  const strip = createAttachStrip(api, () => syncComposer());
+  const cbox = h("div", { class: "cbox" }, strip.el, ta, h("div", { class: "crow" }, strip.button, agentChip, h("span", { class: "sp" }), kbd, sendBtn, stopBtn));
   const hint = h("p", { class: "chint", "aria-hidden": "true" }, "Enter to send · Shift Enter for a new line");
   const composer = h("footer", { class: "composer" }, cbox, hint);
   const el = h("aside", { class: "chat", "aria-label": "Chat with your AI helper" }, head, wrap, composer);
+  strip.wire(ta, el, () => !ta.disabled);
 
   // ---- scrolling ----
   const atEnd = (): boolean => thread.scrollHeight - thread.scrollTop - thread.clientHeight <= PINNED_SLACK;
@@ -120,12 +123,14 @@ export function createChatPanel(host: ChatHost): ChatPanel {
   }
   function submit(): void {
     const text = ta.value.trim();
-    if (!text || !sess || ta.disabled || chat.active) return;
+    const attachments = strip.items();
+    if ((!text && attachments.length === 0) || strip.busy() || !sess || ta.disabled || chat.active) return;
     ta.value = "";
+    strip.clear();
     recall = -1;
     grow();
     pinned = true;
-    void api.ask(text);
+    void api.ask(text, attachments);
     syncComposer();
   }
   ta.addEventListener("input", () => {
@@ -171,7 +176,8 @@ export function createChatPanel(host: ChatHost): ChatPanel {
     agentChip.setAttribute("aria-label", `AI helper: ${agent?.name ?? "not chosen"}. Change in Settings`);
     sendBtn.hidden = chat.active;
     stopBtn.hidden = !chat.active;
-    const ready = !ta.disabled && !chat.active && ta.value.trim().length > 0;
+    strip.setDisabled(ta.disabled);
+    const ready = !ta.disabled && !chat.active && !strip.busy() && (ta.value.trim().length > 0 || strip.items().length > 0);
     sendBtn.disabled = !ready;
     kbd.hidden = !ready;
     cbox.classList.toggle("off", ta.disabled);
@@ -266,7 +272,7 @@ export function createChatPanel(host: ChatHost): ChatPanel {
   }
 
   function user(m: ChatMessage): HTMLElement {
-    return h("article", { class: "msg user", "data-id": m.id }, h("div", { class: "mbody" }, h("span", { class: "sr-only" }, "You: "), h("div", { class: "bubble" }, m.text), actions(m)));
+    return h("article", { class: "msg user", "data-id": m.id }, h("div", { class: "mbody" }, h("span", { class: "sr-only" }, "You: "), ...nodes(messageThumbs(api, m.attachments ?? []), m.text ? h("div", { class: "bubble" }, m.text) : null), actions(m)));
   }
 
   function sigOf(m: ChatMessage, isLast: boolean): string {
@@ -383,6 +389,7 @@ export function createChatPanel(host: ChatHost): ChatPanel {
         diffs.clear();
         pinned = true;
         recall = -1;
+        strip.clear();
       }
       draw();
     },

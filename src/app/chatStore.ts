@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import type { ChatMessage } from "../electron/contracts.js";
 import { ERROR_CODES } from "../electron/contracts.js";
+import { IMAGE_NAME, MAX_IMAGES } from "./attachmentKinds.js";
 import { capMessages } from "./chat.js";
 import { redactSecrets } from "./report.js";
 
@@ -19,11 +20,22 @@ const part = z.discriminatedUnion("type", [
   z.object({ type: z.literal("activity"), items: z.array(activity).max(200) }),
 ]);
 
+/** One entry per kind; a new kind of attachment adds its member here. Unknown or malformed entries are dropped. */
+const attachment = z.discriminatedUnion("kind", [z.object({ kind: z.literal("image"), name: z.string().regex(IMAGE_NAME) })]);
+
 const message = z.object({
   id: z.string().min(1).max(100),
   role: z.enum(["user", "assistant"]),
   at: z.string().max(40),
   text: z.string().default(""),
+  attachments: z
+    .array(z.unknown())
+    .max(MAX_IMAGES * 2)
+    .transform((items) => items.flatMap((item) => {
+      const parsed = attachment.safeParse(item);
+      return parsed.success ? [parsed.data] : [];
+    }))
+    .optional(),
   parts: z.array(part).default([]),
   status: z.enum(["done", "streaming", "stopped", "error"]).default("done"),
   change: z
@@ -107,6 +119,20 @@ export class ChatStore {
       await fs.writeJson(tmp, chatFileSchema.parse(body), { spaces: 1 });
       await fs.move(tmp, file, { overwrite: true });
     });
+  }
+
+  /** Names of every picture the saved transcript and its archive refer to. */
+  async attachmentNames(key: string): Promise<Set<string>> {
+    const names = new Set<string>();
+    for (const file of [this.file(key), this.file(key, true)]) {
+      try {
+        const parsed = chatFileSchema.parse(await fs.readJson(file));
+        for (const m of parsed.messages) for (const a of m.attachments ?? []) if (a.kind === "image") names.add(a.name);
+      } catch {
+        // missing or unreadable: it refers to nothing
+      }
+    }
+    return names;
   }
 
   /** Moves the current transcript aside (replacing any older archive). */

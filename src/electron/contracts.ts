@@ -237,6 +237,16 @@ export interface ChatPlanStep {
   state: "pending" | "active" | "done";
 }
 
+/**
+ * Something the person attached to a message. A union on `kind` so other kinds (for example a picked page element)
+ * can join later: they share the composer strip, the remove button, the send request and the saved chat.
+ */
+export type ImageAttachment = { kind: "image"; name: string };
+export type Attachment = ImageAttachment;
+
+/** Result of handing a picture to main: the saved attachment, or one plain sentence on why not. */
+export type AttachResult = { ok: true; attachment: Attachment } | { ok: false; message: string };
+
 export type ChatStatus = "done" | "streaming" | "stopped" | "error";
 
 export interface ChatMessage {
@@ -246,6 +256,8 @@ export interface ChatMessage {
   at: string;
   /** What the person typed (user messages only). */
   text: string;
+  /** What the person attached (user messages only). Image names point into the project's attachments folder. */
+  attachments?: Attachment[];
   /** What the AI said and did, in order (assistant messages only). */
   parts: ChatPart[];
   status: ChatStatus;
@@ -304,7 +316,13 @@ export interface FigmakeApi {
   openProject(link: string, name?: string): Promise<void>;
   /** Changes only the name shown for a project (1 to 80 characters). */
   renameProject(key: string, name: string): Promise<void>;
-  ask(prompt: string): Promise<void>;
+  ask(prompt: string, attachments?: Attachment[]): Promise<void>;
+  /** Saves a picture (png, jpg, webp or gif; up to 5 per message, 10 MB each) for the next message. */
+  attachImage(data: Uint8Array): Promise<AttachResult>;
+  /** A picture saved by attachImage as a data: URL for display, or null when it no longer exists. */
+  readAttachment(name: string): Promise<string | null>;
+  /** Deletes a picture that was attached but never sent. */
+  discardAttachment(name: string): Promise<void>;
   chat(): Promise<ChatState>;
   onChat(listener: (chat: ChatState) => void): () => void;
   /** Starts a fresh AI conversation; the old one is archived. */

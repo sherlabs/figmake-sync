@@ -34,8 +34,9 @@ import { UPDATE_CHECK_CHANNEL, UPDATE_GET_CHANNEL, UPDATE_INSTALL_CHANNEL, UPDAT
 import { trackEvent } from "./analytics.js";
 import { DesktopAppStateStore } from "./appState.js";
 import type { MenuCommand, PreviewRect } from "./contracts.js";
+import { MAX_IMAGE_BYTES, MSG_NOT_PICTURE, MSG_TOO_BIG } from "../app/attachmentKinds.js";
 import { APP_CSP } from "./csp.js";
-import { browserAddressArg, browserCommandArg, browserTabIdArg, cleanupActionArg, ignoreFileArgs, mergeChoicesArg, processIdArg, projectKeyArg, projectNameArg, projectPathArg, syncModeArg } from "./ipc.js";
+import { attachBytesArg, attachmentNameArg, attachmentsArg, browserAddressArg, browserCommandArg, browserTabIdArg, cleanupActionArg, ignoreFileArgs, mergeChoicesArg, processIdArg, projectKeyArg, projectNameArg, projectPathArg, syncModeArg } from "./ipc.js";
 import { PreviewView } from "./preview.js";
 
 const APP_ID = "com.figmake.sync";
@@ -218,11 +219,27 @@ function registerIpc(s: Session): void {
     const n = projectNameArg.safeParse(name);
     return k.success && n.success ? s.renameProject(k.data, n.data) : undefined;
   });
-  ipcMain.handle("figmake:ask", (_e, prompt: unknown) => {
+  ipcMain.handle("figmake:ask", (_e, prompt: unknown, attachments: unknown) => {
     if (typeof prompt !== "string") return undefined;
-    typed.push(prompt.trim().slice(0, 2000));
-    if (typed.length > 10) typed.shift();
-    return s.ask(prompt.slice(0, 20_000));
+    const files = attachmentsArg.safeParse(attachments);
+    if (prompt.trim()) {
+      typed.push(prompt.trim().slice(0, 2000));
+      if (typed.length > 10) typed.shift();
+    }
+    return s.ask(prompt.slice(0, 20_000), undefined, files.success ? files.data : []);
+  });
+  ipcMain.handle("figmake:attach-image", (_e, data: unknown) => {
+    if (data instanceof Uint8Array && data.byteLength > MAX_IMAGE_BYTES) return { ok: false, message: MSG_TOO_BIG };
+    const bytes = attachBytesArg.safeParse(data);
+    return bytes.success ? s.attachImage(bytes.data) : { ok: false, message: MSG_NOT_PICTURE };
+  });
+  ipcMain.handle("figmake:read-attachment", (_e, name: unknown) => {
+    const n = attachmentNameArg.safeParse(name);
+    return n.success ? s.readAttachment(n.data) : null;
+  });
+  ipcMain.handle("figmake:discard-attachment", (_e, name: unknown) => {
+    const n = attachmentNameArg.safeParse(name);
+    return n.success ? s.discardAttachment(n.data) : undefined;
   });
   ipcMain.handle("figmake:chat", () => s.chat);
   ipcMain.handle("figmake:new-chat", () => s.newChat());

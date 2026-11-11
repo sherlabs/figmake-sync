@@ -1,5 +1,6 @@
 import type { ChatActivity, ChatMessage, ChatPart } from "../electron/contracts.js";
 import type { AgentEvent } from "../harness/agents/types.js";
+import { IMAGE_NAME } from "./attachmentKinds.js";
 import { sanitizeText } from "./report.js";
 
 export { activitySummary } from "./activitySummary.js";
@@ -61,6 +62,7 @@ export function activityFor(event: AgentEvent, existed = true): ChatActivity | n
   const rest = target(event.name, event.summary);
   if (READ_TOOLS.has(event.name)) {
     const file = baseName(rest);
+    if (IMAGE_NAME.test(file)) return { kind: "look", label: "Looked at your screenshot" };
     return file ? { kind: "look", label: `Looked at ${file}`, file } : { kind: "look", label: "Looked at a file" };
   }
   if (SEARCH_TOOLS.has(event.name)) return { kind: "look", label: "Searched the project" };
@@ -107,6 +109,7 @@ export function nowFor(event: AgentEvent, ctx: { existed?: boolean } = {}): stri
       const rest = target(event.name, event.summary);
       if (READ_TOOLS.has(event.name)) {
         const file = baseName(rest);
+        if (IMAGE_NAME.test(file)) return "Looking at your screenshot";
         return file ? `Reading ${file}` : "Reading a file";
       }
       if (EDIT_TOOLS.has(event.name)) {

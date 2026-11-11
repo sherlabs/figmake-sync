@@ -36,6 +36,8 @@ export interface AgentInvocationInput {
   cwd: string;
   /** When set, continue that session instead of starting a new one. */
   sessionId?: string | undefined;
+  /** Absolute paths of pictures the user attached. Adapters that can take images natively pass them on. */
+  images?: readonly string[] | undefined;
 }
 
 export interface AgentInvocation {

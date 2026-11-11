@@ -18,6 +18,8 @@ export interface AgentRunOptions {
   cwd: string;
   prompt: string;
   sessionId?: string | undefined;
+  /** Absolute paths of attached pictures (see AgentInvocationInput). */
+  images?: readonly string[] | undefined;
   signal?: AbortSignal | undefined;
   onEvent: (event: AgentEvent) => void;
   spawn?: SpawnFn;
@@ -46,6 +48,7 @@ export function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     prompt: opts.prompt,
     cwd: opts.cwd,
     sessionId: opts.sessionId,
+    ...(opts.images?.length ? { images: opts.images } : {}),
   });
   const parse = opts.adapter.createLineParser();
 

@@ -49,11 +49,18 @@ export function createCodexAdapter(): AgentAdapter {
     versionArgs: () => ["--version"],
     parseVersion: (stdout) => /(\d+\.\d+\.\d+[^\s]*)/.exec(stdout)?.[1] ?? null,
     authArgs: () => ["login", "status"],
-    // Unverified: exit 0 means signed in; anything else is "unknown" so a CLI without this subcommand is never hard-blocked.
-    parseAuth: (_stdout, exitCode) => (exitCode === 0 ? true : null),
+    // Verified against codex-cli 0.167: `login status` exits 0 when signed in and 1 with "Not logged in" (on stderr) when
+    // not. Any other exit code (e.g. 2 = the CLI has no such subcommand) stays "unknown" so it is never hard-blocked.
+    parseAuth: (_stdout, exitCode) => (exitCode === 0 ? true : exitCode === 1 ? false : null),
     buildInvocation(input: AgentInvocationInput): AgentInvocation {
+      // Codex takes pictures with the repeatable -i/--image flag. They come first, right after `exec`, so the
+      // flag's list of values ends at the next option and never swallows the prompt marker "-" at the end.
+      const sessionId = validSessionId(input.sessionId);
+      const images = (input.images ?? []).flatMap((p) => ["--image", p]);
       const args = [
         "exec",
+        // A resumed session takes its pictures on `resume` itself (its own --image option), not on `exec`.
+        ...(sessionId ? [] : images),
         "--json",
         "--sandbox",
         "workspace-write",
@@ -61,9 +68,8 @@ export function createCodexAdapter(): AgentAdapter {
         input.cwd,
         "--skip-git-repo-check",
       ];
-      const sessionId = validSessionId(input.sessionId);
       if (sessionId) {
-        args.push("resume", "--", sessionId);
+        args.push("resume", ...images, "--", sessionId);
       }
       args.push("-"); // prompt from stdin
       return { command: "codex", args, stdin: input.prompt };

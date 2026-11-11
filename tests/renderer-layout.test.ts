@@ -106,7 +106,11 @@ async function open(state: object, size: { width: number; height: number }, sche
       resolveMerge: (c: unknown) => { (window as unknown as { __resolved: unknown }).__resolved = c; return Promise.resolve(); },
       stopProcess: noop, restartProcess: noop,
       cleanup: (a: string) => { (window as unknown as { __cleanup: string[] }).__cleanup = [...((window as unknown as { __cleanup?: string[] }).__cleanup ?? []), a]; return Promise.resolve(); },
-      newChat: noop, copyText: noop, openProject: noop, ask: noop, undo: noop, send: noop, cancel: noop, retry: noop, setAgent: noop,
+      newChat: noop, copyText: noop, openProject: noop,
+      ask: (t: string, att: unknown[]) => { const w = window as unknown as { __asked?: unknown[] }; w.__asked = [...(w.__asked ?? []), { t, att }]; return Promise.resolve(); },
+      attachImage: (b: Uint8Array) => { const w = window as unknown as { __att?: number[]; __n?: number }; w.__n = (w.__n ?? 0) + 1; w.__att = [...(w.__att ?? []), b.length]; const ok = b[0] === 0x89; return Promise.resolve(ok ? { ok: true, attachment: { kind: "image", name: `00000000-0000-4000-8000-00000000000${w.__n}.png` } } : { ok: false, message: "That file isn't a picture we can use." }); },
+      readAttachment: (n: string) => Promise.resolve(n.endsWith("9.png") ? null : "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="),
+      discardAttachment: (n: string) => { const w = window as unknown as { __disc?: string[] }; w.__disc = [...(w.__disc ?? []), n]; return Promise.resolve(); }, undo: noop, send: noop, cancel: noop, retry: noop, setAgent: noop,
       chooseWorkspace: noop, openSupport: noop, signOutFigma: noop, setUpdates: noop, switchProject: noop, removeProject: noop, reportIssue: noop, installUpdate: noop,
     };
   }, { s: state, tree: TREE, cart: CART, tab, upd: update });
@@ -928,6 +932,74 @@ describe("sync with Figma", () => {
       await page.click('dialog.sy-sheet button:has-text("Done")');
       expect(await page.evaluate(() => (window as unknown as { __resolved: unknown }).__resolved)).toEqual([{ path: "src/pages/Cart.tsx", choice: "figma" }, { path: "public/old-logo.svg", choice: "mine" }]);
       expect(violations).toEqual([]);
+      await page.context().close();
+    });
+  }
+
+  for (const scheme of ["light", "dark"] as const) {
+    it(`composer: paste, remove, limit, drop hint, images-only send, history thumbnails (${scheme})`, async (ctx) => {
+      if (!browser) return ctx.skip();
+      const page = await open(READY, { width: 1180, height: 760 }, scheme);
+      const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3];
+      const paste = (bytes: number[], type: string, withText = false) =>
+        page.evaluate(([b, t, txt]) => {
+          const dt = new DataTransfer();
+          dt.items.add(new File([new Uint8Array(b)], "image", { type: t }));
+          if (txt) dt.setData("text/plain", "hello");
+          document.querySelector(".ta")?.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+        }, [bytes, type, withText] as const);
+      // Nothing to send yet.
+      expect(await page.locator(".sendbtn:not(.stop)").isDisabled()).toBe(true);
+      await paste(PNG, "image/png");
+      await page.waitForSelector(".achip img");
+      // Images alone are enough to send.
+      expect(await page.locator(".sendbtn:not(.stop)").isDisabled()).toBe(false);
+      expect(await page.locator(".achip-x").getAttribute("aria-label")).toBe("Remove picture 1");
+      // The same picture pasted again is added once.
+      await paste(PNG, "image/png");
+      await page.waitForTimeout(100);
+      expect(await page.locator(".achip").count()).toBe(1);
+      // A bad file gets one plain sentence.
+      await paste([1, 2, 3, 4], "image/png");
+      await page.waitForSelector(".anote:not([hidden])");
+      expect(await page.locator(".anote").innerText()).toBe("That file isn't a picture we can use.");
+      // Remove with the x.
+      await page.locator(".achip-x").click();
+      expect(await page.locator(".achip").count()).toBe(0);
+      expect(await page.evaluate(() => (window as unknown as { __disc?: string[] }).__disc?.length)).toBe(1);
+      expect(await page.locator(".sendbtn:not(.stop)").isDisabled()).toBe(true);
+      // Pasted text still goes to the text box (no picture taken when text is on the clipboard).
+      await paste(PNG, "image/png", true);
+      await page.waitForTimeout(100);
+      expect(await page.locator(".achip").count()).toBe(0);
+      // Limit: five pictures, the sixth is refused with a sentence.
+      for (let i = 0; i < 6; i += 1) { await paste([...PNG, i + 10], "image/png"); await page.waitForTimeout(60); }
+      await page.waitForFunction(() => document.querySelectorAll(".achip").length === 5);
+      expect(await page.locator(".anote").innerText()).toBe("You can add up to 5 pictures to one message.");
+      expect(await page.locator(".attbtn").isDisabled()).toBe(true);
+      expect(await overflowX(page)).toBeLessThanOrEqual(0);
+      // Drop hint appears while files are dragged over the panel.
+      await page.evaluate(() => { const dt = new DataTransfer(); dt.items.add(new File(["x"], "a.png", { type: "image/png" })); document.querySelector(".chat")?.dispatchEvent(new DragEvent("dragenter", { dataTransfer: dt, bubbles: true, cancelable: true })); });
+      expect(await page.locator(".drophint").isVisible()).toBe(true);
+      await page.evaluate(() => { const dt = new DataTransfer(); dt.items.add(new File(["x"], "a.png", { type: "image/png" })); document.querySelector(".chat")?.dispatchEvent(new DragEvent("dragleave", { dataTransfer: dt, bubbles: true })); });
+      expect(await page.locator(".drophint").isVisible()).toBe(false);
+      // Send: images only, the strip clears, and the request carries the attachments.
+      await page.locator(".sendbtn:not(.stop)").click();
+      const asked = await page.evaluate(() => (window as unknown as { __asked: { t: string; att: { kind: string }[] }[] }).__asked);
+      expect(asked).toHaveLength(1);
+      expect(asked[0]?.t).toBe("");
+      expect(asked[0]?.att).toHaveLength(5);
+      expect(asked[0]?.att.every((a) => a.kind === "image")).toBe(true);
+      expect(await page.locator(".achip").count()).toBe(0);
+      // History: thumbnails in the user's bubble; a deleted file shows a placeholder.
+      await page.evaluate((c) => (window as unknown as { __pushChat: (v: object) => void }).__pushChat(c), {
+        projectKey: "a", active: false, fresh: false,
+        messages: [{ id: "u1", role: "user", at: "2026-01-01T00:00:00Z", text: "Fix this", parts: [], status: "done", attachments: [{ kind: "image", name: "00000000-0000-4000-8000-000000000001.png" }, { kind: "image", name: "00000000-0000-4000-8000-000000000009.png" }] }],
+      });
+      await page.waitForSelector(".thumbs .thumb.msg img");
+      expect(await page.locator(".thumbs .thumb.gone").innerText()).toBe("Picture no longer available");
+      expect(await page.locator(".bubble").innerText()).toBe("Fix this");
+      expect(await overflowX(page)).toBeLessThanOrEqual(0);
       await page.context().close();
     });
   }
