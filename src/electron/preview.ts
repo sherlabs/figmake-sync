@@ -1,6 +1,6 @@
 import { shell, WebContentsView, type BrowserWindow } from "electron";
 
-import { browserReducer, computeViewport, DEFAULT_VIEWPORT, emptyBrowser, HOME_TAB, isLocalUrl, normalizeAddress, type BrowserAction, type BrowserState, type ViewportLayout, type ViewportMode } from "../app/browser.js";
+import { browserReducer, computeViewport, DEFAULT_VIEWPORT, MAX_FIT_WIDTH, VIEWPORT_WIDTH, emptyBrowser, HOME_TAB, isLocalUrl, normalizeAddress, type BrowserAction, type BrowserState, type ViewportLayout, type ViewportMode } from "../app/browser.js";
 import type { BrowserCommand, PreviewRect } from "./contracts.js";
 
 const RETRY_MS = 1500;
@@ -9,6 +9,8 @@ const MAX_RETRIES = 60;
 const QUIET_FAILURES = 3;
 /** While the pane is being resized, the (heavier) device emulation follows after this quiet gap; the view bounds follow at once. */
 const EMULATION_DEBOUNCE_MS = 50;
+/** The modes that lay a page out at the pane's own width (Fit, Desktop), where a too-wide page is measured and fitted. */
+const VIEWPORT_FILLS: ReadonlySet<ViewportMode> = new Set((Object.keys(VIEWPORT_WIDTH) as ViewportMode[]).filter((m) => VIEWPORT_WIDTH[m].fill));
 
 interface Tab {
   view: WebContentsView;
@@ -16,6 +18,9 @@ interface Tab {
   timer: ReturnType<typeof setTimeout> | null;
   /** What device emulation is currently applied ("off" or "WxH@scale"); null = not applied yet. */
   emu: string | null;
+  /** The page's own content width when it is wider than the standard layout width (0 = it fits). */
+  contentWidth: number;
+  measureTimers: ReturnType<typeof setTimeout>[];
 }
 
 /**
@@ -184,7 +189,7 @@ export class PreviewView {
       },
     });
     const wc = view.webContents;
-    const tab: Tab = { view, retries: 0, timer: null, emu: null };
+    const tab: Tab = { view, retries: 0, timer: null, emu: null, contentWidth: 0, measureTimers: [] };
     this.tabs.set(id, tab);
 
     const guard = (event: { preventDefault(): void }, target: string): void => {
@@ -216,6 +221,7 @@ export class PreviewView {
     });
     // A new page may come from a new renderer process: make sure it is laid out at the chosen width too.
     wc.on("did-navigate", () => {
+      tab.contentWidth = 0;
       tab.emu = null;
       this.applyEmulation(true);
       sync();
@@ -275,9 +281,41 @@ export class PreviewView {
       return;
     }
     const r = this.rect;
-    const lay = r ? computeViewport(this.viewport, Math.round(r.width), Math.round(r.height)) : null;
-    if (!lay) return;
-    for (const tab of this.tabs.values()) this.emulate(tab, lay);
+    if (!r) return;
+    for (const [id, tab] of this.tabs) {
+      const lay = computeViewport(this.viewport, Math.round(r.width), Math.round(r.height), tab.contentWidth);
+      if (!lay) continue;
+      this.emulate(tab, lay);
+      this.measureSoon(id, tab);
+    }
+  }
+
+  /**
+   * Fit and Desktop: some apps are wider than the standard layout width (a toolbar with a fixed minimum width). After the page has
+   * had a moment to lay out, read how wide it really is and, if it overflows, lay it out at that width and scale to match, so it fits.
+   */
+  private measureSoon(id: number, tab: Tab): void {
+    if (!VIEWPORT_FILLS.has(this.viewport)) return;
+    for (const t of tab.measureTimers) clearTimeout(t);
+    tab.measureTimers = [300, 1200].map((ms) =>
+      setTimeout(() => {
+        const wc = tab.view.webContents;
+        if (wc.isDestroyed() || this.tabs.get(id) !== tab) return;
+        void wc
+          .executeJavaScript("Math.max(document.documentElement.scrollWidth, document.body ? document.body.scrollWidth : 0)")
+          .then((w: unknown) => {
+            const width = typeof w === "number" && Number.isFinite(w) ? Math.ceil(w) : 0;
+            const r = this.rect;
+            if (!r || this.tabs.get(id) !== tab) return;
+            const current = computeViewport(this.viewport, Math.round(r.width), Math.round(r.height), tab.contentWidth);
+            if (!current || width <= current.cssWidth + 2 || width <= tab.contentWidth) return;
+            tab.contentWidth = Math.min(width, MAX_FIT_WIDTH);
+            tab.emu = null;
+            this.applyEmulation(true);
+          })
+          .catch(() => undefined);
+      }, ms),
+    );
   }
 
   private emulate(tab: Tab, lay: ViewportLayout): void {
@@ -297,6 +335,7 @@ export class PreviewView {
   private destroyTab(id: number): void {
     const tab = this.tabs.get(id);
     if (!tab) return;
+    for (const t of tab.measureTimers) clearTimeout(t);
     this.tabs.delete(id);
     if (tab.timer) clearTimeout(tab.timer);
     this.window.contentView.removeChildView(tab.view);

@@ -265,6 +265,7 @@ export function createChatPanel(host: ChatHost): ChatPanel {
   }
 
   const openErrs = new Set<string>();
+  const closedPlans = new Set<string>();
 
   function assistant(m: ChatMessage, isLast: boolean): HTMLElement {
     const kids: Child[] = [];
@@ -323,8 +324,34 @@ export function createChatPanel(host: ChatHost): ChatPanel {
     const live = last?.role === "assistant" && last.status === "streaming" ? last : null;
     const label = s?.phase === "preparing" ? `Getting ${s.agent ? AGENTS[s.agent].name : "your AI helper"} ready` : (live?.now ?? "Working");
     const plan = live?.plan ?? [];
+    const doneN = plan.filter((p) => p.state === "done").length;
+    const planOpen = !closedPlans.has("live");
+    const stepMark = (state: string): HTMLElement =>
+      state === "done"
+        ? h("span", { class: "tk-mark done", "aria-hidden": "true" }, icon("check-b", true))
+        : state === "active"
+          ? h("span", { class: "tk-mark active", "aria-hidden": "true" }, icon("fwd", true))
+          : h("span", { class: "tk-mark todo", "aria-hidden": "true" });
     const steps = plan.length
-      ? h("ul", { class: "lv-plan", "aria-label": "Steps" }, ...plan.map((p) => h("li", { class: `lv-step ${p.state}` }, p.state === "done" ? icon("check-b", true) : h("span", { class: "lv-mark", "aria-hidden": "true" }), h("span", { class: "sr-only" }, p.state === "done" ? "Done: " : p.state === "active" ? "In progress: " : "To do: "), h("span", { class: "lv-step-t" }, p.text))))
+      ? h(
+          "section",
+          { class: `tasks${planOpen ? " open" : ""}`, "aria-label": "Tasks" },
+          h(
+            "button",
+            { type: "button", class: "tasks-h", "aria-expanded": String(planOpen), onclick: () => {
+              if (closedPlans.has("live")) closedPlans.delete("live");
+              else closedPlans.add("live");
+              draw();
+            } },
+            doneN === plan.length ? h("span", { class: "tk-mark done", "aria-hidden": "true" }, icon("check-b", true)) : h("span", { class: "spin s", "aria-hidden": "true" }),
+            h("b", {}, "Tasks"),
+            h("span", { class: "tasks-n" }, `${doneN}/${plan.length}`),
+            icon(planOpen ? "chev-d" : "chev-r", true),
+          ),
+          planOpen
+            ? h("ul", { class: "tasks-list", "aria-label": "Steps" }, ...plan.map((p) => h("li", { class: `tk ${p.state}` }, stepMark(p.state), h("span", { class: "sr-only" }, p.state === "done" ? "Done: " : p.state === "active" ? "Now: " : "Next: "), h("span", { class: "tk-t" }, p.text))))
+            : null,
+        )
       : null;
     const time = live?.startedAt ? h("span", { class: "lv-time", "data-since": String(live.startedAt) }, elapsed(live.startedAt)) : null;
     return h(

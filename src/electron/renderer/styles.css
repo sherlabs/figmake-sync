@@ -738,7 +738,7 @@ button.trow:focus-visible { box-shadow: var(--ring); }
 .acts-list { margin: 2px 0 2px 13px; padding-left: 12px; border-left: 1px solid var(--sep-2); display: grid; gap: 1px; animation: bannerIn 0.18s ease both; }
 .acts-list li { display: flex; align-items: center; gap: 8px; min-height: 24px; font-size: 12.5px; color: var(--text-2); min-width: 0; overflow-wrap: anywhere; }
 .acts-list li .i { color: var(--text-3); flex: none; }
-.acts-list li.edit .i, .acts-list li.add .i { color: var(--chg-dot); }
+.acts-list li.edit .i, .acts-list li.add .i { color: var(--text-2); }
 
 /* change card */
 .chcard { border: 1px solid var(--sep); border-radius: 12px; background: var(--raised); box-shadow: var(--card-shadow); padding: 12px 12px 8px 12px; margin-top: 12px; }
@@ -1055,3 +1055,23 @@ dialog.sheet.sy-sheet { width: min(760px, calc(100vw - 32px)); }
 .msg.user .thumbs + .bubble { margin-top: 0; }
 .drophint { display: none; position: absolute; inset: 8px; z-index: 5; border: 2px dashed var(--accent); border-radius: 14px; background: var(--accent-soft); color: var(--accent-text); font-size: 14px; font-weight: 600; align-items: center; justify-content: center; gap: 8px; pointer-events: none; backdrop-filter: blur(2px); }
 .chat.dropping .drophint { display: flex; }
+
+/* task list: the AI's plan while it works */
+.tasks { margin-top: 8px; border: 1px solid var(--sep); border-radius: 12px; background: var(--raised); padding: 4px 6px 6px; }
+.tasks-h { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 32px; padding: 0 6px; border-radius: 8px; text-align: left; color: var(--text); font-size: 13px; }
+.tasks-h:hover { background: var(--hover); }
+.tasks-h b { font-weight: 600; }
+.tasks-h .tasks-n { margin-left: auto; color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; font-family: var(--mono); }
+.tasks-h > .i { color: var(--text-3); flex: none; }
+.tasks-list { display: grid; gap: 1px; margin: 2px 0 0; padding: 0 4px; list-style: none; }
+.tk { display: flex; align-items: flex-start; gap: 10px; min-height: 26px; padding: 3px 2px; font-size: 13px; line-height: 1.4; color: var(--text-2); min-width: 0; }
+.tk-t { min-width: 0; overflow-wrap: anywhere; }
+.tk.done .tk-t { color: var(--text-3); text-decoration: line-through; text-decoration-color: var(--sep-2); }
+.tk.active .tk-t { color: var(--text); }
+.tk-mark { flex: none; width: 16px; height: 16px; margin-top: 2px; border-radius: 50%; box-sizing: border-box; display: grid; place-items: center; }
+.tk-mark .i { width: 10px; height: 10px; }
+.tk-mark.done { background: var(--text-3); color: var(--raised); }
+.tk-mark.active { border: 1.5px solid var(--text); color: var(--text); }
+.tk-mark.todo { border: 1.5px dashed var(--text-3); }
+.tasks-h .tk-mark { margin-top: 0; width: 18px; height: 18px; }
+.tasks-h .spin { border-color: var(--sep-2); border-top-color: var(--text); }

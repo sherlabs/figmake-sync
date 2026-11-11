@@ -133,15 +133,18 @@ export interface ViewportLayout {
 }
 
 const MIN_SCALE = 0.1;
+/** The widest layout Fit/Desktop will grow to for a page that insists on being wider than the standard width. */
+export const MAX_FIT_WIDTH = 2560;
 
 /** Pure scale math behind the preview's device emulation. Returns null when the pane has no size. */
-export function computeViewport(mode: ViewportMode, paneWidth: number, paneHeight: number): ViewportLayout | null {
+export function computeViewport(mode: ViewportMode, paneWidth: number, paneHeight: number, contentWidth = 0): ViewportLayout | null {
   const paneW = Math.floor(paneWidth);
   const paneH = Math.floor(paneHeight);
   if (!(paneW > 0) || !(paneH > 0)) return null;
   const spec = VIEWPORT_WIDTH[mode];
   if (spec.fill) {
-    const cssWidth = Math.max(spec.width, paneW);
+    // A page that is wider than the standard width (a fixed-width web app) is laid out at its own width, so it fits instead of scrolling.
+    const cssWidth = Math.max(spec.width, paneW, Math.min(Math.floor(contentWidth), MAX_FIT_WIDTH));
     const scale = Math.max(MIN_SCALE, paneW / cssWidth);
     return { offsetX: 0, width: paneW, height: paneH, cssWidth, cssHeight: Math.round(paneH / scale), scale };
   }

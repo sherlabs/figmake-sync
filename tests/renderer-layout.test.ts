@@ -962,9 +962,9 @@ describe("renderer layout", () => {
           const panel = await rect(page, ".chat");
           const now = await rect(page, ".lv-now");
           const time = await rect(page, ".lv-time");
-          const plan = await rect(page, ".lv-plan");
+          const plan = await rect(page, ".tasks");
           expect(await page.locator(".lv-time").innerText()).toMatch(/^1m \d\ds$/u);
-          expect(await page.locator(".lv-step").count()).toBe(3);
+          expect(await page.locator(".tk").count()).toBe(3);
           expect(await page.locator(".lv-acts-list li").count()).toBe(3);
           for (const r of [now, time, plan]) {
             expect(r).not.toBeNull();
@@ -978,7 +978,7 @@ describe("renderer layout", () => {
           // Done: collapses to the one-line summary with no live pieces.
           await page.evaluate((c) => (window as unknown as { __pushChat: (v: object) => void }).__pushChat(c), { ...chatState, active: false, messages: chatState.messages.map((m) => (m.id === "a1" ? { ...m, status: "done", now: undefined, startedAt: undefined, plan: undefined } : m)) });
           await page.waitForSelector(".acts-t");
-          expect(await page.locator(".lv-now, .lv-plan, .lv-time, .lv-acts").count()).toBe(0);
+          expect(await page.locator(".lv-now, .tasks, .lv-time, .lv-acts").count()).toBe(0);
           await page.context().close();
         });
       }

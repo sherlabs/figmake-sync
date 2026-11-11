@@ -64,7 +64,7 @@ describe("browserReducer", () => {
   });
 });
 
-import { computeViewport, parseViewport, VIEWPORT_MODES } from "../src/app/browser.js";
+import { computeViewport, MAX_FIT_WIDTH, parseViewport, VIEWPORT_MODES } from "../src/app/browser.js";
 import { clampSide, initials, readSide, sizeForKey, sizeForPointer } from "../src/app/sidebar.js";
 
 describe("preview viewport", () => {
@@ -142,5 +142,19 @@ describe("sidebar sizing", () => {
     expect(initials("Checkout Flow")).toBe("CF");
     expect(initials("dashboard")).toBe("DA");
     expect(initials("  ")).toBe("?");
+  });
+});
+
+
+describe("viewport: a page wider than the standard width", () => {
+  it("lays out at its own width and scales so it fits the pane", () => {
+    const wide = computeViewport("fit", 617, 700, 1700);
+    expect(wide?.cssWidth).toBe(1700);
+    expect(Math.round((wide?.scale ?? 0) * 1700)).toBe(617);
+    // A page that already fits changes nothing, and absurd widths are capped.
+    expect(computeViewport("fit", 617, 700, 900)?.cssWidth).toBe(1280);
+    expect(computeViewport("fit", 617, 700, 99_999)?.cssWidth).toBe(MAX_FIT_WIDTH);
+    // Device modes keep their own fixed width.
+    expect(computeViewport("phone", 617, 700, 1700)?.cssWidth).toBe(390);
   });
 });
