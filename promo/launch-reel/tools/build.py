@@ -12,6 +12,15 @@ LINE = lambda a, b: f'<span class="ln"><span class="w">{a[0]}</span>' + "".join(
 
 row4 = '<div id="row4" style="position:absolute;left:0;width:1080px;top:1300px;height:240px;display:flex;align-items:center;justify-content:center;gap:50px"><img id="fg4" src="assets/figma-logo.svg" style="height:200px;width:auto"/><svg id="ar4" width="130" height="100" viewBox="0 0 120 90"><path d="M8 45H100M68 12L104 45L68 78" fill="none" stroke="#14171c" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/></svg><img id="ic4" src="assets/figmake-sync-icon.svg" style="width:220px;height:220px;border-radius:50px;box-shadow:0 20px 60px rgba(0,0,0,.3)"/></div>'
 
+SH = 'position:absolute;left:0;top:0;max-width:none;display:block;'
+newscenes = f'''
+<section id="sa" class="scene orange clip" data-start="16.93" data-duration="2.18"><div class="grid"></div><div class="cap" style="font-size:150px;top:262px"><span class="ln"><span class="w">Paste</span><span class="w hl">it.</span></span><span class="ln"><span class="w">Or</span><span class="w hl">click</span><span class="w">it.</span></span></div>
+<div class="shot" id="ca" style="top:790px;height:560px"><img id="ia" src="assets/screens/composer.png" style="{SH}width:2985px;left:-1982px;top:-1311px"/></div>
+<div class="strip" id="sta" style="top:1390px;font-size:52px">Screenshots &amp; picked elements</div></section>
+<section id="sb" class="scene ink clip" data-start="19.11" data-duration="2.18"><div class="grid"></div><div class="glow"></div><div class="cap" style="font-size:190px;top:262px"><span class="ln"><span class="w">Switch</span></span><span class="ln"><span class="w hl">models.</span></span></div>
+<div class="shot" id="cb" style="top:790px;height:560px"><img id="ib1" src="assets/screens/models.png" style="{SH}width:3125px;left:-2109px;top:-1215px"/><img id="ib2" src="assets/screens/signin.png" style="{SH}width:2326px;left:-663px;top:0px"/></div>
+<div class="strip" id="stb" style="top:1390px;font-size:52px">Sign in inside the app</div></section>
+'''
 scenes = f'''
 <section id="s4" class="scene orange clip" data-start="7.35" data-duration="1.94"><div class="grid"></div><div class="cap" style="font-size:250px;top:262px"><span class="ln"><span class="w">Pull</span><span class="w">it</span></span><span class="ln"><span class="w hl">local.</span></span></div>
 <div class="ucard" id="c4" style="top:830px;height:442px;background:#c9cbd1"><div class="hfapp wrap" data-layout-ignore id="w4" style="width:520px;height:230px;transform:scale(1.923)"><div id="s4m" style="position:absolute;inset:0">{ui.add_sheet("s4_")}</div>{CUR("a4")}</div></div>{row4}</section>
@@ -21,11 +30,13 @@ scenes = f'''
 <section id="s6" class="scene paper clip" data-start="12.02" data-duration="4.91"><div class="grid"></div><div class="cap" style="top:262px"><span class="ln" style="font-size:130px"><span class="w">Just</span><span class="w hl">ask.</span></span><span class="ln" style="font-size:105px"><span class="w">It</span><span class="w">edits</span></span><span class="ln" style="font-size:105px"><span class="w">the</span><span class="w hl">code.</span></span></div>
 <div class="ucard" id="c6" style="top:640px;height:640px;background:#fff"><div class="hfapp wrap" data-layout-ignore id="w6" style="width:526px;height:337px;transform:scale(1.9)"><div style="display:flex;width:526px;height:337px;border-top:0">{C["chat"]}</div>{CUR("a6")}</div></div>
 <div class="ucard" id="c7" style="top:1310px;height:250px"><div class="hfapp wrap" data-layout-ignore id="w7" style="width:588px;height:345px;transform:translate(0,-305px) scale(1.7)">{V["preview"]}</div></div></section>
-<section id="s8" class="scene paper clip" data-start="16.93" data-duration="2.17"><div class="grid"></div><div class="kick" id="k8" style="top:830px"><img class="fg" src="assets/figma-logo.svg"/>Figma Make</div><div class="cap" style="font-size:250px;top:262px"><span class="ln"><span class="w">Send</span><span class="w">it</span></span><span class="ln"><span class="w hl">back.</span></span></div>
+%%NEW%%<section id="s8" class="scene paper clip" data-start="21.29" data-duration="2.17"><div class="grid"></div><div class="kick" id="k8" style="top:830px"><img class="fg" src="assets/figma-logo.svg"/>Figma Make</div><div class="cap" style="font-size:250px;top:262px"><span class="ln"><span class="w">Send</span><span class="w">it</span></span><span class="ln"><span class="w hl">back.</span></span></div>
 <div id="cam8" style="position:absolute;left:0;top:0;width:1080px;height:1920px;transform-origin:822px 1110px"><div class="ucard" id="c8k" style="top:1000px;height:150px"><div class="hfapp wrap" data-layout-ignore id="w8" style="left:0;top:23px;width:500px;height:52px;transform:scale(2)"><div class="main" style="display:block;width:500px">{X["toolbar"]}</div></div></div><div class="ring" id="r8"></div><div class="rip" id="p8" style="margin:-45px 0 0 -45px;width:90px;height:90px;border-width:7px;border-color:var(--acc)"></div><svg class="cur" id="c8" viewBox="0 0 24 24" style="width:54px;height:54px;position:absolute;left:0;top:0;opacity:0;z-index:6"><path d="M3 2l7 19 3-8 8-3z" fill="#fff" stroke="#111" stroke-width="1.6" stroke-linejoin="round"/></svg></div>
 <div class="hfapp wrap" data-layout-ignore id="l8" style="left:300px;top:1380px;width:150px;height:44px;transform:scale(3.2)">{X["toast"].replace('style="opacity:0"','')}</div></section>
 '''
+scenes = scenes.replace("%%NEW%%", newscenes)
 css = ui.scoped_css() + """
+.shot{position:absolute;left:40px;width:1000px;border-radius:34px;box-shadow:0 30px 90px rgba(0,0,0,.28),0 0 0 3px rgba(130,135,145,.35);overflow:hidden;background:#fff}
 .ucard{position:absolute;left:40px;width:1000px;border-radius:34px;box-shadow:0 30px 90px rgba(0,0,0,.28),0 0 0 3px rgba(130,135,145,.35);overflow:hidden;background:#fff}
 .hfapp.wrap{position:absolute;left:0;top:0;transform-origin:0 0}
 #l7.hfapp,#l8.hfapp{background:transparent}

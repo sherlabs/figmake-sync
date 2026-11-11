@@ -100,7 +100,7 @@ tl.to("#c_al1a", { opacity: 0, duration: .2 }, 15.9); tl.to("#c_al1b", { opacity
 $$("#c_aw1").style.height = "0px"; $$("#c_tin").style.transform = ""; empt.style.display = emptyD;
 
 // S8 push 16.93 -> 19.1
-t0 = T[7];
+t0 = T[9];
 kick("#k8", t0 + .05);
 lineIn("#s8 .cap .ln:nth-child(1)", t0 + .08); lineIn("#s8 .cap .ln:nth-child(2)", t0 + .18);
 tl.from("#c8k", { y: 200, opacity: 0, duration: .45, ease: "power3.out" }, t0 + .2);
@@ -123,3 +123,17 @@ tl.to("#r8", { opacity: 0, duration: .2 }, t0 + 1.7);
 tl.from("#l8", { y: 90, opacity: 0, scale: 2.8, duration: .4, ease: "back.out(1.8)", transformOrigin: "0 0" }, t0 + 1.75);
 tl.to(".spin", { rotation: 360, duration: .8, repeat: 25, ease: "none", transformOrigin: "50% 50%" }, 0);
 tl.fromTo(".dots i", { opacity: .3 }, { opacity: 1, duration: .4, stagger: .15, repeat: 40, yoyo: true, ease: "sine.inOut" }, 0);
+
+// SA paste / pick 16.93 -> 19.11
+t0 = T[7];
+lineIn("#sa .cap .ln:nth-child(1)", t0 + .08); lineIn("#sa .cap .ln:nth-child(2)", t0 + .18);
+tl.from("#ca", { y: 200, opacity: 0, duration: .45, ease: "power3.out" }, t0 + .25);
+tl.fromTo("#ia", { scale: 1 }, { scale: 1.1, transformOrigin: "60% 40%", duration: 1.9, ease: "none" }, t0 + .25);
+tl.fromTo("#sta", { scale: 1.2, opacity: 0, y: 40 }, { scale: 1, opacity: 1, y: 0, duration: .35, ease: "back.out(2)" }, t0 + 1.0);
+// SB switch models / sign in 19.11 -> 21.29
+t0 = T[8];
+lineIn("#sb .cap .ln:nth-child(1)", t0 + .08); lineIn("#sb .cap .ln:nth-child(2)", t0 + .18);
+tl.from("#cb", { y: 200, opacity: 0, duration: .45, ease: "power3.out" }, t0 + .25);
+gsap.set("#ib2", { opacity: 0 });
+tl.to("#ib2", { opacity: 1, duration: .25 }, t0 + 1.15);
+tl.fromTo("#stb", { scale: 1.2, opacity: 0, y: 40 }, { scale: 1, opacity: 1, y: 0, duration: .35, ease: "back.out(2)" }, t0 + 1.25);

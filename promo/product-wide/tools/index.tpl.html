@@ -21,6 +21,9 @@ body{margin:0;background:var(--bg)}
 .tl i{display:block;width:12px;height:12px;border-radius:50%}
 .cap{position:absolute;left:0;top:918px;width:1920px;text-align:center;font:700 100px/1 "Inter",sans-serif;letter-spacing:-.04em;white-space:nowrap;opacity:0}
 .cap b{font-weight:700;color:var(--blue)}
+#nw{position:absolute;left:288px;top:22px;width:1344px;height:874px;border-radius:16px;overflow:hidden;background:#fff;box-shadow:0 50px 120px rgba(0,0,0,.7),0 0 0 1px rgba(255,255,255,.12);opacity:0}
+#nw .zw{position:absolute;left:0;top:0;width:1344px;height:874px;transform-origin:0 0}
+#nw img{position:absolute;left:0;top:0;width:1344px;height:auto;display:block;opacity:0}
 #intro{position:absolute;inset:0}
 #intro .ico{position:absolute;left:960px;top:170px;width:170px;height:170px;margin-left:-85px;filter:drop-shadow(0 24px 50px rgba(76,157,255,.25))}
 #intro h1{position:absolute;left:0;top:400px;width:1920px;text-align:center;margin:0;font:700 128px/1.06 "Inter",sans-serif;letter-spacing:-.045em}
@@ -49,6 +52,7 @@ body{margin:0;background:var(--bg)}
 %%READY%%
 <svg class="hfcur" id="cur" viewBox="0 0 24 24"><path d="M4 2.5v17l4.6-4.2 3 6.7 3-1.4-3-6.6h6.2z" fill="#fff" stroke="#111" stroke-width="1.5" stroke-linejoin="round"/></svg><div class="rip" id="rip"></div>
 </div></div>
+<div id="nw"><div class="zw" data-layout-ignore><img id="n_ov" src="assets/screens/overview.png"><img id="n_co" src="assets/screens/composer.png"><img id="n_mo" src="assets/screens/models.png"><img id="n_si" src="assets/screens/signin.png"><img id="n_ra" src="assets/screens/rail.png"><img id="n_wo" src="assets/screens/working.png"></div></div>
 <div id="intro">
   <img class="ico" src="assets/figmake-sync-icon.svg" alt="figmake-sync">
   <h1>Figma Make spends<br><b>Figma's AI credits.</b></h1>
@@ -342,6 +346,40 @@ tl.set('#r_toast',{opacity:1},T.sent);
 tl.fromTo('#r_toast',{y:12,opacity:0},{y:0,opacity:1,duration:.42,ease:"back.out(1.5)"},T.sent);
 tl.to('#r_toast',{opacity:0,y:6,duration:.35},T.toastOut);
 status(T.sent,'ok');footer(T.sent,'a');
+
+/* =================== new features montage =================== */
+T.ncaps.forEach((c,i)=>addCap('nc'+i,c[0],c[1],c[2]));
+tl.fromTo('#nw',{opacity:0,y:30,scale:.97},{opacity:1,y:0,scale:1,duration:.6,ease:"power3.out"},T.nw0);
+tl.to('#nw',{opacity:0,y:-20,duration:.45,ease:"power2.in"},T.nwOut);
+tl.fromTo('#glow',{opacity:0},{opacity:1,duration:.6},T.nw0);tl.to('#glow',{opacity:0,duration:.5},T.nwOut);
+const NW=1344,NH=874;
+const ncam=(fx,fy,S)=>({x:Math.min(0,Math.max(NW-NW*S,NW/2-fx*NW*S)),y:Math.min(0,Math.max(NH-NH*S,NH/2-fy*NH*S)),scale:S});
+gsap.set('#nw .zw',ncam(.5,.5,1));
+const nGo=(t,d,fx,fy,S)=>tl.to('#nw .zw',{...ncam(fx,fy,S),duration:d,ease:"power3.inOut"},t);
+const nImg=(id,t)=>{tl.set('#'+id,{opacity:1},t)};
+nImg('n_ov',T.nw0);
+const B=T.beats;
+/* 1 composer: screenshot thumb, then the element picker + chip */
+nImg('n_co',B[0][0]);
+tl.set('#n_ov',{opacity:0},B[0][0]+.02);
+gsap.set('#nw .zw',ncam(.5,.5,1));
+nGo(B[0][0]+.1,.9,.76,.8,2.0);
+nGo(B[0][0]+2.3,.9,.53,.14,2.3);
+nGo(B[0][0]+3.3,.7,.8,.76,2.0);
+/* 2 models */
+nImg('n_mo',B[1][0]);tl.set('#n_co',{opacity:0},B[1][0]+.02);
+nGo(B[1][0],.01,.5,.5,1);nGo(B[1][0]+.2,.9,.78,.8,1.7);
+/* 3 sign in */
+nImg('n_si',B[2][0]);tl.set('#n_mo',{opacity:0},B[2][0]+.02);
+nGo(B[2][0],.01,.5,.5,1);nGo(B[2][0]+.2,.9,.5,.2,1.5);
+/* 4 rail: expanded then collapsed, with Fit in the bar */
+nImg('n_ov',B[3][0]);tl.set('#n_si',{opacity:0},B[3][0]+.02);
+nGo(B[3][0],.01,.5,.5,1);
+tl.fromTo('#n_ra',{opacity:0},{opacity:1,duration:.2},B[3][0]+1.0);
+nGo(B[3][0]+.2,1.2,.3,.2,1.7);
+/* 5 timeline */
+nImg('n_wo',B[4][0]);tl.set('#n_ov,#n_ra',{opacity:0},B[4][0]+.02);
+nGo(B[4][0],.01,.5,.5,1);nGo(B[4][0]+.2,.9,.85,.42,1.6);
 
 /* =================== end card =================== */
 tl.set('#end',{opacity:1},T.end);

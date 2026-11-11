@@ -1,0 +1,13 @@
+LINKEDIN
+Figma Make lets you iterate on a prototype, but only through Figma's own AI credits, which are limited per seat.
+
+Figmake Sync pulls the project's code onto your computer so you can edit it with the Claude Code or ChatGPT Codex subscription you already pay for. Live preview, a chat that edits the real code, a diff of what changed, and a one-click send back to Figma Make. No Figma AI credits are spent.
+
+New in this release: paste or attach screenshots into the chat, click any element in the preview to hand it to the AI as a chip with a crop, switch models, sign in to Claude or ChatGPT inside the app, a collapsible left rail with a Fit button for the preview, and agent activity shown as a step timeline.
+
+It is free. The Windows build is made by CI; we have not tested it on Windows yet. Figmake Sync is an unofficial tool by Sherlabs, not affiliated with or endorsed by Figma.
+
+Watch the demo and download: sherlabs.com/figmake
+
+YOUTUBE / SITE DESCRIPTION
+Edit Figma Make with your own AI. Figmake Sync pulls your Figma Make project's code local, lets your own Claude Code or ChatGPT Codex subscription change it (paste screenshots, click an element in the preview, switch models), then sends it back. Free, unofficial, by Sherlabs.

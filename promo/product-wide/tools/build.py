@@ -27,6 +27,14 @@ def sh(k, v):
     return v + OFF
 T = {k: sh(k, v) for k, v in T.items()}
 T["win0"] = OFF; T["two"] = False
+# new-features montage (absolute times, after the send scene)
+T["nw0"] = 28.1
+T["beats"] = [[29.6, 34.0], [34.0, 36.4], [36.4, 38.8], [38.8, 41.6], [41.6, 44.4]]
+T["ncaps"] = [["New in this <b>release</b>.", 28.3, 29.65], ["Paste a <b>screenshot</b>.", 29.8, 31.9], ["<b>Click</b> an element.", 32.0, 34.0],
+              ["<b>Switch</b> models.", 34.1, 36.3], ["Sign in <b>in the app</b>.", 36.5, 38.7], ["Less chrome. <b>Fit</b> it.", 38.9, 41.5], ["Follow every <b>step</b>.", 41.7, 44.3]]
+T["nwOut"] = 44.2
+T["end"] = 44.6
+T["dur"] = 49.2
 tpl = (HERE / "index.tpl.html").read_text()
 html = (tpl.replace("%%CSS%%", ui.css()).replace("%%SPRITE%%", ui.sprite())
         .replace("%%START%%", ui.start_layer("s_"))
@@ -39,9 +47,9 @@ cues = dict(
     dur=T["dur"],
     clicks=[T[k] for k in ["addClick", "inpClick", "openClick", "taClick1", "send1", "viewClick", "viewClose", "sendClick"]],
     typing=[[T["type1"][0], LINK, T["type1"][1]], [T["p1"][0], P1, T["p1"][1]]],
-    whoosh=[[OFF - .25, .35], [T["prep0"] - 0.15, .3], [T["send1"] + .3, .2], [T["caps"][4][1], .3], [T["end"], .35]],
+    whoosh=[[OFF - .25, .35], [T["prep0"] - 0.15, .3], [T["send1"] + .3, .2], [T["caps"][4][1], .3], [T["end"], .35]] + [[x[0] - .2, .25] for x in T["beats"]],
     chimes=[[T["ready"], 660, .35]] + [[t, 880, .18] for t in T["steps1"]] + [[T["pv1"] + .1, 660, .6], [T["card1"], 784, .5], [T["card1"] + .12, 1175, .5],
-            [T["sent"], 784, .6], [T["sent"] + .12, 1175, .6], [T["sent"] + .26, 1568, .5], [T["end"] + .4, 523, .5]],
+            [T["sent"], 784, .6], [T["sent"] + .12, 1175, .6], [T["sent"] + .26, 1568, .5], [T["end"] + .4, 523, .5]] + [[T["beats"][i][0] + .5, 988, .3] for i in range(5)],
 )
 (HERE / "cues.json").write_text(json.dumps(cues, indent=1))
 print("built", len(html))

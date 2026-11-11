@@ -26,10 +26,22 @@ const stub = (init) => {
     U("u2", "Add a promo banner above the product grid", 5),
     A("a2", 5, [AC(["look", "Looked at App.tsx", "App.tsx"], ["edit", "Edited App.tsx", "App.tsx"], ["add", "Added PromoBanner.tsx", "PromoBanner.tsx"]), T("I added a slim banner at the top of the shop with the line **Free shipping over $50**. It sits above the product grid and uses your existing colours.")], { change: CH("t2", "Added a promo banner above the product grid", [F("App.tsx"), F("PromoBanner.tsx", "added")]) }),
   ];
+  const svg = (w, h, body) => "data:image/svg+xml;utf8," + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${body}</svg>`);
+  const SHOT = svg(320, 200, '<rect width="320" height="200" fill="#f7f4ee"/><rect x="16" y="14" width="90" height="10" rx="4" fill="#1b1b1b"/><rect x="16" y="52" width="170" height="16" rx="4" fill="#1b1b1b"/><rect x="16" y="76" width="120" height="8" rx="4" fill="#999"/><rect x="16" y="104" width="96" height="30" rx="15" fill="#1d4ed8"/><rect x="16" y="150" width="60" height="36" rx="8" fill="#d9c7a8"/><rect x="84" y="150" width="60" height="36" rx="8" fill="#c9b08a"/><rect x="152" y="150" width="60" height="36" rx="8" fill="#b89a74"/>');
+  const CROP = svg(160, 60, '<rect width="160" height="60" fill="#f7f4ee"/><rect x="12" y="12" width="136" height="36" rx="12" fill="#2563eb"/><text x="80" y="36" font-family="Helvetica,Arial" font-size="14" fill="#fff" text-anchor="middle">Shop the collection</text>');
+  const ELEMENT = { kind: "element", id: "11111111-2222-3333-4444-555555555555", image: "crop1", info: { tag: "a", classes: ["btn", "btn-primary"], selector: "main > section.hero > a.btn", text: "Shop the collection", attrs: { href: "/shop" }, box: { x: 36, y: 232, width: 190, height: 44 }, styles: { "font-size": "15px", "background-color": "rgb(37, 99, 235)" }, page: "/", components: ["Hero", "Button"], source: { file: "src/components/Button.tsx", line: 4 } } };
+  const SHOTATT = { kind: "image", name: "shot1" };
+  const chatShot = [
+    { id: "u1", role: "user", at: iso(4), text: "Make this button match the pill style in my screenshot", parts: [], status: "done", attachments: [SHOTATT, ELEMENT] },
+    A("a1", 4, [AC(["look", "Looked at Hero.tsx", "Hero.tsx"], ["look", "Looked at Button.tsx", "Button.tsx"], ["edit", "Edited Button.tsx", "Button.tsx"], ["add", "Added button.css", "button.css"], ["check", "Checked the app builds"]), T("The button now has a fully rounded pill shape with a deeper blue, like the one in your screenshot. I only touched the Shop the collection button.")], { change: CH("t1", "Gave the Shop button a pill shape and deeper blue", [F("Button.tsx"), F("button.css", "added")]) }),
+  ];
   const withChanges = { ...base, changes: ["Made the main button blue with softer corners", "Added a promo banner above the product grid"], changeFiles: [2, 2], changeIds: ["t1", "t2"], canSend: true, canUndo: true, projects: [P("a", "Oak & Ember", "changes", 2), P("b", "Studio Landing", "synced", 60 * 26)] };
   const startS = { ...base, phase: "start", projectName: null, previewUrl: null, activeKey: null, projects: [], syncedAt: null, agent: null, agentConnected: false };
   const tabs = (n) => ({ activeId: 1, tabs: [{ id: 1, title: "Oak & Ember", url: "http://localhost:5173/", loading: false, canGoBack: false, canGoForward: false, failed: false }, ...(n > 1 ? [{ id: 2, title: "Cart", url: "http://localhost:5173/cart", loading: false, canGoBack: true, canGoForward: false, failed: false }] : [])] });
   const S = {
+    chat: [{ ...base, changes: ["Gave the Shop button a pill shape and deeper blue"], changeFiles: [2], changeIds: ["t1"], canSend: true, canUndo: true }, { projectKey: "a", messages: chatShot, active: false, fresh: false }, tabs(1)],
+    composer: [{ ...base }, { projectKey: "a", messages: done.slice(0, 2), active: false, fresh: false }, tabs(1)],
+    signin: [{ ...base, phase: "needs-ai-signin", agentConnected: false }, { projectKey: "a", messages: done.slice(0, 2), active: false, fresh: false }, tabs(1)],
     start: [startS, { projectKey: null, messages: [], active: false, fresh: false }, tabs(0)],
     ready: [withChanges, { projectKey: "a", messages: done, active: false, fresh: false }, tabs(2)],
     working: [{ ...base, phase: "working" }, { projectKey: "a", active: true, fresh: false, messages: [U("u1", "Add a promo banner above the product grid", 1), A("a1", 0, [AC(["look", "Looked at App.tsx", "App.tsx"], ["look", "Looked at the product grid", "ProductGrid.tsx"], ["helper", "A helper is checking how the pages are laid out"], ["add", "Adding PromoBanner.tsx", "PromoBanner.tsx"])], { status: "streaming", now: "Adding PromoBanner.tsx", startedAt: Date.now() - 38000, plan: [{ text: "Find where the product grid starts", state: "done" }, { text: "Write the banner", state: "active" }, { text: "Check the app still builds", state: "pending" }] })] }, tabs(1)],
@@ -55,6 +67,9 @@ const stub = (init) => {
     state: () => Promise.resolve(cur), onState: (f) => { cb.push(f); return () => {}; },
     chat: () => Promise.resolve(curChat), onChat: (f) => { cc.push(f); return () => {}; },
     browser: () => Promise.resolve(curBr), onBrowser: (f) => { cbr.push(f); return () => {}; },
+    onElementPicked: (f) => { window.__picked = () => f(ELEMENT); return () => {}; },
+    attachImage: () => Promise.resolve({ ok: true, attachment: SHOTATT }),
+    readAttachment: (n) => Promise.resolve(n.startsWith("crop") ? CROP : SHOT),
     onCommand: () => () => {}, onUpdateState: () => () => {}, updateState: () => Promise.resolve({ phase: "idle" }),
     reviewChanges: () => Promise.resolve(reviewItems), ignoredFiles: () => Promise.resolve(["package-lock.json"]),
     reviewDiff: () => Promise.resolve({ kind: "text", before, after }), mergeDiff: () => Promise.resolve({ kind: "text", before, after }),
@@ -85,9 +100,18 @@ const shots = {
   merge: async (p) => { await p.waitForTimeout(500); await p.locator(".sy-more").first().click(); await p.waitForTimeout(2500); },
   sending: async () => {},
   settings: async (p) => { await p.addStyleTag({ content: ".row.upd{display:none}" }); await p.locator(".gear").click(); await p.waitForTimeout(500); },
+  chat: async (p) => { await p.locator(".acts-t").first().click(); await p.waitForTimeout(300); await p.evaluate(() => { for (const e of document.querySelectorAll("*")) if (e.scrollHeight > e.clientHeight + 40 && getComputedStyle(e).overflowY !== "visible" && e.closest(".chat")) e.scrollTop = 0; }); await p.waitForTimeout(300); },
+  composer: async (p) => {
+    await p.locator('input[type=file]').setInputFiles({ name: "shot.png", mimeType: "image/png", buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAX+XDSwAAAABJRU5ErkJggg==", "base64") });
+    await p.waitForTimeout(300); await p.evaluate(() => window.__picked()); await p.waitForTimeout(300);
+    await p.locator("textarea.ta").fill("Make this button match the pill style in my screenshot"); await p.waitForTimeout(300);
+  },
+  models: async (p) => { await p.locator(".agent-chip").click(); await p.waitForTimeout(400); },
+  rail: async () => {},
+  signin: async () => {},
   sync: async (p) => { await p.locator(".sy-btn").click(); await p.waitForTimeout(300); },
 };
-const stateFor = { start: "start", overview: "ready", working: "working", review: "review", merge: "merge", sending: "sending", settings: "settings", sync: "ready" };
+const stateFor = { chat: "chat", composer: "composer", models: "ready", rail: "ready", signin: "signin", start: "start", overview: "ready", working: "working", review: "review", merge: "merge", sending: "sending", settings: "settings", sync: "ready" };
 const only = process.env.ONLY ? process.env.ONLY.split(",") : Object.keys(shots);
 const b = await chromium.launch({ channel: "chrome" });
 for (const id of only) {
@@ -95,10 +119,11 @@ for (const id of only) {
   const p = await ctx.newPage();
   p.on("pageerror", (e) => console.log(id, "pageerror", e.message));
   await p.addInitScript(stub, { name: stateFor[id] });
+  if (id === "rail") await p.addInitScript(() => { try { localStorage.setItem("figmake.side.rail", "1"); } catch {} });
   await p.addInitScript(() => { Object.defineProperty(navigator, "platform", { get: () => "MacIntel" }); });
   await p.goto(url); await p.waitForTimeout(500);
   // The real app has a class collision: .chcard also carries .tail (mono log style). Neutralise it so the card shows as designed.
-  await p.addStyleTag({ content: '.chcard.tail{font-family:var(--font);font-size:inherit;line-height:inherit;min-height:0;color:inherit;overflow:visible}' });
+  await p.addStyleTag({ content: '.jump{display:none!important}.chcard.tail{font-family:var(--font);font-size:inherit;line-height:inherit;min-height:0;color:inherit;overflow:visible}' });
   await p.evaluate(fake);
   if (shots[id]) await shots[id](p);
   await p.evaluate(fake); await p.waitForTimeout(200);
