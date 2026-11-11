@@ -258,8 +258,15 @@ export function createChatPanel(host: ChatHost): ChatPanel {
     return h(
       "section",
       { class: `chcard ${c.fate}${tail ? " last" : ""}`, "aria-label": "Change made" },
-      h("div", { class: "chcard-top" }, h("span", { class: "tick" }, icon(c.fate === "undone" ? "undo" : "pencil", true)), h("div", { class: "chcard-t" }, h("p", { class: "chcard-title" }, c.summary), chips.length ? h("div", { class: "fchips" }, ...chips) : null)),
-      h("div", { class: "chcard-foot" }, note, h("span", { class: "sp" }), view, undo),
+      h(
+        "div",
+        { class: "chcard-head" },
+        h("span", { class: "chcard-kind" }, h("span", { class: "tick" }, icon(c.fate === "undone" ? "undo" : "pencil", true)), c.files.length > 0 ? `${c.files.length} ${c.files.length === 1 ? "file" : "files"} changed` : "Change made"),
+        note,
+      ),
+      h("p", { class: "chcard-title" }, c.summary),
+      chips.length ? h("div", { class: "fchips" }, ...chips) : null,
+      view || undo ? h("div", { class: "chcard-foot" }, view, h("span", { class: "sp" }), undo) : null,
       body,
     );
   }
