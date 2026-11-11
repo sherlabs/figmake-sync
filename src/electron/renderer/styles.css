@@ -128,7 +128,7 @@ html.is-win { --top-inset: 0px; }
   padding: 0 8px 8px;
   min-height: 0;
 }
-.side-top { height: var(--top-inset); flex: none; display: flex; align-items: center; justify-content: flex-end; padding-right: 2px; }
+.side-top { height: max(var(--top-inset), 44px); flex: none; display: flex; align-items: center; justify-content: flex-end; padding-right: 2px; }
 .side-top .fm-sidetoggle { -webkit-app-region: no-drag; }
 .app.fm-side-rail .side-top { height: calc(var(--top-inset) + 44px); align-items: flex-end; justify-content: center; padding: 0 0 6px; }
 .side { overflow: hidden; min-width: 0; position: relative; }
