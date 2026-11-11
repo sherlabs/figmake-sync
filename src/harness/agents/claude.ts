@@ -1,4 +1,4 @@
-import { validSessionId } from "./types.js";
+import { modelArg, validSessionId } from "./types.js";
 import type {
   AgentAdapter,
   AgentEvent,
@@ -116,6 +116,9 @@ export function createClaudeAdapter(): AgentAdapter {
         "--disallowedTools",
         ...CLAUDE_DISALLOWED_TOOLS,
       ];
+      // Only a chosen model gets a flag; without one Claude uses its own default.
+      const model = modelArg(input.model);
+      if (model) args.push("--model", model);
       const sessionId = validSessionId(input.sessionId);
       if (sessionId) {
         args.push("--resume", sessionId);

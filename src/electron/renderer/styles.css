@@ -362,6 +362,27 @@ dialog.sheet::backdrop { background: var(--scrim); }
 .menu .mh { font-size: 11px; font-weight: 600; color: var(--text-2); padding: 6px 9px 3px; }
 
 
+/* model menu (chat chip) and the typed-name form shared with Settings */
+.model-menu { min-width: 232px; max-width: 280px; }
+.model-menu button .ml { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-menu button .mx { flex: none; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--text-2); }
+.model-menu button:hover .mx, .model-menu button:focus-visible .mx { color: var(--on-accent); }
+.menu .nomark { flex: none; width: 14px; height: 14px; }
+.menu button[aria-checked="true"] .i { color: var(--text); }
+.menu button[aria-checked="true"]:hover .i, .menu button[aria-checked="true"]:focus-visible .i { color: var(--on-accent); }
+.mform { display: grid; gap: 6px; padding: 4px; }
+.mform .mh { padding: 2px 2px 0; }
+.mform .field { height: 30px; font-size: 12.5px; }
+.mhint { margin: 0; font-size: 11.5px; color: var(--text-2); }
+.merr { margin: 0; font-size: 11.5px; color: var(--bad-text); }
+.merr[hidden] { display: none; }
+.mbtns { display: flex; justify-content: flex-end; gap: 6px; margin-top: 2px; }
+.row.mrow { display: block; }
+.row.mrow .mform { padding: 0; }
+.msel { height: 28px; min-width: 120px; font-size: 12.5px; }
+.agent-chip:disabled { opacity: 0.55; cursor: default; }
+.agent-chip:disabled:hover { background: none; color: var(--text-2); }
+
 /* ============ simple-flow additions ============ */
 .prow .nm { font-weight: 450; }
 .prow .more { opacity: 0; width: 20px; height: 20px; border-radius: 5px; display: grid; place-items: center; color: inherit; flex: none; margin-right: -4px; }

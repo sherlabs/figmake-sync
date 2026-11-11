@@ -36,7 +36,7 @@ import { DesktopAppStateStore } from "./appState.js";
 import type { MenuCommand, PreviewRect } from "./contracts.js";
 import { MAX_IMAGE_BYTES, MSG_NOT_PICTURE, MSG_TOO_BIG } from "../app/attachmentKinds.js";
 import { APP_CSP } from "./csp.js";
-import { attachBytesArg, attachmentNameArg, attachmentsArg, browserAddressArg, browserCommandArg, browserTabIdArg, cleanupActionArg, ignoreFileArgs, mergeChoicesArg, processIdArg, projectKeyArg, projectNameArg, projectPathArg, syncModeArg } from "./ipc.js";
+import { modelArg, attachBytesArg, attachmentNameArg, attachmentsArg, browserAddressArg, browserCommandArg, browserTabIdArg, cleanupActionArg, ignoreFileArgs, mergeChoicesArg, processIdArg, projectKeyArg, projectNameArg, projectPathArg, syncModeArg } from "./ipc.js";
 import { PreviewView } from "./preview.js";
 
 const APP_ID = "com.figmake.sync";
@@ -324,6 +324,10 @@ function registerIpc(s: Session): void {
   ipcMain.handle("figmake:cancel", () => s.cancel());
   ipcMain.handle("figmake:retry", () => s.retry());
   ipcMain.handle("figmake:set-agent", (_e, agent: unknown) => (agent === "claude" || agent === "codex" ? s.setAgent(agent) : undefined));
+  ipcMain.handle("figmake:set-model", (_e, model: unknown) => {
+    const parsed = modelArg.safeParse(model);
+    return parsed.success ? s.setModel(parsed.data) : undefined;
+  });
   ipcMain.handle("figmake:sign-in-agent", () => s.signInAgent());
   ipcMain.handle("figmake:sign-out-agent", () => s.signOutAgent());
   ipcMain.handle("figmake:choose-workspace", () => s.chooseWorkspace());

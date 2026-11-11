@@ -339,7 +339,7 @@ export class HarnessService {
    * promise for the final outcome. Progress streams through deps.emit.
    */
   async startRun(
-    input: { rootDir: string; prompt: string; agent?: AgentId | undefined; newSession?: boolean | undefined; images?: readonly string[] | undefined },
+    input: { rootDir: string; prompt: string; agent?: AgentId | undefined; newSession?: boolean | undefined; images?: readonly string[] | undefined; model?: string | undefined },
     externalSignal?: AbortSignal,
   ): Promise<{ runId: string; done: Promise<RunOutcome> }> {
     const rootDir = path.resolve(input.rootDir);
@@ -370,7 +370,7 @@ export class HarnessService {
     if (externalSignal?.aborted) controller.abort();
     else externalSignal?.addEventListener("abort", onExternalAbort, { once: true });
 
-    const done = this.execute({ rootDir, runId, adapter, bin, prompt: input.prompt, ...(input.images?.length ? { images: input.images } : {}), settings, newSession: input.newSession === true, signal: controller.signal })
+    const done = this.execute({ rootDir, runId, adapter, bin, prompt: input.prompt, ...(input.images?.length ? { images: input.images } : {}), ...(input.model ? { model: input.model } : {}), settings, newSession: input.newSession === true, signal: controller.signal })
       .catch((error: unknown): RunOutcome => ({
         runId,
         agent: agentId,
@@ -400,6 +400,7 @@ export class HarnessService {
     bin: string;
     prompt: string;
     images?: readonly string[];
+    model?: string;
     settings: HarnessSettings;
     newSession: boolean;
     signal: AbortSignal;
@@ -453,6 +454,7 @@ export class HarnessService {
       cwd: rootDir,
       prompt: ctx.prompt,
       ...(ctx.images?.length ? { images: ctx.images } : {}),
+      ...(ctx.model ? { model: ctx.model } : {}),
       sessionId: resumeId,
       signal,
       onEvent: (event: AgentEvent) => {

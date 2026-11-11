@@ -20,6 +20,7 @@ import type { ChatStore } from "./chatStore.js";
 import { describeFolders, listChangedFiles } from "./changes.js";
 import { listFolder, readFileView } from "./fileTree.js";
 import { MAX_ACTIVITY_LINES, MAX_PROCESS_LINES, pushLines } from "./activity.js";
+import { validModel } from "./modelIds.js";
 import { agentDetails, agentFailureSentence, classifyAgentFailure } from "./agentErrors.js";
 import { buildProcesses } from "./processes.js";
 import { FIGMA_MAKE_GUIDE } from "./figmaMakeGuide.js";
@@ -161,6 +162,7 @@ const START: SessionState = {
   canSend: false,
   canUndo: false,
   agent: null,
+  model: null,
   agentConnected: false,
   workspace: "",
   processes: [],
@@ -169,6 +171,8 @@ const START: SessionState = {
 
 export class Session {
   private s: SessionState = { ...START };
+  /** Per AI, the chosen model (null = its own default). */
+  private models: Record<AgentChoice, string | null> = { claude: null, codex: null };
   private readonly listeners = new Set<(state: SessionState) => void>();
   private ctl: AbortController | null = null;
   private busy = false;
@@ -354,7 +358,8 @@ export class Session {
     const seed = saved.lastLink ? parseFigmaLink(saved.lastLink) : null;
     if (saved.lastLink && seed && Object.keys(this.links).length === 0) this.links[seed.key] = saved.lastLink;
     const connected = saved.agent !== null && saved.agentConnected;
-    this.set({ agent: saved.agent, agentConnected: connected, updatesEnabled: saved.updates.enabled });
+    this.models = { claude: validModel(saved.models.claude), codex: validModel(saved.models.codex) };
+    this.set({ agent: saved.agent, model: saved.agent ? this.models[saved.agent] : null, agentConnected: connected, updatesEnabled: saved.updates.enabled });
     await this.useWorkspace(saved.workspace);
     await this.refreshProjects();
     void this.pruneAttachments();
@@ -418,6 +423,7 @@ export class Session {
     const images = kept.flatMap((a) => (a.kind === "image" && root0 ? [attachmentPath(root0, a.name) ?? ""] : [])).filter(Boolean);
     const text = typedText || (images.length > 0 ? DEFAULT_IMAGE_PROMPT : "");
     const agent = this.s.agent;
+    const model = agent ? this.models[agent] : null;
     // A failed turn leaves a calm error in the chat; typing again simply carries on.
     const turnError = this.s.phase === "error" && this.messages.at(-1)?.status === "error";
     if (!text || this.busy || !this.root || !this.s.previewUrl || !agent || (this.s.phase !== "ready" && !turnError)) return;
@@ -437,7 +443,7 @@ export class Session {
           return end("stopped");
         }
         this.set({ phase: "working", message: undefined });
-        const { done } = await this.deps.harness.startRun({ rootDir: root, prompt: `${PROMPT_PREFACE}\n\n${text}${images.length > 0 ? `\n\n${attachmentNote(images)}` : ""}`, ...(images.length > 0 ? { images } : {}), agent, ...(this.fresh ? { newSession: true } : {}) }, signal);
+        const { done } = await this.deps.harness.startRun({ rootDir: root, prompt: `${PROMPT_PREFACE}\n\n${text}${images.length > 0 ? `\n\n${attachmentNote(images)}` : ""}`, ...(images.length > 0 ? { images } : {}), ...(model ? { model } : {}), agent, ...(this.fresh ? { newSession: true } : {}) }, signal);
         const outcome = await done;
         if (outcome.sessionId) this.fresh = false;
         if (outcome.cancelled || !outcome.success) {
@@ -497,7 +503,7 @@ export class Session {
         await this.deps.appState.update({ agentConnected: false }).catch((e: unknown) => this.deps.log("save failed", e));
       }
     }
-    const details = code === "agent_signin_required" || code === "agent_limit" ? [] : agentDetails(raw, this.home());
+    const details = code === "agent_signin_required" || code === "agent_limit" || code === "agent_model_unavailable" ? [] : agentDetails(raw, this.home());
     return { error: { message: agentFailureSentence(code, AGENT_NAMES[agent]), code, ...(details.length > 0 ? { details } : {}) } };
   }
 
@@ -698,10 +704,25 @@ export class Session {
     await this.deps.appState.update({ agent, agentConnected: connected });
     if (this.agentReady !== agent) this.agentReady = null;
     this.forceSignin = false;
-    this.set({ agent, agentConnected: connected });
+    this.set({ agent, model: this.models[agent], agentConnected: connected });
     if (this.busy) return;
     // Choosing (or switching to) an AI connects it right away: install, then sign in.
     if (this.s.phase === "needs-ai-choice" || (!connected && (this.s.phase === "ready" || this.s.phase === "start"))) await this.prepareAgent();
+  }
+
+  /**
+   * Picks the model the current AI uses from the next message on. Never while something is running (the change would
+   * not apply to that run), and only a plain model name or null (the AI's own default) is accepted.
+   */
+  async setModel(model: string | null): Promise<void> {
+    const agent = this.s.agent;
+    if (!agent || this.isBusy()) return;
+    const next = model === null ? null : validModel(model);
+    if (model !== null && next === null) return;
+    if (this.models[agent] === next) return;
+    this.models = { ...this.models, [agent]: next };
+    await this.deps.appState.update({ models: this.models });
+    this.set({ model: next });
   }
 
   /** Settings: sign in to the chosen AI again, even though it looks connected. Stays on the same screen afterwards. */
@@ -1152,7 +1173,8 @@ export class Session {
           await removeAllImages(root);
           if (await this.safeToDelete(root)) await this.deps.trashFolder(root);
         }
-        await this.deps.appState.update({ agent: null, agentConnected: false, projects: {}, links: {}, names: {}, lastLink: null });
+        this.models = { claude: null, codex: null };
+        await this.deps.appState.update({ agent: null, models: this.models, agentConnected: false, projects: {}, links: {}, names: {}, lastLink: null });
       } catch (error) {
         this.deps.log("reset failed", error);
         return this.fail("Couldn't reset the app. Try again.", () => this.resetApp(), "unknown");
@@ -1175,7 +1197,7 @@ export class Session {
       this.installing = false;
       this.previewStopped = false;
       this.syncedAtByKey = {};
-      this.set({ agent: null, agentConnected: false, projects: [], activeKey: null, syncedAt: null });
+      this.set({ agent: null, model: null, agentConnected: false, projects: [], activeKey: null, syncedAt: null });
       this.set(this.startState());
     });
   }

@@ -1,4 +1,4 @@
-import { validSessionId } from "./types.js";
+import { modelArg, validSessionId } from "./types.js";
 import type {
   AgentAdapter,
   AgentEvent,
@@ -60,8 +60,11 @@ export function createCodexAdapter(): AgentAdapter {
       // flag's list of values ends at the next option and never swallows the prompt marker "-" at the end.
       const sessionId = validSessionId(input.sessionId);
       const images = (input.images ?? []).flatMap((p) => ["--image", p]);
+      const model = modelArg(input.model);
       const args = [
         "exec",
+        // -m is an `exec` option, so it covers new and resumed sessions alike (`resume` accepts it too). No model = the user's own config.toml default.
+        ...(model ? ["--model", model] : []),
         // A resumed session takes its pictures on `resume` itself (its own --image option), not on `exec`.
         ...(sessionId ? [] : images),
         "--json",

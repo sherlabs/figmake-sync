@@ -197,6 +197,7 @@ const TITLES: Record<ErrorCode, string> = {
   agent_signin_required: "The AI assistant is not signed in",
   agent_limit: "The AI assistant hit its usage limit",
   agent_unreachable: "Could not reach the AI assistant",
+  agent_model_unavailable: "The chosen AI model is not available",
   runtime_install_failed: "Could not set up the AI assistant",
   preview_failed: "The project preview did not start",
   push_failed: "Some changes could not be sent to Figma",

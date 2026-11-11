@@ -4,6 +4,7 @@ import type { AgentChoice, ChangedFile, ChatChange, ChatMessage, ChatPart, ChatS
 import { createAttachStrip, messageThumbs } from "./attach.js";
 import { diffPanel } from "./diff.js";
 import { h, icon, nodes, type Child } from "./dom.js";
+import { chipText, modelLocked } from "./modelMenu.js";
 
 /* The conversation panel. Draws ChatState + SessionState; every action goes through window.figmake.
    All text is added as text nodes; the only tags ever created are the ones listed in `inline` and `blocks`. */
@@ -14,6 +15,8 @@ export interface ChatHost {
   /** Confirms undoing an older change (and everything after it). */
   confirmUndo(index: number): void;
   openSettings(): void;
+  /** Opens the model menu next to `anchor` (the AI chip, or the button on a model error). */
+  openModelMenu(anchor: HTMLElement): void;
   report(): void;
   collapse(): void;
   toast(text: string): void;
@@ -87,7 +90,7 @@ export function createChatPanel(host: ChatHost): ChatPanel {
   const wrap = h("div", { class: "thread-wrap" }, thread, jump);
 
   const ta = h("textarea", { class: "ta", rows: "1", "aria-label": "Message", spellcheck: "true", autocomplete: "off", placeholder: "Describe a change…" });
-  const agentChip = h("button", { type: "button", class: "agent-chip", title: "Change AI helper in Settings", onclick: () => host.openSettings() });
+  const agentChip = h("button", { type: "button", class: "agent-chip", "aria-haspopup": "menu", onclick: () => (sess?.agent ? host.openModelMenu(agentChip) : host.openSettings()) });
   const kbd = h("span", { class: "kbd", "aria-hidden": "true", hidden: true }, "↵");
   const sendBtn = h("button", { type: "button", class: "sendbtn", "aria-label": "Send", title: "Send (Enter)", onclick: () => submit() }, icon("up"));
   const stopBtn = h("button", { type: "button", class: "sendbtn stop", "aria-label": "Stop", title: "Stop (Esc)", hidden: true, onclick: () => void api.cancel() }, icon("stop"));
@@ -172,8 +175,12 @@ export function createChatPanel(host: ChatHost): ChatPanel {
     ta.placeholder = setup ? (s.phase === "sending" ? "Sending to Figma…" : "Getting things ready…") : blocked ? "Finish the step in the window to keep going" : chat.active ? "Working… you can type your next message" : "Describe a change, like “make the buttons rounded”";
     if (was && !ta.disabled && document.activeElement === document.body) ta.focus();
     const agent = s.agent ? AGENTS[s.agent] : null;
-    agentChip.replaceChildren(icon(agent?.glyph ?? "sparkle", true), agent?.name ?? "Choose AI", icon("chev-d", true));
-    agentChip.setAttribute("aria-label", `AI helper: ${agent?.name ?? "not chosen"}. Change in Settings`);
+    const model = s.model ?? null;
+    const locked = modelLocked(s.phase, chat.active);
+    agentChip.replaceChildren(icon(agent?.glyph ?? "sparkle", true), agent && s.agent ? chipText(agent.name, s.agent, model) : "Choose AI", icon("chev-d", true));
+    agentChip.setAttribute("aria-label", agent && s.agent ? `AI helper: ${chipText(agent.name, s.agent, model)}. Change model or AI` : "AI helper: not chosen. Change in Settings");
+    agentChip.title = locked && s.agent ? "Changes apply from your next message" : s.agent ? "Change model or AI helper" : "Change AI helper in Settings";
+    agentChip.disabled = locked && Boolean(s.agent);
     sendBtn.hidden = chat.active;
     stopBtn.hidden = !chat.active;
     strip.setDisabled(ta.disabled);
@@ -269,7 +276,7 @@ export function createChatPanel(host: ChatHost): ChatPanel {
       const lines = m.error?.details ?? [];
       const more = lines.length > 0 ? h("details", { class: "errdetails", open: openErrs.has(m.id) ? "" : null, ontoggle: (e: Event) => { if ((e.currentTarget as HTMLDetailsElement).open) openErrs.add(m.id); else openErrs.delete(m.id); } }, h("summary", {}, "Show details"), h("pre", { class: "errlog", tabindex: "0", "aria-label": "Recent output" }, lines.join("\n"))) : null;
       kids.push(
-        h("div", { class: "errmsg", role: live ? "alert" : null }, icon("warn"), h("div", { class: "et" }, h("p", {}, m.error?.message ?? "Something went wrong."), more, live ? h("div", { class: "eacts" }, h("button", { type: "button", class: "btn primary sm", onclick: () => void api.retry() }, m.error?.code === "agent_signin_required" ? "Sign in" : "Try again"), h("button", { type: "button", class: "btn sm", onclick: () => host.report() }, "Report")) : null)),
+        h("div", { class: "errmsg", role: live ? "alert" : null }, icon("warn"), h("div", { class: "et" }, h("p", {}, m.error?.message ?? "Something went wrong."), more, live ? h("div", { class: "eacts" }, m.error?.code === "agent_model_unavailable" ? h("button", { type: "button", class: "btn primary sm", "aria-haspopup": "menu", onclick: (e: Event) => host.openModelMenu(e.currentTarget as HTMLElement) }, "Choose model") : h("button", { type: "button", class: "btn primary sm", onclick: () => void api.retry() }, m.error?.code === "agent_signin_required" ? "Sign in" : "Try again"), h("button", { type: "button", class: "btn sm", onclick: () => host.report() }, "Report")) : null)),
       );
     }
     return h("article", { class: `msg assistant ${m.status}`, "data-id": m.id }, h("span", { class: "av", "aria-hidden": "true" }, icon("mark")), h("div", { class: "mbody" }, h("span", { class: "sr-only" }, "Assistant: "), ...nodes(...kids), m.status === "error" ? null : actions(m)));

@@ -29,6 +29,7 @@ export const ERROR_CODES = [
   "agent_signin_required",
   "agent_limit",
   "agent_unreachable",
+  "agent_model_unavailable",
   "runtime_install_failed",
   "preview_failed",
   "push_failed",
@@ -192,6 +193,8 @@ export interface SessionState {
   code?: ErrorCode;
   failedIn?: Phase;
   agent: AgentChoice | null;
+  /** The model chosen for the current AI; null = its own default. */
+  model: string | null;
   /** True once the chosen AI helper was installed and signed in on this Mac. */
   agentConnected: boolean;
   /** Folder name (not path) of the workspace new projects are created in. */
@@ -291,6 +294,8 @@ export interface ChatState {
 export interface DesktopAppState {
   lastLink: string | null;
   agent: AgentChoice | null;
+  /** Per AI: the model the person chose; null = the AI's own default (no model is passed). */
+  models: Record<AgentChoice, string | null>;
   /** Set only after the AI helper was installed and signed in. Older saved states count as not connected. */
   agentConnected: boolean;
   workspace: string | null;
@@ -347,6 +352,8 @@ export interface FigmakeApi {
   cancel(): Promise<void>;
   retry(): Promise<void>;
   setAgent(agent: AgentChoice): Promise<void>;
+  /** Chooses the model the current AI uses from the next message on (null = its own default). Ignored while it is working. */
+  setModel(model: string | null): Promise<void>;
   /** Signs in to the chosen AI again (opens its browser sign-in). */
   signInAgent(): Promise<void>;
   /** Signs the chosen AI out. `command` is what to run in a terminal when the app couldn't do it. */

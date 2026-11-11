@@ -1,3 +1,5 @@
+import { MODEL_ID } from "../../app/modelIds.js";
+
 /** Shared agent-adapter contract. Each CLI connector implements AgentAdapter. */
 
 export type AgentId = "claude" | "codex";
@@ -38,6 +40,8 @@ export interface AgentInvocationInput {
   sessionId?: string | undefined;
   /** Absolute paths of pictures the user attached. Adapters that can take images natively pass them on. */
   images?: readonly string[] | undefined;
+  /** Model the person chose. Absent = pass no model flag, so the CLI uses its own default. */
+  model?: string | undefined;
 }
 
 export interface AgentInvocation {
@@ -78,6 +82,13 @@ export interface AgentAdapter {
   buildInvocation(input: AgentInvocationInput): AgentInvocation;
   /** Stateful per-run parser: one stdout line in, zero or more events out. */
   createLineParser(): (line: string) => AgentEvent[];
+}
+
+/** The model's name as the CLI gets it. Never a flag: a bad name stops the run instead of changing it. */
+export function modelArg(model: string | undefined | null): string | undefined {
+  if (model === undefined || model === null) return undefined;
+  if (!MODEL_ID.test(model)) throw new Error("That model name isn't valid.");
+  return model;
 }
 
 /** Session ids are passed to CLIs as argv; accept only a conservative charset. */

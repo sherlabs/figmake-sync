@@ -1488,6 +1488,7 @@ describe("session: AI sign-in checks and failure messages", () => {
     ["rate limit exceeded", "agent_limit", "Claude's usage limit was reached. Try again later."],
     ["getaddrinfo ENOTFOUND api.anthropic.com", "agent_unreachable", "Couldn't reach Claude. Check your connection."],
     ["segfault", "agent_failed", "Claude stopped with a problem."],
+    ["There's an issue with the selected model (x). It may not exist or you may not have access to it.", "agent_model_unavailable", "That model isn't available on your account. Pick another."],
   ])("run failure %j -> %s", async (raw, code, sentence) => {
     const r = await rig();
     await r.session.openProject(LINK);
@@ -1611,5 +1612,93 @@ describe("session: switching projects while busy", () => {
     release();
     await sending;
     expect(r.session.state.activeKey).toBe("AbC123");
+  });
+});
+
+describe("session: model switching", () => {
+  const sentModel = (r: Rig, n = -1): string | undefined => (r.harness.startRun.mock.calls.at(n)?.[0] as { model?: string }).model;
+
+  it("passes no model by default, then the chosen one on every run, and saves it", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    expect(r.session.state.model).toBeNull();
+    await r.session.ask("one");
+    expect(r.harness.startRun.mock.calls[0]?.[0]).not.toHaveProperty("model");
+    await r.session.setModel("sonnet");
+    expect(r.session.state.model).toBe("sonnet");
+    expect((await r.store.load()).models).toEqual({ claude: "sonnet", codex: null });
+    await r.session.ask("two");
+    await r.session.ask("three");
+    expect(sentModel(r, 1)).toBe("sonnet");
+    expect(sentModel(r, 2)).toBe("sonnet");
+    await r.session.setModel(null);
+    expect(r.session.state.model).toBeNull();
+    await r.session.ask("four");
+    expect(r.harness.startRun.mock.calls.at(-1)?.[0]).not.toHaveProperty("model");
+  });
+
+  it("keeps one choice per AI and restores it on the next launch", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    await r.session.setModel("opus");
+    await r.session.setAgent("codex");
+    expect(r.session.state).toMatchObject({ agent: "codex", model: null });
+    await r.session.setModel("gpt-6.1-sol");
+    await r.session.setAgent("claude");
+    expect(r.session.state.model).toBe("opus");
+    expect((await r.store.load()).models).toEqual({ claude: "opus", codex: "gpt-6.1-sol" });
+    const again = new Session({ ...r.deps });
+    await again.start();
+    expect(again.state).toMatchObject({ agent: "claude", model: "opus" });
+  });
+
+  it("rejects unsafe names in main, even when the window sends one", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    for (const bad of ["--oss", "x; rm -rf /", "a b", "", "-m", "x".repeat(65)]) await r.session.setModel(bad);
+    expect(r.session.state.model).toBeNull();
+    expect((await r.store.load()).models).toEqual({ claude: null, codex: null });
+    await r.session.setModel(5 as unknown as string);
+    expect(r.session.state.model).toBeNull();
+  });
+
+  it("is ignored while a run is in progress and applies from the next message", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    r.edit.hold = new Promise(() => undefined);
+    const turn = r.session.ask("one");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await r.session.setModel("haiku");
+    expect(r.session.state.model).toBeNull();
+    expect((await r.store.load()).models.claude).toBeNull();
+    await r.session.cancel();
+    await turn;
+    await r.session.setModel("haiku");
+    expect(r.session.state.model).toBe("haiku");
+  });
+
+  it("ignores a choice before any AI is chosen", async () => {
+    const r = await rig({ agent: null });
+    await r.session.setModel("opus");
+    expect(r.session.state.model).toBeNull();
+  });
+
+  it("a model the account can't use fails clearly, can be changed from the error, and the next try uses the new one", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    await r.session.setModel("nope-1");
+    r.edit.outcome = { success: false, cancelled: false, error: "There's an issue with the selected model (nope-1). It may not exist or you may not have access to it.", resultText: "" };
+    await r.session.ask("go");
+    expect(r.session.state).toMatchObject({ phase: "error", code: "agent_model_unavailable", message: "That model isn't available on your account. Pick another." });
+    const last = r.session.chat.messages.at(-1);
+    expect(last).toMatchObject({ status: "error", error: { code: "agent_model_unavailable", message: "That model isn't available on your account. Pick another." } });
+    expect(last?.error?.details).toBeUndefined();
+    expect(r.harness.startRun).toHaveBeenCalledTimes(1);
+    await r.session.setModel("sonnet");
+    expect(r.session.state.model).toBe("sonnet");
+    r.edit.outcome = {};
+    await r.session.ask("go again");
+    expect(sentModel(r)).toBe("sonnet");
+    expect(r.session.state.phase).toBe("ready");
   });
 });

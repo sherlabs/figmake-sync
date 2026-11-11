@@ -9,7 +9,7 @@ import { DesktopAppStateStore } from "../src/electron/appState.js";
 import { AuthRequiredError as SessionAuthError } from "../src/browser/session.js";
 import { AuthRequiredError as AutomationAuthError } from "../src/figma/adapter.js";
 
-const DEFAULTS = { lastLink: null, agent: null, agentConnected: false, workspace: null, projects: {}, links: {}, names: {}, updates: { enabled: true } };
+const DEFAULTS = { lastLink: null, agent: null, agentConnected: false, models: { claude: null, codex: null }, workspace: null, projects: {}, links: {}, names: {}, updates: { enabled: true } };
 
 describe("DesktopAppStateStore", () => {
   it("a state saved before the connected flag existed counts as not connected", async () => {
@@ -50,7 +50,7 @@ describe("DesktopAppStateStore", () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "appstate-"));
     const store = new DesktopAppStateStore(path.join(dir, "app-state.json"));
     await store.update({ lastLink: "https://www.figma.com/make/abc/x", projects: { abc: "/w/x" }, workspace: "/w" });
-    expect(await store.load()).toEqual({ lastLink: "https://www.figma.com/make/abc/x", agent: null, agentConnected: false, workspace: "/w", projects: { abc: "/w/x" }, links: {}, names: {}, updates: { enabled: true } });
+    expect(await store.load()).toEqual({ lastLink: "https://www.figma.com/make/abc/x", agent: null, agentConnected: false, models: { claude: null, codex: null }, workspace: "/w", projects: { abc: "/w/x" }, links: {}, names: {}, updates: { enabled: true } });
     await fs.remove(dir);
   });
 });

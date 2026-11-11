@@ -111,6 +111,7 @@ async function open(state: object, size: { width: number; height: number }, sche
       attachImage: (b: Uint8Array) => { const w = window as unknown as { __att?: number[]; __n?: number }; w.__n = (w.__n ?? 0) + 1; w.__att = [...(w.__att ?? []), b.length]; const ok = b[0] === 0x89; return Promise.resolve(ok ? { ok: true, attachment: { kind: "image", name: `00000000-0000-4000-8000-00000000000${w.__n}.png` } } : { ok: false, message: "That file isn't a picture we can use." }); },
       readAttachment: (n: string) => Promise.resolve(n.endsWith("9.png") ? null : "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="),
       discardAttachment: (n: string) => { const w = window as unknown as { __disc?: string[] }; w.__disc = [...(w.__disc ?? []), n]; return Promise.resolve(); }, undo: noop, send: noop, cancel: noop, retry: noop, setAgent: (a: string) => { const w = window as unknown as { __agent?: string[] }; w.__agent = [...(w.__agent ?? []), a]; return Promise.resolve(); },
+      setModel: (m: string | null) => { const w = window as unknown as { __model?: (string | null)[] }; w.__model = [...(w.__model ?? []), m]; return Promise.resolve(); },
       signInAgent: () => { const w = window as unknown as { __signin?: number }; w.__signin = (w.__signin ?? 0) + 1; return Promise.resolve(); },
       signOutAgent: () => Promise.resolve((window as unknown as { __signout?: unknown }).__signout ?? { ok: true }),
       chooseWorkspace: noop, openSupport: noop, signOutFigma: noop, setUpdates: noop,
@@ -1046,4 +1047,184 @@ describe("sync with Figma", () => {
       await page.context().close();
     });
   }
+  describe("model menu", () => {
+    const chip = (page: Page) => page.locator(".agent-chip");
+    const items = (page: Page) => page.locator(".model-menu [role^=menuitem]");
+    const models = (page: Page) => page.evaluate(() => (window as unknown as { __model?: (string | null)[] }).__model ?? []);
+
+    for (const scheme of ["light", "dark"] as const) {
+      it(`chip shows the AI, and the model when it is not Default; the menu lists the choices with a check (${scheme})`, async (ctx) => {
+        if (!browser) return ctx.skip();
+        const page = await open(READY, { width: 1180, height: 760 }, scheme);
+        expect((await chip(page).innerText()).trim()).toBe("Claude");
+        await chip(page).click();
+        await page.waitForSelector(".model-menu");
+        expect(await items(page).allInnerTexts()).toEqual(["Default", "Fable", "Opus", "Sonnet", "Haiku", "Other…", "Switch AI…"]);
+        expect(await page.locator('.model-menu [aria-checked="true"]').allInnerTexts()).toEqual(["Default"]);
+        const m = await rect(page, ".model-menu");
+        expect(m && m.x).toBeGreaterThanOrEqual(0);
+        expect(m && m.x + m.w).toBeLessThanOrEqual(1180);
+        expect(m && m.y + m.h).toBeLessThanOrEqual((await rect(page, ".agent-chip"))?.y ?? 0);
+        expect(await overflowX(page)).toBeLessThanOrEqual(0);
+        await page.context().close();
+
+        const chosen = await open({ ...READY, model: "sonnet" }, { width: 1180, height: 760 }, scheme);
+        expect((await chip(chosen).innerText()).trim()).toBe("Claude · Sonnet");
+        await chip(chosen).click();
+        expect(await chosen.locator('.model-menu [aria-checked="true"]').allInnerTexts()).toEqual(["Sonnet"]);
+        await chosen.context().close();
+      });
+    }
+
+    it("picking a model sends it, closes the menu and gives the focus back; Esc closes; the chip toggles", async (ctx) => {
+      if (!browser) return ctx.skip();
+      const page = await open(READY, { width: 1180, height: 760 }, "light");
+      await chip(page).click();
+      await items(page).nth(3).click();
+      expect(await models(page)).toEqual(["sonnet"]);
+      expect(await page.locator(".model-menu").count()).toBe(0);
+      expect(await page.evaluate(() => document.activeElement?.className)).toContain("agent-chip");
+      await chip(page).click();
+      await page.keyboard.press("Escape");
+      expect(await page.locator(".model-menu").count()).toBe(0);
+      await chip(page).click();
+      await chip(page).click();
+      expect(await page.locator(".model-menu").count()).toBe(0);
+      await chip(page).click();
+      await items(page).nth(0).click();
+      expect(await models(page)).toEqual(["sonnet", null]);
+      await page.context().close();
+    });
+
+    it("works from the keyboard: Enter opens on the current choice, arrows move, Enter picks", async (ctx) => {
+      if (!browser) return ctx.skip();
+      const page = await open({ ...READY, model: "opus" }, { width: 1180, height: 760 }, "light");
+      await chip(page).focus();
+      await page.keyboard.press("Enter");
+      expect(await page.evaluate(() => document.activeElement?.textContent)).toContain("Opus");
+      await page.keyboard.press("ArrowDown");
+      expect(await page.evaluate(() => document.activeElement?.textContent)).toContain("Sonnet");
+      await page.keyboard.press("ArrowUp");
+      await page.keyboard.press("ArrowUp");
+      await page.keyboard.press("ArrowUp");
+      expect(await page.evaluate(() => document.activeElement?.textContent)).toContain("Default");
+      await page.keyboard.press("End");
+      expect(await page.evaluate(() => document.activeElement?.textContent)).toContain("Switch AI");
+      await page.keyboard.press("ArrowDown");
+      expect(await page.evaluate(() => document.activeElement?.textContent)).toContain("Default");
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("Enter");
+      expect(await models(page)).toEqual(["haiku"]);
+      await page.context().close();
+    });
+
+    for (const scheme of ["light", "dark"] as const) {
+      it(`Other… asks for a name, explains a bad one, and only sends a valid one (${scheme})`, async (ctx) => {
+        if (!browser) return ctx.skip();
+        const page = await open(READY, { width: 1180, height: 760 }, scheme);
+        await chip(page).click();
+        await items(page).filter({ hasText: "Other…" }).click();
+        const input = page.locator(".model-menu input");
+        expect(await page.evaluate(() => document.activeElement?.tagName)).toBe("INPUT");
+        await page.keyboard.press("Enter");
+        expect(await page.locator(".model-menu .merr").innerText()).toBe("Type a model name.");
+        expect(await input.getAttribute("aria-invalid")).toBe("true");
+        for (const bad of ["a b", "--oss", "x; rm -rf /"]) {
+          await input.fill(bad);
+          expect(await page.locator(".model-menu .merr").isVisible()).toBe(false);
+          await page.keyboard.press("Enter");
+          expect(await page.locator(".model-menu .merr").innerText()).toMatch(/no spaces/u);
+        }
+        expect(await models(page)).toEqual([]);
+        const m = await rect(page, ".model-menu");
+        expect(m && m.x + m.w).toBeLessThanOrEqual(1180);
+        await input.fill("  my-model.v2 ");
+        await page.getByRole("button", { name: "Use model" }).click();
+        expect(await models(page)).toEqual(["my-model.v2"]);
+        expect(await page.locator(".model-menu").count()).toBe(0);
+        await page.context().close();
+      });
+    }
+
+    it("Cancel in the Other… form goes back to the list", async (ctx) => {
+      if (!browser) return ctx.skip();
+      const page = await open(READY, { width: 1180, height: 760 }, "light");
+      await chip(page).click();
+      await items(page).filter({ hasText: "Other…" }).click();
+      await page.getByRole("button", { name: "Cancel" }).click();
+      expect(await items(page).count()).toBe(7);
+      expect(await page.locator(".model-menu").count()).toBe(1);
+      await page.context().close();
+    });
+
+    it("ChatGPT lists Default and Other…, and shows a typed name with a check on Other…", async (ctx) => {
+      if (!browser) return ctx.skip();
+      const page = await open({ ...READY, agent: "codex", model: "gpt-6.1-sol" }, { width: 1180, height: 760 }, "dark");
+      expect((await chip(page).innerText()).trim()).toBe("ChatGPT · gpt-6.1-sol");
+      await chip(page).click();
+      expect(await items(page).count()).toBe(3);
+      expect((await items(page).nth(1).innerText()).replace(/\s+/gu, " ")).toBe("Other… gpt-6.1-sol");
+      expect(await page.locator('.model-menu [aria-checked="true"]').count()).toBe(1);
+      await page.context().close();
+    });
+
+    it("Switch AI… keeps the old behaviour (opens Settings)", async (ctx) => {
+      if (!browser) return ctx.skip();
+      const page = await open(READY, { width: 1180, height: 760 }, "light");
+      await chip(page).click();
+      await items(page).filter({ hasText: "Switch AI…" }).click();
+      await page.waitForSelector("dialog.sheet[open]");
+      expect(await page.locator("dialog.sheet h2").innerText()).toBe("Settings");
+      await page.context().close();
+    });
+
+    it("is disabled while the AI works, and says it applies from the next message", async (ctx) => {
+      if (!browser) return ctx.skip();
+      const page = await open({ ...READY, phase: "working" }, { width: 1180, height: 760 }, "light");
+      expect(await chip(page).isDisabled()).toBe(true);
+      expect(await chip(page).getAttribute("title")).toBe("Changes apply from your next message");
+      await page.evaluate(() => (window as unknown as { __push: (s: object) => void }).__push({ phase: "ready", projectName: "Checkout Flow", previewUrl: "http://localhost:5173/", agent: "claude", agentConnected: true, activeKey: "a", projects: [], changes: [], changeFiles: [], changeIds: [], processes: [], activity: { lines: [], stepStartedAt: null, startedAt: null }, updatesEnabled: true, canSend: false, canUndo: false, workspace: "w" }));
+      await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>(".agent-chip")?.disabled);
+      await page.context().close();
+    });
+
+    it("settings: a model picker with Other… that shows the same name field", async (ctx) => {
+      if (!browser) return ctx.skip();
+      const page = await open({ ...READY, model: "haiku" }, { width: 1180, height: 760 }, "light");
+      await page.keyboard.press("Control+,");
+      await page.waitForSelector("dialog.sheet[open]");
+      const select = page.locator("dialog.sheet select");
+      expect(await select.locator("option").allInnerTexts()).toEqual(["Default", "Fable", "Opus", "Sonnet", "Haiku", "Other…"]);
+      expect(await select.inputValue()).toBe("haiku");
+      await select.selectOption({ label: "Opus" });
+      expect(await models(page)).toEqual(["opus"]);
+      await select.selectOption({ label: "Other…" });
+      await page.locator("dialog.sheet .mform input").fill("bad name");
+      await page.getByRole("button", { name: "Use model" }).click();
+      expect(await page.locator("dialog.sheet .merr").innerText()).toMatch(/no spaces/u);
+      await page.locator("dialog.sheet .mform input").fill("my-model");
+      await page.getByRole("button", { name: "Use model" }).click();
+      expect(await models(page)).toEqual(["opus", "my-model"]);
+      expect(await page.locator("dialog.sheet .bd").evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+      await page.context().close();
+    });
+
+    it("an unavailable model shows one plain sentence and a Choose model button instead of Try again", async (ctx) => {
+      if (!browser) return ctx.skip();
+      const at = "2026-01-01T10:00:00.000Z";
+      const page = await open({ ...READY, phase: "error", code: "agent_model_unavailable", failedIn: "working", message: "That model isn't available on your account. Pick another.", model: "nope" }, { width: 1180, height: 760 }, "light");
+      await page.evaluate((c) => (window as unknown as { __pushChat: (v: object) => void }).__pushChat(c), { projectKey: "a", active: false, fresh: false, messages: [{ id: "u1", role: "user", text: "go", at, status: "done", parts: [] }, { id: "a1", role: "assistant", text: "", at, status: "error", parts: [], error: { message: "That model isn't available on your account. Pick another.", code: "agent_model_unavailable" } }] });
+      await page.waitForSelector(".errmsg");
+      expect(await page.locator(".errmsg").innerText()).toContain("That model isn't available on your account. Pick another.");
+      expect(await page.getByRole("button", { name: "Try again" }).count()).toBe(0);
+      await page.getByRole("button", { name: "Choose model" }).click();
+      expect(await items(page).count()).toBe(7);
+      await items(page).nth(2).click();
+      expect(await models(page)).toEqual(["opus"]);
+      await page.context().close();
+    });
+  });
 });

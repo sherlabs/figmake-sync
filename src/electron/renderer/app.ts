@@ -1,6 +1,8 @@
 import type { AgentChoice, ChatState, Phase, ProjectStatus, SessionState } from "../contracts.js";
 import type { UpdateState } from "../../updater/contracts.js";
 import { aiRowActions, type AiAction } from "./aiRow.js";
+import { MODEL_OPTIONS } from "../../app/modelIds.js";
+import { buildModelMenu, isCustomModel, modelForm, modelLocked } from "./modelMenu.js";
 import { createBrowserBar } from "./browserBar.js";
 import { createChatPanel } from "./chat.js";
 import { createFilesPanel } from "./files.js";
@@ -100,6 +102,7 @@ const chatPanel = createChatPanel({
   mod: MOD,
   confirmUndo: (index) => openSheet({ kind: "undo", index }),
   openSettings: () => openSheet({ kind: "settings" }),
+  openModelMenu: (anchor) => showModelMenu(anchor),
   report: () => state && report(state),
   collapse: () => setChatOpen(false),
   toast: (text) => toast(text),
@@ -153,6 +156,33 @@ function runAiAction(a: AiAction): void {
     const name = agentName(state?.agent ?? null);
     void api.signOutAgent().then((r) => toast(r.ok ? `Signed out of ${name}` : `Sign out in your terminal: ${r.command}`, r.ok ? 3200 : 9000)).catch(() => undefined);
   }
+}
+
+/** Settings: the model of the chosen AI, as a plain picker (a menu can't open over a dialog). "Other…" shows the name field. */
+let modelOtherOpen = false;
+function modelRows(s: SessionState): HTMLElement[] {
+  const agent = s.agent;
+  if (!agent) return [];
+  const model = s.model ?? null;
+  const locked = modelLocked(s.phase, chatState.active);
+  const custom = isCustomModel(agent, model);
+  const OTHER = "\u0000other";
+  const select = h("select", { class: "field msel", "aria-label": `${agentName(agent)} model`, disabled: locked, onchange: (e: Event) => {
+    const v = (e.currentTarget as HTMLSelectElement).value;
+    if (v === OTHER) { modelOtherOpen = true; renderSheets(s, true); return; }
+    modelOtherOpen = false;
+    void api.setModel(v === "" ? null : v);
+  } },
+  ...MODEL_OPTIONS[agent].map((o) => h("option", { value: o.id ?? "" }, o.label)),
+  custom && model ? h("option", { value: model }, model) : null,
+  h("option", { value: OTHER }, "Other…"));
+  select.value = modelOtherOpen ? OTHER : model ?? "";
+  const rows = [h("div", { class: "row" }, h("div", { class: "l" }, h("b", {}, "AI model"), h("span", {}, locked ? "Changes apply from your next message" : `Used by ${agentName(agent)}. Default follows your own setup.`)), h("div", { class: "r" }, select))];
+  if (modelOtherOpen && !locked) {
+    const form = modelForm({ ...(custom && model ? { initial: model } : {}), onApply: (m) => { modelOtherOpen = false; void api.setModel(m); }, onCancel: () => { modelOtherOpen = false; renderSheets(s, true); } });
+    rows.push(h("div", { class: "row mrow" }, form.el));
+  }
+  return rows;
 }
 
 // ================= sidebar =================
@@ -209,14 +239,43 @@ function showSyncMenu(): void {
 function askReplace(): void {
   void api.localChangeCount().catch(() => 0).then((count) => openSheet({ kind: "sync-replace", count }));
 }
+/** The model menu: opens above the chat's AI chip (or the "Choose model" button) and gives the focus back when it closes. */
+let menuReturn: HTMLElement | null = null;
+function showModelMenu(anchor: HTMLElement): void {
+  if (menuOpen) return closeMenu();
+  const s = state;
+  if (!s?.agent) return;
+  menuOpen = true;
+  menuReturn = anchor;
+  const built = buildModelMenu({
+    agent: s.agent,
+    agentName: agentName(s.agent),
+    model: s.model ?? null,
+    locked: modelLocked(s.phase, chatState.active),
+    onPick: (model) => { closeMenu(); void api.setModel(model); },
+    onSwitchAI: () => { closeMenu(); openSheet({ kind: "settings" }); },
+    onClose: closeMenu,
+  });
+  const r = anchor.getBoundingClientRect();
+  built.el.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - 252))}px`;
+  built.el.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
+  menuHost.replaceChildren(built.el);
+  built.focus();
+  syncPreview();
+}
 function closeMenu(): void {
   if (!menuOpen) return;
   menuOpen = false;
+  const back = menuReturn;
+  menuReturn = null;
+  const hadFocus = menuHost.contains(document.activeElement);
   menuHost.replaceChildren();
+  if (hadFocus && back?.isConnected && !(back as HTMLButtonElement).disabled) back.focus();
   syncPreview();
 }
 document.addEventListener("pointerdown", (e) => {
-  if (menuOpen && !(e.target as Element).closest(".menu")) closeMenu();
+  const t = e.target as Element;
+  if (menuOpen && !t.closest(".menu") && !(menuReturn && menuReturn.contains(t))) closeMenu();
 });
 
 // ================= toolbar / banner / status =================
@@ -659,6 +718,7 @@ function buildSheet(kind: string, s: SessionState): HTMLDialogElement {
             "div",
             { class: "setrows" },
             h("div", { class: "row" }, h("div", { class: "l" }, h("b", {}, "AI helper"), h("span", { class: s.agent && !s.agentConnected ? "bad" : "" }, aiStatus)), h("div", { class: "r" }, ...aiButtons)),
+            ...modelRows(s),
             h("div", { class: "row" }, h("div", { class: "l" }, h("b", {}, "Projects folder"), h("span", { class: s.workspaceError ? "bad" : "" }, s.workspaceError ?? (s.workspaceSynced ? `${s.workspacePath ?? s.workspace} – synced by cloud storage, which can make projects slow. Pick a folder outside Documents/Desktop/iCloud/OneDrive.` : s.workspacePath ?? s.workspace))), h("div", { class: "r" }, btn("Move…", () => void api.chooseWorkspace()))),
             filesNotSentRow(),
             h("div", { class: "row" }, h("div", { class: "l" }, h("b", {}, "Figma account"), h("span", {}, "Sign out on this Mac")), h("div", { class: "r" }, btn("Sign out of Figma", () => { void api.signOutFigma(); toast("Signed out of Figma"); }))),
@@ -764,9 +824,10 @@ function phaseSheet(s: SessionState): string | null {
   return null;
 }
 
-function renderSheets(s: SessionState): void {
+function renderSheets(s: SessionState, force = false): void {
+  if (force) shownSheet = "\u0000";
   const kind = phaseSheet(s) ?? userSheet?.kind ?? null;
-  const sig = kind === null ? "" : [kind, kind === "settings" ? [s.agent, s.agentConnected, s.workspace, s.workspaceError, s.updatesEnabled, s.phase, s.activeKey].join("|") : "", kind === "figma-signin" ? Boolean(s.message) : "", kind === "conflict" ? (s.conflictFiles ?? []).join(",") : "", kind === "merge" ? (s.mergeConflicts ?? []).join(",") : "", kind === "sync-replace" ? (userSheet as { count: number }).count : "", kind === "ai-signin" || kind === "ai-setup" ? s.agent : "", kind === "remove" || kind === "rename" ? (userSheet as { key: string }).key : "", kind === "undo" ? (userSheet as { index: number }).index : "", kind === "confirm" ? (userSheet as { action: string }).action : ""].join("#");
+  const sig = kind === null ? "" : [kind, kind === "settings" ? [s.agent, s.model, s.agentConnected, s.workspace, s.workspaceError, s.updatesEnabled, s.phase, s.activeKey].join("|") : "", kind === "figma-signin" ? Boolean(s.message) : "", kind === "conflict" ? (s.conflictFiles ?? []).join(",") : "", kind === "merge" ? (s.mergeConflicts ?? []).join(",") : "", kind === "sync-replace" ? (userSheet as { count: number }).count : "", kind === "ai-signin" || kind === "ai-setup" ? s.agent : "", kind === "remove" || kind === "rename" ? (userSheet as { key: string }).key : "", kind === "undo" ? (userSheet as { index: number }).index : "", kind === "confirm" ? (userSheet as { action: string }).action : ""].join("#");
   if (sig === shownSheet) return syncPreview();
   shownSheet = sig;
   const previous = dialog;

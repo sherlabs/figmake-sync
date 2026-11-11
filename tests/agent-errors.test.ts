@@ -41,6 +41,14 @@ describe("classifyAgentFailure", () => {
     ["You've hit your usage limit", true, "agent_limit"],
     ["rate limit reached", null, "agent_limit"],
     ["status 429", null, "agent_limit"],
+    ["There's an issue with the selected model (x). It may not exist or you may not have access to it. Run --model to pick a different model.", true, "agent_model_unavailable"],
+    ["The 'x' model is not supported when using Codex with a ChatGPT account.", true, "agent_model_unavailable"],
+    ["model_not_found", null, "agent_model_unavailable"],
+    ["The model `gpt-9` does not exist", true, "agent_model_unavailable"],
+    ["invalid model: x", null, "agent_model_unavailable"],
+    ["Model is not available for your plan", null, "agent_model_unavailable"],
+    ["rate limit on this model", null, "agent_limit"],
+    ["401 unauthorized: model", true, "agent_signin_required"],
     ["quota exceeded", null, "agent_limit"],
     ["getaddrinfo ENOTFOUND api.openai.com", true, "agent_unreachable"],
     ["connect ECONNREFUSED 1.2.3.4:443", null, "agent_unreachable"],
@@ -57,7 +65,7 @@ describe("classifyAgentFailure", () => {
   });
 
   it("every code has a stable name, a report title and one plain sentence", () => {
-    for (const c of ["agent_signin_required", "agent_limit", "agent_unreachable", "agent_failed"] as const) {
+    for (const c of ["agent_signin_required", "agent_limit", "agent_unreachable", "agent_failed", "agent_model_unavailable"] as const) {
       expect(ERROR_CODES).toContain(c);
       expect(issueTitle(c)).toMatch(new RegExp(`^\\[${c}\\] `, "u"));
       expect(agentFailureSentence(c, "ChatGPT")).toMatch(/^[^\n]+\.$/u);
@@ -65,6 +73,7 @@ describe("classifyAgentFailure", () => {
     expect(agentFailureSentence("agent_signin_required", "ChatGPT")).toBe("ChatGPT isn't signed in.");
     expect(agentFailureSentence("agent_limit", "ChatGPT")).toBe("ChatGPT's usage limit was reached. Try again later.");
     expect(agentFailureSentence("agent_unreachable", "ChatGPT")).toBe("Couldn't reach ChatGPT. Check your connection.");
+    expect(agentFailureSentence("agent_model_unavailable", "ChatGPT")).toBe("That model isn't available on your account. Pick another.");
     expect(agentFailureSentence("agent_failed", "ChatGPT")).toBe("ChatGPT stopped with a problem.");
   });
 

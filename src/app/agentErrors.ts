@@ -2,10 +2,13 @@ import type { ErrorCode } from "../electron/contracts.js";
 import { pushLines } from "./activity.js";
 
 /** What went wrong in an AI run, in the four ways the person can act on. */
-export type AgentFailureCode = Extract<ErrorCode, "agent_signin_required" | "agent_limit" | "agent_unreachable" | "agent_failed">;
+export type AgentFailureCode = Extract<ErrorCode, "agent_signin_required" | "agent_limit" | "agent_model_unavailable" | "agent_unreachable" | "agent_failed">;
 
 const AUTH = /\b401\b|not (?:logged|signed) in|\blog in\b|\bsign in\b|login required|token (?:has )?expired|expired token|refresh token|unauthori[sz]ed|invalid api key/iu;
 const LIMIT = /usage limit|rate limit|\b429\b|quota/iu;
+// Real messages: Claude "There's an issue with the selected model (x). It may not exist or you may not have access to it."
+// and Codex "The 'x' model is not supported when using Codex with a ChatGPT account."
+const MODEL = /issue with the selected model|model[^.\n]{0,80}(?:not found|does not exist|doesn't exist|not available|unavailable|not supported|no access|not have access|invalid)|(?:invalid|unknown|unsupported|unrecognized) model|model_not_found/iu;
 const NETWORK = /ENOTFOUND|ECONN|EAI_AGAIN|network/iu;
 const SOCKET = /websocket/iu;
 
@@ -17,6 +20,7 @@ const SOCKET = /websocket/iu;
 export function classifyAgentFailure(raw: string, signedIn: boolean | null): AgentFailureCode {
   if (AUTH.test(raw)) return "agent_signin_required";
   if (LIMIT.test(raw)) return "agent_limit";
+  if (MODEL.test(raw)) return "agent_model_unavailable";
   if (signedIn === false) return "agent_signin_required";
   if (NETWORK.test(raw)) return "agent_unreachable";
   if (SOCKET.test(raw) && signedIn === true) return "agent_unreachable";
@@ -30,6 +34,8 @@ export function agentFailureSentence(code: AgentFailureCode, name: string): stri
       return `${name} isn't signed in.`;
     case "agent_limit":
       return `${name}'s usage limit was reached. Try again later.`;
+    case "agent_model_unavailable":
+      return "That model isn't available on your account. Pick another.";
     case "agent_unreachable":
       return `Couldn't reach ${name}. Check your connection.`;
     default:

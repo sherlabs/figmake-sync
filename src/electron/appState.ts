@@ -3,11 +3,19 @@ import path from "node:path";
 import fs from "fs-extra";
 import { z } from "zod";
 
+import { MODEL_ID } from "../app/modelIds.js";
 import type { DesktopAppState } from "./contracts.js";
+
+const modelField = z.string().regex(MODEL_ID).nullable().catch(null).default(null);
 
 const desktopAppStateSchema = z.object({
   lastLink: z.string().nullable().default(null),
   agent: z.enum(["claude", "codex"]).nullable().default(null),
+  /** Per AI, the model the person chose (null = its own default). A malformed or unsafe value falls back to the default, alone. */
+  models: z
+    .object({ claude: modelField, codex: modelField })
+    .catch({ claude: null, codex: null })
+    .default({ claude: null, codex: null }),
   /** Absent in states saved by older versions, which therefore count as "not connected yet". */
   agentConnected: z.boolean().catch(false).default(false),
   workspace: z.string().nullable().default(null),

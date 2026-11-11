@@ -1,4 +1,5 @@
 import { MAX_IMAGES, MAX_IMAGE_BYTES, IMAGE_NAME } from "../app/attachmentKinds.js";
+import { MODEL_ID } from "../app/modelIds.js";
 import { z } from "zod";
 
 /* Arguments the window may send for the Files panel. Anything that does not parse is ignored by main. */
@@ -27,3 +28,6 @@ export const attachmentNameArg = z.string().regex(IMAGE_NAME);
 /** Everything a message may carry besides text; one member per kind. */
 export const attachmentArg = z.discriminatedUnion("kind", [z.object({ kind: z.literal("image"), name: attachmentNameArg })]);
 export const attachmentsArg = z.array(attachmentArg).max(MAX_IMAGES);
+
+/** A model name, or null for the AI's own default. The same rule is checked again in the session and in the adapters. */
+export const modelArg = z.string().regex(MODEL_ID).nullable();
