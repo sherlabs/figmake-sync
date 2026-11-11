@@ -1,7 +1,7 @@
 {
   "name": "figmake-sync",
   "license": "MIT",
-  "version": "0.1.40",
+  "version": "0.1.41",
   "description": "Local-first macOS sync agent for Figma Make projects using an authenticated local browser session.",
   "author": "figmake",
   "type": "module",
