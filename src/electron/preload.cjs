@@ -30,6 +30,8 @@ contextBridge.exposeInMainWorld("figmake", {
   cancel: call("figmake:cancel"),
   retry: call("figmake:retry"),
   setAgent: call("figmake:set-agent"),
+  signInAgent: call("figmake:sign-in-agent"),
+  signOutAgent: call("figmake:sign-out-agent"),
   chooseWorkspace: call("figmake:choose-workspace"),
   signOutFigma: call("figmake:sign-out"),
   reportIssue: call("figmake:report-issue"),

@@ -10,7 +10,7 @@ const read = (name: string): string => fs.readFileSync(path.join(dir, name), "ut
 
 describe("renderer: static guarantees", () => {
   const html = read("index.html");
-  const FILES = ["monaco.ts", "review.ts", "sync.ts", "app.ts", "dom.ts", "chat.ts", "attach.ts", "diff.ts", "files.ts", "output.ts", "outputTab.ts", "browserBar.ts"];
+  const FILES = ["monaco.ts", "review.ts", "sync.ts", "app.ts", "dom.ts", "chat.ts", "attach.ts", "diff.ts", "files.ts", "output.ts", "outputTab.ts", "browserBar.ts", "aiRow.ts"];
   const code = FILES.map(read).join("\n");
 
   it("keeps the strict CSP: only what Monaco needs is loosened, nothing remote, same text in the page and in main", () => {

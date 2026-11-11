@@ -65,6 +65,10 @@ export interface AgentAdapter {
   readonly manualLogin?: string;
   /** argv for the CLI's own browser sign-in (opens the user's browser itself). */
   loginArgs?(): string[];
+  /** argv that removes the stored sign-in. */
+  logoutArgs?(): string[];
+  /** The same, as a terminal command, for when the app cannot run it. */
+  readonly manualLogout?: string;
   versionArgs(): string[];
   parseVersion(stdout: string): string | null;
   /** Args for a sign-in status probe, or null when the CLI has none. */

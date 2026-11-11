@@ -110,8 +110,11 @@ async function open(state: object, size: { width: number; height: number }, sche
       ask: (t: string, att: unknown[]) => { const w = window as unknown as { __asked?: unknown[] }; w.__asked = [...(w.__asked ?? []), { t, att }]; return Promise.resolve(); },
       attachImage: (b: Uint8Array) => { const w = window as unknown as { __att?: number[]; __n?: number }; w.__n = (w.__n ?? 0) + 1; w.__att = [...(w.__att ?? []), b.length]; const ok = b[0] === 0x89; return Promise.resolve(ok ? { ok: true, attachment: { kind: "image", name: `00000000-0000-4000-8000-00000000000${w.__n}.png` } } : { ok: false, message: "That file isn't a picture we can use." }); },
       readAttachment: (n: string) => Promise.resolve(n.endsWith("9.png") ? null : "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="),
-      discardAttachment: (n: string) => { const w = window as unknown as { __disc?: string[] }; w.__disc = [...(w.__disc ?? []), n]; return Promise.resolve(); }, undo: noop, send: noop, cancel: noop, retry: noop, setAgent: noop,
-      chooseWorkspace: noop, openSupport: noop, signOutFigma: noop, setUpdates: noop, switchProject: noop, removeProject: noop, reportIssue: noop, installUpdate: noop,
+      discardAttachment: (n: string) => { const w = window as unknown as { __disc?: string[] }; w.__disc = [...(w.__disc ?? []), n]; return Promise.resolve(); }, undo: noop, send: noop, cancel: noop, retry: noop, setAgent: (a: string) => { const w = window as unknown as { __agent?: string[] }; w.__agent = [...(w.__agent ?? []), a]; return Promise.resolve(); },
+      signInAgent: () => { const w = window as unknown as { __signin?: number }; w.__signin = (w.__signin ?? 0) + 1; return Promise.resolve(); },
+      signOutAgent: () => Promise.resolve((window as unknown as { __signout?: unknown }).__signout ?? { ok: true }),
+      chooseWorkspace: noop, openSupport: noop, signOutFigma: noop, setUpdates: noop,
+      switchProject: (k: string) => { const w = window as unknown as { __switched?: string[]; __switchResult?: unknown }; w.__switched = [...(w.__switched ?? []), k]; return Promise.resolve(w.__switchResult ?? { ok: true }); }, removeProject: noop, reportIssue: noop, installUpdate: noop,
     };
   }, { s: state, tree: TREE, cart: CART, tab, upd: update });
   await page.goto(base);
@@ -331,7 +334,47 @@ describe("renderer layout", () => {
     await page.keyboard.press("Control+,");
     await page.waitForSelector("dialog.sheet[open]");
     const ai = page.locator("dialog.sheet .row", { hasText: "AI helper" });
-    expect(await ai.innerText()).toMatch(/Claude · Not connected[\s\S]*Connect[\s\S]*Switch to ChatGPT/u);
+    expect(await ai.innerText()).toMatch(/Claude · Not connected[\s\S]*Sign in[\s\S]*Switch to ChatGPT[\s\S]*Sign out/u);
+    await page.context().close();
+  });
+
+  it("settings: a connected AI still offers Sign in again, Switch and Sign out; Sign out says what to run when the app can't", async (ctx) => {
+    if (!browser) return ctx.skip();
+    const page = await open(READY, { width: 1180, height: 760 }, "light");
+    await page.keyboard.press("Control+,");
+    await page.waitForSelector("dialog.sheet[open]");
+    const ai = page.locator("dialog.sheet .row", { hasText: "AI helper" });
+    expect(await ai.innerText()).toMatch(/Claude · Connected[\s\S]*Sign in again[\s\S]*Switch to ChatGPT[\s\S]*Sign out/u);
+    await ai.getByRole("button", { name: "Sign in again" }).click();
+    expect(await page.evaluate(() => (window as unknown as { __signin?: number }).__signin)).toBe(1);
+    await page.evaluate(() => { (window as unknown as { __signout: unknown }).__signout = { ok: false, command: "claude auth logout" }; });
+    await ai.getByRole("button", { name: "Sign out" }).click();
+    await page.waitForSelector('.toast:has-text("Sign out in your terminal: claude auth logout")');
+    await page.context().close();
+  });
+
+  it("a project row that can't be opened right now says why instead of doing nothing", async (ctx) => {
+    if (!browser) return ctx.skip();
+    const two = { ...READY, projects: [...READY.projects, { key: "b", name: "Other App", status: "synced", syncedAt: null }] };
+    const page = await open(two, { width: 1180, height: 760 }, "light");
+    await page.evaluate(() => { (window as unknown as { __switchResult: unknown }).__switchResult = { ok: false, message: "Stop the AI first" }; });
+    await page.click('button.prow:has-text("Other App")');
+    await page.waitForSelector('.toast:has-text("Stop the AI first")');
+    expect(await page.evaluate(() => (window as unknown as { __switched?: string[] }).__switched)).toEqual(["b"]);
+    await page.context().close();
+  });
+
+  it("with the Add project sheet open, clicking a project row behind it closes the sheet and opens that project", async (ctx) => {
+    if (!browser) return ctx.skip();
+    const two = { ...READY, projects: [...READY.projects, { key: "b", name: "Other App", status: "synced", syncedAt: null }] };
+    const page = await open(two, { width: 1180, height: 760 }, "light");
+    await page.keyboard.press("Control+n");
+    await page.waitForSelector("dialog.sheet[open]");
+    const row = await page.locator('button.prow:has-text("Other App")').boundingBox();
+    expect(row).not.toBeNull();
+    await page.mouse.click((row?.x ?? 0) + (row?.width ?? 0) / 2, (row?.y ?? 0) + (row?.height ?? 0) / 2);
+    await page.waitForFunction(() => !document.querySelector("dialog.sheet[open]"));
+    expect(await page.evaluate(() => (window as unknown as { __switched?: string[] }).__switched)).toEqual(["b"]);
     await page.context().close();
   });
 

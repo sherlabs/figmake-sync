@@ -130,6 +130,10 @@ export class HarnessService {
     return this.cli.login(id, signal);
   }
 
+  logoutAgent(id: AgentId) {
+    return this.cli.logout(id);
+  }
+
   /** Full sign-in URL for the main process to open (re-validated against the host allowlist). */
   pendingLoginUrl(id: AgentId): string | null {
     return this.cli.pendingLoginUrl(id);
@@ -145,11 +149,12 @@ export class HarnessService {
   }
 
   /** install if missing -> sign in if needed -> ready. Emits agent-ensure events; never throws. */
-  ensureAgentReady(id: AgentId, signal?: AbortSignal) {
+  ensureAgentReady(id: AgentId, signal?: AbortSignal, opts?: { forceSignin?: boolean }) {
     return ensureAgentReady(
       { ...this.nodePort(), detectAgent: (a) => this.detectAgent(a), installAgentCli: (a, s) => this.installAgentCli(a, s), loginAgent: (a, s) => this.loginAgent(a, s) },
       id,
       signal,
+      opts,
     );
   }
 

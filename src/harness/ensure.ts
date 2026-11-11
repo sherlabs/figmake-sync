@@ -33,7 +33,7 @@ export interface AgentEnsurePort {
 }
 
 /** installed -> signed in. Missing CLI is installed privately; signed-out CLI runs its own browser sign-in. */
-export async function ensureAgentReady(port: AgentEnsurePort, id: AgentId, signal?: AbortSignal): Promise<EnsureAgentResult> {
+export async function ensureAgentReady(port: AgentEnsurePort, id: AgentId, signal?: AbortSignal, opts: { forceSignin?: boolean } = {}): Promise<EnsureAgentResult> {
   const say = (stage: AgentEnsureStage, message: string): void => port.emit({ kind: "agent-ensure", agent: id, stage, message });
   const fail = (code: Extract<EnsureAgentResult, { ok: false }>["code"], message: string, agent: AgentInfo | null): EnsureAgentResult => {
     say("failed", message);
@@ -57,7 +57,9 @@ export async function ensureAgentReady(port: AgentEnsurePort, id: AgentId, signa
       if (!info.installed) return fail("install_failed", `${info.displayName} was installed but couldn't be found.`, info);
     }
 
-    if (info.signedIn === false) {
+    // forceSignin: a run just failed with an auth error although the probe still says signed in (a revoked or expired token).
+    const forced = opts.forceSignin === true;
+    if (info.signedIn === false || forced) {
       say("needs-browser-signin", "Finish signing in in your browser");
       const login = await port.loginAgent(id, signal);
       if (!login.ok) return fail(login.code === "cancelled" ? "cancelled" : "signin_failed", login.message, info);

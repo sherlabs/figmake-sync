@@ -11,7 +11,7 @@ import { REMOTE_DIVERGED_PROMPT, isAllowedLoginUrl } from "../harness/index.js";
 import type { HarnessEvent, HarnessService } from "../harness/index.js";
 import type { DevStatus } from "../harness/types.js";
 import { reapStaleDevServer } from "../harness/devserver.js";
-import type { AgentChoice, AttachResult, Attachment, ChangedFile, ChatFile, ChatMessage, ChatState, DesktopAppState, ErrorCode, FileView, FolderListing, Phase, ProcessId, ProjectSummary, ReviewDiff, ReviewItem, SendProgress, SessionState } from "../electron/contracts.js";
+import type { AgentChoice, AttachResult, Attachment, ChangedFile, ChatFile, ChatMessage, ChatState, DesktopAppState, ErrorCode, FileView, FolderListing, Phase, ProcessId, ProjectSummary, ReviewDiff, ReviewItem, SendProgress, SessionState, SignOutAgentResult, SwitchResult } from "../electron/contracts.js";
 import { isAuthRequiredError } from "../electron/authState.js";
 import { DEFAULT_IMAGE_PROMPT, MAX_IMAGES } from "./attachmentKinds.js";
 import { AttachmentError, attachmentPath, imageExists, pruneImages, readImageDataUrl, removeAllImages, removeImage, saveImage } from "./attachments.js";
@@ -20,6 +20,7 @@ import type { ChatStore } from "./chatStore.js";
 import { describeFolders, listChangedFiles } from "./changes.js";
 import { listFolder, readFileView } from "./fileTree.js";
 import { MAX_ACTIVITY_LINES, MAX_PROCESS_LINES, pushLines } from "./activity.js";
+import { agentDetails, agentFailureSentence, classifyAgentFailure } from "./agentErrors.js";
 import { buildProcesses } from "./processes.js";
 import { FIGMA_MAKE_GUIDE } from "./figmaMakeGuide.js";
 import { defaultWorkspaceDir, isCloudSynced, parseFigmaLink, resolveProjectFolder, validateWorkspace, type FigmaLink, type WorkspaceGuard } from "./workspace.js";
@@ -42,7 +43,8 @@ export const AGENT_NAMES: Record<AgentChoice, string> = { claude: "Claude", code
 export interface SessionDeps {
   sync: Pick<FigmakeSyncService, "init" | "pull" | "push" | "status" | "auth"> &
     Partial<Pick<FigmakeSyncService, "reviewChanges" | "fileDiff" | "setIgnored" | "listIgnored">>;
-  harness: Pick<HarnessService, "ensureProjectRunning" | "ensureAgentReady" | "startRun" | "pendingLoginUrl" | "stopDevExcept" | "stopDev" | "updateSettings">;
+  harness: Pick<HarnessService, "ensureProjectRunning" | "ensureAgentReady" | "startRun" | "pendingLoginUrl" | "stopDevExcept" | "stopDev" | "updateSettings"> &
+    Partial<Pick<HarnessService, "detectAgent" | "logoutAgent">>;
   appState: { load(): Promise<DesktopAppState>; update(patch: Partial<DesktopAppState>): Promise<DesktopAppState> };
   /** Per-project transcripts (userData/chats). */
   chatStore: Pick<ChatStore, "load" | "save" | "archive" | "remove"> & Partial<Pick<ChatStore, "attachmentNames">>;
@@ -140,6 +142,9 @@ function cleanProjectName(raw: unknown): string | null {
 
 const MAX_SEND_DONE = 500;
 
+/** How long a successful "installed and signed in" check is trusted before the next run asks the CLI again. */
+export const AGENT_READY_TTL_MS = 60_000;
+
 const BUSY_PHASES: readonly Phase[] = ["connecting", "preparing", "working", "sending", "conflict", "syncing", "resolving"];
 
 const START: SessionState = {
@@ -171,6 +176,13 @@ export class Session {
   private workspaceDir: string;
   private stack: Entry[] = [];
   private agentReady: AgentChoice | null = null;
+  private agentReadyAt = 0;
+  /** The last run failed with an auth error although the probe said signed in: the next check signs in for real. */
+  private forceSignin = false;
+  /** Settles when the job holding the lock ends (so a switch can wait for a cancelled setup to wind down). */
+  private running: Promise<unknown> | null = null;
+  /** The job holding the lock is opening a project (adding or reopening): the one job a project switch may cancel. */
+  private opening = false;
   /** The project to reopen once the AI helper is connected (first run, or an AI that was never confirmed). */
   private pendingReopen: { link: string; info: NonNullable<ReturnType<typeof parseFigmaLink>> } | null = null;
   private resume: (() => Promise<void>) | null = null;
@@ -419,7 +431,7 @@ export class Session {
       const end = (status: "done" | "stopped" | "error", extra: Partial<ChatMessage> & { resultText?: string } = {}): void => this.endTurn(mine.assistant, status, extra);
       try {
         this.set({ phase: "preparing", message: undefined });
-        if (this.agentReady !== agent && !(await this.ensureAgent(agent, signal))) {
+        if (!this.agentFresh(agent) && !(await this.ensureAgent(agent, signal))) {
           if (this.s.phase === "error") this.resume = () => this.ask(typedText, mine.user);
           if (this.s.phase === "error") return end("error", { error: { message: this.s.message ?? "Something went wrong.", code: this.s.code ?? "unknown" } });
           return end("stopped");
@@ -436,10 +448,9 @@ export class Session {
             end("stopped");
             return this.ready();
           }
-          const sentence = plainError(new Error(outcome.error ?? ""), "agent", agent);
-          const code = errorCode(new Error(outcome.error ?? ""), "agent");
-          end("error", { error: { message: sentence, code } });
-          return this.fail(sentence, () => this.ask(typedText, mine.user), code);
+          const failure = await this.agentFailure(agent, outcome.error ?? "");
+          end("error", { error: failure.error });
+          return this.fail(failure.error.message, () => this.ask(typedText, mine.user), failure.error.code);
         }
         const sentence = parseChange(outcome.resultText) ?? "Made a change";
         const files = await this.changedFiles(root, outcome.backupDir);
@@ -458,12 +469,36 @@ export class Session {
           return this.ready();
         }
         this.deps.log("ask failed", error);
-        const sentence = plainError(error, "agent", agent);
-        const code = errorCode(error, "agent");
-        end("error", { error: { message: sentence, code } });
-        this.fail(sentence, () => this.ask(typedText, mine.user), code);
+        const failure = await this.agentFailure(agent, error instanceof Error ? error.message : String(error));
+        end("error", { error: failure.error });
+        this.fail(failure.error.message, () => this.ask(typedText, mine.user), failure.error.code);
       }
     });
+  }
+
+  /** True while the last "installed and signed in" check is recent enough to skip asking the CLI again. */
+  private agentFresh(agent: AgentChoice): boolean {
+    return this.agentReady === agent && Date.now() - this.agentReadyAt < AGENT_READY_TTL_MS;
+  }
+
+  /**
+   * Turns a failed run into one plain sentence, a stable code and the last lines of the AI's output.
+   * An auth failure also marks the AI as not connected, so the next run signs in again instead of failing the same way.
+   */
+  private async agentFailure(agent: AgentChoice, raw: string): Promise<{ error: NonNullable<ChatMessage["error"]> }> {
+    const signedIn = await this.deps.harness.detectAgent?.(agent).then((info) => info.signedIn, () => null) ?? null;
+    const code = classifyAgentFailure(raw, signedIn);
+    // Whatever went wrong, the next run re-checks the sign-in instead of trusting the earlier answer.
+    this.agentReady = null;
+    if (code === "agent_signin_required") {
+      this.forceSignin = signedIn !== false;
+      if (this.s.agentConnected) {
+        this.set({ agentConnected: false });
+        await this.deps.appState.update({ agentConnected: false }).catch((e: unknown) => this.deps.log("save failed", e));
+      }
+    }
+    const details = code === "agent_signin_required" || code === "agent_limit" ? [] : agentDetails(raw, this.home());
+    return { error: { message: agentFailureSentence(code, AGENT_NAMES[agent]), code, ...(details.length > 0 ? { details } : {}) } };
   }
 
   /** Adds the person's message and an empty assistant message that the agent's events fill in. */
@@ -662,10 +697,37 @@ export class Session {
     const connected = agent === this.s.agent && this.s.agentConnected;
     await this.deps.appState.update({ agent, agentConnected: connected });
     if (this.agentReady !== agent) this.agentReady = null;
+    this.forceSignin = false;
     this.set({ agent, agentConnected: connected });
     if (this.busy) return;
     // Choosing (or switching to) an AI connects it right away: install, then sign in.
     if (this.s.phase === "needs-ai-choice" || (!connected && (this.s.phase === "ready" || this.s.phase === "start"))) await this.prepareAgent();
+  }
+
+  /** Settings: sign in to the chosen AI again, even though it looks connected. Stays on the same screen afterwards. */
+  async signInAgent(): Promise<void> {
+    const agent = this.s.agent;
+    if (!agent || this.isBusy() || (this.s.phase !== "ready" && this.s.phase !== "start")) return;
+    this.forceSignin = true;
+    this.agentReady = null;
+    await this.exclusive(async (signal) => {
+      this.set({ phase: "preparing" });
+      if (await this.ensureAgent(agent, signal)) await this.ready();
+    });
+  }
+
+  /** Settings: signs the chosen AI out. Reports the terminal command when the app could not do it. */
+  async signOutAgent(): Promise<SignOutAgentResult> {
+    const agent = this.s.agent;
+    if (!agent) return { ok: true };
+    const manual = agent === "codex" ? "codex logout" : "claude auth logout";
+    const result = this.deps.harness.logoutAgent ? await this.deps.harness.logoutAgent(agent).catch((): SignOutAgentResult => ({ ok: false, command: manual })) : { ok: false as const, command: manual };
+    if (!result.ok) return result;
+    this.agentReady = null;
+    this.forceSignin = false;
+    await this.deps.appState.update({ agentConnected: false });
+    this.set({ agentConnected: false });
+    return { ok: true };
   }
 
   async setUpdates(enabled: boolean): Promise<void> {
@@ -1133,6 +1195,7 @@ export class Session {
 
   private async openLocked(url: string, info: FigmaLink, restore: boolean): Promise<void> {
     await this.exclusive(async (signal) => {
+      this.opening = true;
       if (this.activeKey) {
         this.stacks.set(this.activeKey, this.stack);
         if (this.activeKey !== info.key) await this.saveChat();
@@ -1193,11 +1256,28 @@ export class Session {
   }
 
   /** Opens another project from the list without pulling again. */
-  async switchProject(key: string): Promise<void> {
+  async switchProject(key: string): Promise<SwitchResult> {
     const link = this.links[key];
     const info = link ? parseFigmaLink(link) : null;
-    if (this.isBusy() || !link || !info || key === this.activeKey) return;
+    if (!link || !info || key === this.activeKey) return { ok: true };
+    if (this.isBusy()) {
+      // Setting up a project (adding one, or reopening) is the one job a click on another project may stop.
+      if (this.opening && this.ctl) {
+        this.ctl.abort();
+        await this.running?.catch(() => undefined);
+        // Nothing of the half-set-up project keeps running; it stays in the list and finishes setting up when opened again.
+        await this.deps.harness.stopDevExcept(null, true).catch(() => undefined);
+        if (this.isBusy()) return { ok: false, message: "Wait a moment" };
+      } else if (this.turnId !== null) {
+        return { ok: false, message: "Stop the AI first" };
+      } else if (this.s.phase === "sending" || this.s.phase === "syncing") {
+        return { ok: false, message: "Wait until sending finishes" };
+      } else {
+        return { ok: false, message: "Finish this first" };
+      }
+    }
     await this.open(link, info, true);
+    return { ok: true };
   }
 
   /** Changes only the name shown for a project. The folder and the Figma link stay as they are. */
@@ -1338,7 +1418,8 @@ export class Session {
 
   /** true when the AI tool is installed and signed in; otherwise the state already shows why. */
   private async ensureAgent(agent: AgentChoice, signal: AbortSignal): Promise<boolean> {
-    const result = await this.deps.harness.ensureAgentReady(agent, signal);
+    const forced = this.forceSignin;
+    const result = await (forced ? this.deps.harness.ensureAgentReady(agent, signal, { forceSignin: true }) : this.deps.harness.ensureAgentReady(agent, signal));
     if (signal.aborted || (!result.ok && result.code === "cancelled")) {
       await this.cancelled();
       return false;
@@ -1346,11 +1427,13 @@ export class Session {
     if (!result.ok) {
       const name = AGENT_NAMES[agent];
       const sentence = result.code === "signin_failed" ? `Couldn't sign in to ${name}. Try again.` : `Couldn't set up ${name}. Try again.`;
-      const code = result.code === "node_failed" || result.code === "install_failed" ? "runtime_install_failed" : "agent_failed";
+      const code = result.code === "node_failed" || result.code === "install_failed" ? "runtime_install_failed" : result.code === "signin_failed" ? "agent_signin_required" : "agent_failed";
       this.fail(sentence, () => this.prepareAgent(), code);
       return false;
     }
     this.agentReady = agent;
+    this.agentReadyAt = Date.now();
+    this.forceSignin = false;
     if (!this.s.agentConnected) {
       this.set({ agentConnected: true });
       await this.deps.appState.update({ agent, agentConnected: true });
@@ -1362,11 +1445,15 @@ export class Session {
     this.busy = true;
     const ctl = new AbortController();
     this.ctl = ctl;
+    const job = run(ctl.signal);
+    this.running = job;
     try {
-      return await run(ctl.signal);
+      return await job;
     } finally {
       this.busy = false;
+      this.opening = false;
       this.ctl = null;
+      if (this.running === job) this.running = null;
     }
   }
 

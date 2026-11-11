@@ -261,6 +261,31 @@ export class AgentCliManager {
     }
   }
 
+  /** Runs the CLI's own sign-out. Never throws; `command` is the terminal fallback when the app could not do it. */
+  async logout(agent: AgentId): Promise<{ ok: true } | { ok: false; command: string }> {
+    const adapter = this.deps.adapters().get(agent);
+    const args = adapter?.logoutArgs?.();
+    const command = adapter?.manualLogout ?? `${adapter?.binary ?? agent} logout`;
+    if (!adapter || !args) return { ok: false, command };
+    try {
+      const bin = this.deps.resolveBin ? await this.deps.resolveBin(adapter.binary) : await resolveBinary(adapter.binary, buildEnv(this.deps.env));
+      if (!bin) return { ok: true };
+      const res = await runStreaming(this.spawn, this.killTree, {
+        command: bin,
+        args,
+        env: agentEnv(buildEnv(this.deps.env)),
+        cwd: os.tmpdir(),
+        timeoutMs: 30_000,
+        signal: undefined,
+        onLine: () => undefined,
+        killGraceMs: this.deps.killGraceMs ?? 3000,
+      });
+      return res.spawnError || res.cancelled || res.timedOut || res.code !== 0 ? { ok: false, command } : { ok: true };
+    } catch {
+      return { ok: false, command };
+    }
+  }
+
   /** The full URL for the main process to open (after re-validating); null if none is pending. */
   pendingLoginUrl(agent: AgentId): string | null {
     const url = this.pendingLogin.get(agent);

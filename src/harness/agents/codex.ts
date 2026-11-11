@@ -43,6 +43,9 @@ export function createCodexAdapter(): AgentAdapter {
     manualLogin: "codex login",
     // UNTESTED here: `codex login` per the Codex docs; never run on this machine.
     loginArgs: () => ["login"],
+    // Verified: `codex logout --help` ("Remove stored authentication credentials").
+    logoutArgs: () => ["logout"],
+    manualLogout: "codex logout",
     installHint:
       "Install the Codex CLI (`npm install -g @openai/codex`), then run `codex login` to sign in.",
     loginHint: "Not signed in. Run `codex login` in a terminal.",

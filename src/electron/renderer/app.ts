@@ -1,5 +1,6 @@
 import type { AgentChoice, ChatState, Phase, ProjectStatus, SessionState } from "../contracts.js";
 import type { UpdateState } from "../../updater/contracts.js";
+import { aiRowActions, type AiAction } from "./aiRow.js";
 import { createBrowserBar } from "./browserBar.js";
 import { createChatPanel } from "./chat.js";
 import { createFilesPanel } from "./files.js";
@@ -133,10 +134,25 @@ function submitLink(input: HTMLInputElement, button: HTMLButtonElement, nameInpu
   void (name ? api.openProject(value, name) : api.openProject(value));
 }
 
-function toast(text: string): void {
+function toast(text: string, ms = 3200): void {
   const t = h("div", { class: "toast", role: "status" }, icon("check"), text);
   toasts.append(t);
-  setTimeout(() => t.remove(), 3200);
+  setTimeout(() => t.remove(), ms);
+}
+
+/** Opens another project. A click is never silently dead: when the app can't switch right now it says why. */
+function switchTo(key: string): void {
+  closeSheet();
+  void api.switchProject(key).then((r) => { if (!r.ok) toast(r.message); }).catch(() => undefined);
+}
+
+function runAiAction(a: AiAction): void {
+  if (a.kind === "connect" || a.kind === "switch") void api.setAgent(a.agent);
+  else if (a.kind === "signin") void (state?.agent && !state.agentConnected ? api.setAgent(state.agent) : api.signInAgent());
+  else {
+    const name = agentName(state?.agent ?? null);
+    void api.signOutAgent().then((r) => toast(r.ok ? `Signed out of ${name}` : `Sign out in your terminal: ${r.command}`, r.ok ? 3200 : 9000)).catch(() => undefined);
+  }
 }
 
 // ================= sidebar =================
@@ -148,7 +164,7 @@ function projectRow(p: SessionState["projects"][number], s: SessionState): HTMLE
   const tail = working ? h("span", { class: "spin s", "aria-hidden": "true" }) : h("span", { class: `dot ${DOT[status]}`, title: STATUS_TEXT[status], "aria-hidden": "true" });
   const row = h(
     "button",
-    { type: "button", class: "prow", role: "option", "aria-selected": selected ? "true" : "false", "aria-label": `${p.name}, ${working ? "working" : STATUS_TEXT[status].toLowerCase()}`, onclick: () => !selected && void api.switchProject(p.key), ondblclick: () => openSheet({ kind: "rename", key: p.key }) },
+    { type: "button", class: "prow", role: "option", "aria-selected": selected ? "true" : "false", "aria-label": `${p.name}, ${working ? "working" : STATUS_TEXT[status].toLowerCase()}`, onclick: () => !selected && switchTo(p.key), ondblclick: () => openSheet({ kind: "rename", key: p.key }) },
     icon("folder"),
     h("span", { class: "nm" }, p.name),
     h("span", { class: "ptail" }, tail),
@@ -255,7 +271,7 @@ function renderBanner(s: SessionState): void {
     ...nodes(
     icon("warn"),
     h("div", { class: "t" }, s.message ?? "Something went wrong."),
-    h("button", { type: "button", class: "btn primary sm", onclick: () => void api.retry() }, "Try again"),
+    h("button", { type: "button", class: "btn primary sm", onclick: () => void api.retry() }, s.code === "agent_signin_required" ? "Sign in" : "Try again"),
     toggle,
     h("button", { type: "button", class: "btn sm", onclick: () => report(s) }, "Report"),
     bannerDetails && lines.length ? h("pre", { class: "errlog", tabindex: "0", "aria-label": "Recent output" }, lines.join("\n")) : null,
@@ -627,12 +643,8 @@ function buildSheet(kind: string, s: SessionState): HTMLDialogElement {
       return sheetFrame({ label: "Add a project", glyph: icon("plus"), tone: "accent", title: "Add a project", sub: "Paste the link to your Figma Make file.", body: [input, nameField, h("p", { class: "help" }, "Copy it from the address bar while the file is open.")], acts: [btn("Cancel", closeSheet), open] });
     }
     case "settings": {
-      const other = AGENTS.find((x) => x.id !== s.agent) ?? AGENTS[1];
       const aiStatus = s.agent ? `${agentName(s.agent)} · ${s.agentConnected ? "Connected" : "Not connected"}` : "Not connected";
-      const aiButtons: Child[] = [];
-      if (s.agent && !s.agentConnected) aiButtons.push(btn("Connect", () => void api.setAgent(s.agent as AgentChoice), "primary"));
-      if (other) aiButtons.push(btn(`Switch to ${other.name}`, () => void api.setAgent(other.id)));
-      if (!s.agent) aiButtons.splice(0, aiButtons.length, ...AGENTS.map((x) => btn(`Connect ${x.name}`, () => void api.setAgent(x.id))));
+      const aiButtons: Child[] = aiRowActions(s, AGENTS).map((a) => btn(a.label, () => runAiAction(a), a.primary ? "primary" : "", { disabled: a.disabled }));
       const updates = h("button", { type: "button", class: "sw", role: "switch", "aria-checked": String(s.updatesEnabled), "aria-label": "Keep the app up to date", onclick: () => void api.setUpdates(!s.updatesEnabled) });
       const canClean = !cleanupBusy(s) && Boolean(s.activeKey) && (s.phase === "ready" || s.phase === "error");
       const updateRow = h("div", { class: "row upd" });
@@ -775,6 +787,15 @@ function renderSheets(s: SessionState): void {
       if (!isPhase) closeSheet();
       else if (kind === "conflict" || kind === "merge" || kind === "ai-signin" || kind === "ai-setup" || (kind === "figma-signin" && s.message)) void api.cancel();
     });
+    if (kind === "add") {
+      // The sheet is modal, so the sidebar behind it can't be clicked. A click outside it closes it and, over a project row, opens that project.
+      dlg.addEventListener("click", (e) => {
+        const r = dlg.getBoundingClientRect();
+        if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) return;
+        closeSheet();
+        document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>(".prow")?.click();
+      });
+    }
     sheetHost.append(dlg);
     dlg.showModal();
     dialog = dlg;
@@ -802,7 +823,7 @@ function commands(s: SessionState): Cmd[] {
     { group: "Do", label: "Support Sherlabs", glyph: "heart", run: openSupport },
     { group: "Do", label: "Report a problem", glyph: "info", run: reportProblem },
   ];
-  for (const p of s.projects) if (p.key !== s.activeKey) list.push({ group: "Projects", label: p.name, glyph: "folder", run: () => void api.switchProject(p.key) });
+  for (const p of s.projects) if (p.key !== s.activeKey) list.push({ group: "Projects", label: p.name, glyph: "folder", run: () => switchTo(p.key) });
   return list;
 }
 

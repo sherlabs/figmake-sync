@@ -6,7 +6,7 @@ import fs from "fs-extra";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ChatStore } from "../src/app/chatStore.js";
-import { PROMPT_PREFACE, Session, conflictFiles, errorCode, parseChange, plainError, type SessionDeps } from "../src/app/session.js";
+import { AGENT_READY_TTL_MS, PROMPT_PREFACE, Session, conflictFiles, errorCode, parseChange, plainError, type SessionDeps } from "../src/app/session.js";
 import { AuthRequiredError } from "../src/browser/session.js";
 import { FigmakeSyncService } from "../src/core/service.js";
 import { ProjectStateStore, STATE_DIRECTORY_NAME } from "../src/core/state.js";
@@ -397,7 +397,7 @@ describe("session: undo, cancel, errors", () => {
     await r.session.openProject(LINK);
     r.edit.outcome = { success: false, error: "ENOTFOUND api.anthropic.com\n at stack" };
     await r.session.ask("go");
-    expect(r.session.state).toMatchObject({ phase: "error", message: "Couldn't reach Claude. Try again." });
+    expect(r.session.state).toMatchObject({ phase: "error", message: "Couldn't reach Claude. Check your connection." });
     expect(await read(path.join(r.project, "src", "app.ts"))).toContain("v = 1");
     r.edit.outcome = { success: true, error: null, resultText: "Done." };
     await r.session.retry();
@@ -823,8 +823,9 @@ describe("session: chat", () => {
     await r.session.openProject(LINK);
     r.edit.outcome = { success: false, cancelled: false, error: "spawn /usr/bin/claude ENOENT at node:internal", resultText: "" };
     await r.session.ask("make it blue");
-    expect(last(r.session.chat)).toMatchObject({ status: "error", error: { message: "Couldn't reach Claude. Try again.", code: "agent_failed" } });
-    expect(JSON.stringify(r.session.chat)).not.toMatch(/ENOENT|node:internal|usr\/bin/u);
+    expect(last(r.session.chat)).toMatchObject({ status: "error", error: { message: "Claude stopped with a problem.", code: "agent_failed" } });
+    // The raw text only ever appears as cleaned "details", never in the sentence.
+    expect(last(r.session.chat)?.error?.message).not.toMatch(/ENOENT|node:internal|usr\/bin/u);
     expect(r.session.state.phase).toBe("error");
     r.edit.outcome = { success: true, cancelled: false, error: null, resultText: "Made it blue." };
     await r.session.retry();
@@ -1388,5 +1389,227 @@ describe("session: picture attachments", () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(await fs.pathExists(path.join(r.project, ".figmake-sync", "attachments", kept))).toBe(true);
     expect(await fs.pathExists(path.join(r.project, ".figmake-sync", "attachments", gone))).toBe(false);
+  });
+});
+
+describe("session: AI sign-in checks and failure messages", () => {
+  const signedOut = { ok: false as const, code: "signin_failed" as const };
+  const last = (c: ChatState) => c.messages.at(-1);
+
+  it("checks the sign-in before a run once the last check is older than a minute, and trusts it for less", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const r = await rig();
+      await r.session.openProject(LINK);
+      r.harness.ensureAgentReady.mockClear();
+      await r.session.ask("one");
+      await r.session.ask("two");
+      expect(r.harness.ensureAgentReady).not.toHaveBeenCalled();
+      vi.setSystemTime(Date.now() + AGENT_READY_TTL_MS + 1000);
+      await r.session.ask("three");
+      expect(r.harness.ensureAgentReady).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("signed out before a run: shows the sign-in step from the ready screen, then runs the same message", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const r = await rig();
+      await r.session.openProject(LINK);
+      vi.setSystemTime(Date.now() + AGENT_READY_TTL_MS + 1000);
+      r.harness.ensureAgentReady.mockImplementationOnce(async () => {
+        r.session.handleHarnessEvent({ kind: "agent-ensure", agent: "claude", stage: "needs-browser-signin", message: "" });
+        expect(r.session.state).toMatchObject({ phase: "needs-ai-signin", previewUrl: "http://localhost:5173/" });
+        return { ok: true as const, agent: {} as never };
+      });
+      await r.session.ask("make it blue");
+      expect(r.harness.startRun).toHaveBeenCalledTimes(1);
+      expect(r.session.state).toMatchObject({ phase: "ready", canSend: true });
+      expect(r.session.chat.messages.filter((m) => m.role === "user").map((m) => m.text)).toEqual(["make it blue"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a stopped sign-in leaves the message in the chat and goes back to ready", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const r = await rig();
+      await r.session.openProject(LINK);
+      vi.setSystemTime(Date.now() + AGENT_READY_TTL_MS + 1000);
+      r.harness.ensureAgentReady.mockResolvedValueOnce({ ok: false, code: "cancelled" } as never);
+      await r.session.ask("make it blue");
+      expect(r.harness.startRun).not.toHaveBeenCalled();
+      expect(r.session.state.phase).toBe("ready");
+      expect(r.session.chat.messages.map((m) => m.text).filter(Boolean)).toContain("make it blue");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a failed sign-in in a project says so, and Sign in retries the same message", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const r = await rig();
+      await r.session.openProject(LINK);
+      vi.setSystemTime(Date.now() + AGENT_READY_TTL_MS + 1000);
+      r.harness.ensureAgentReady.mockResolvedValueOnce(signedOut as never);
+      await r.session.ask("make it blue");
+      expect(r.session.state).toMatchObject({ phase: "error", code: "agent_signin_required" });
+      expect(last(r.session.chat)).toMatchObject({ status: "error", error: { code: "agent_signin_required" } });
+      await r.session.retry();
+      expect(r.harness.startRun).toHaveBeenCalledTimes(1);
+      expect(r.session.chat.messages.filter((m) => m.role === "user")).toHaveLength(1);
+      expect(r.session.state.phase).toBe("ready");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a mid-run auth failure says it isn't signed in, marks the AI disconnected, and Sign in forces a real sign-in then retries", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    r.edit.outcome = { success: false, cancelled: false, error: "401 Unauthorized: token expired", resultText: "" };
+    await r.session.ask("make it blue");
+    expect(last(r.session.chat)).toMatchObject({ status: "error", error: { message: "Claude isn't signed in.", code: "agent_signin_required" } });
+    expect(r.session.state).toMatchObject({ phase: "error", code: "agent_signin_required", agentConnected: false });
+    expect((await r.store.load()).agentConnected).toBe(false);
+    r.harness.ensureAgentReady.mockClear();
+    r.edit.outcome = { success: true, cancelled: false, error: null, resultText: "Made it blue." };
+    await r.session.retry();
+    expect(r.harness.ensureAgentReady).toHaveBeenCalledWith("claude", expect.anything(), { forceSignin: true });
+    expect(r.session.state).toMatchObject({ phase: "ready", agentConnected: true });
+    expect((await r.store.load()).agentConnected).toBe(true);
+  });
+
+  it.each([
+    ["rate limit exceeded", "agent_limit", "Claude's usage limit was reached. Try again later."],
+    ["getaddrinfo ENOTFOUND api.anthropic.com", "agent_unreachable", "Couldn't reach Claude. Check your connection."],
+    ["segfault", "agent_failed", "Claude stopped with a problem."],
+  ])("run failure %j -> %s", async (raw, code, sentence) => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    r.edit.outcome = { success: false, cancelled: false, error: raw, resultText: "" };
+    await r.session.ask("go");
+    expect(r.session.state).toMatchObject({ phase: "error", code, message: sentence, agentConnected: true });
+  });
+
+  it("a signed-out probe turns a websocket failure into sign-in; a signed-in probe makes it a connection problem", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    const detect = vi.fn(async () => ({ signedIn: false }));
+    (r.harness as unknown as { detectAgent: unknown }).detectAgent = detect;
+    r.edit.outcome = { success: false, cancelled: false, error: "failed to connect to Responses WebSocket", resultText: "" };
+    await r.session.ask("go");
+    expect(r.session.state.code).toBe("agent_signin_required");
+    detect.mockResolvedValue({ signedIn: true });
+    r.edit.outcome = { success: false, cancelled: false, error: "failed to connect to Responses WebSocket", resultText: "" };
+    await r.session.retry();
+    expect(r.session.state.code).toBe("agent_unreachable");
+  });
+
+  it("generic failures carry cleaned details (last lines only, home folder hidden)", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    const home = r.deps.guard.home;
+    const raw = Array.from({ length: 60 }, (_, i) => `line ${i} in ${home}/secret`).join("\n");
+    r.edit.outcome = { success: false, cancelled: false, error: raw, resultText: "" };
+    await r.session.ask("go");
+    const details = last(r.session.chat)?.error?.details ?? [];
+    expect(details.length).toBeLessThanOrEqual(20);
+    expect(details.at(-1)).toContain("line 59");
+    expect(details.join("\n")).not.toContain(home);
+  });
+
+  it("Settings: Sign in again forces a sign-in; Sign out signs the AI out and marks it not connected", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    r.harness.ensureAgentReady.mockClear();
+    await r.session.signInAgent();
+    expect(r.harness.ensureAgentReady).toHaveBeenCalledWith("claude", expect.anything(), { forceSignin: true });
+    expect(r.session.state.phase).toBe("ready");
+    const logout = vi.fn(async () => ({ ok: true as const }));
+    (r.harness as unknown as { logoutAgent: unknown }).logoutAgent = logout;
+    expect(await r.session.signOutAgent()).toEqual({ ok: true });
+    expect(logout).toHaveBeenCalledWith("claude");
+    expect(r.session.state.agentConnected).toBe(false);
+    expect((await r.store.load()).agentConnected).toBe(false);
+    logout.mockResolvedValueOnce({ ok: false, command: "claude auth logout" } as never);
+    expect(await r.session.signOutAgent()).toEqual({ ok: false, command: "claude auth logout" });
+  });
+});
+
+describe("session: switching projects while busy", () => {
+  /** An ensureProjectRunning that waits for the person to stop it. */
+  const holdSetup = (r: Rig): void => {
+    r.harness.ensureProjectRunning.mockImplementationOnce((_root: string, signal: AbortSignal) => new Promise((resolve) => signal.addEventListener("abort", () => resolve({ ok: false, code: "cancelled", message: "Stopped." }), { once: true })) as never);
+  };
+
+  it("adding a project: clicking another one stops the setup, stops the preview, switches, and the half-added project can be opened again", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    holdSetup(r);
+    const adding = r.session.openProject(LINK2);
+    await vi.waitFor(() => expect(r.session.state).toMatchObject({ phase: "preparing", activeKey: "Zed999" }));
+    r.harness.stopDevExcept.mockClear();
+    expect(await r.session.switchProject("AbC123")).toEqual({ ok: true });
+    await adding;
+    expect(r.session.state).toMatchObject({ phase: "ready", activeKey: "AbC123", projectName: "Checkout Flow" });
+    expect(r.harness.stopDevExcept).toHaveBeenCalledWith(null, true);
+    expect(r.session.state.projects.map((p) => p.key).sort()).toEqual(["AbC123", "Zed999"]);
+    expect((await r.store.load()).links).toHaveProperty("Zed999");
+    // Clicking the half-added project later finishes the setup.
+    expect(await r.session.switchProject("Zed999")).toEqual({ ok: true });
+    expect(r.session.state).toMatchObject({ phase: "ready", activeKey: "Zed999", previewUrl: "http://localhost:5173/" });
+  });
+
+  it("adding a project while the first one is being pulled can also be stopped by a switch", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    r.sync.pull.mockImplementationOnce((o: { signal?: AbortSignal }) => new Promise((_res, rej) => o.signal?.addEventListener("abort", () => rej(new Error("aborted")), { once: true })));
+    const adding = r.session.openProject(LINK2);
+    await vi.waitFor(() => expect(r.session.state.phase).toBe("connecting"));
+    expect(await r.session.switchProject("AbC123")).toEqual({ ok: true });
+    await adding;
+    expect(r.session.state).toMatchObject({ phase: "ready", activeKey: "AbC123" });
+    expect(r.session.state.projects.map((p) => p.key)).toContain("Zed999");
+  });
+
+  it("while the AI is working: refuses with a reason and does not stop it", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    await r.session.openProject(LINK2);
+    let release = (): void => undefined;
+    r.edit.hold = new Promise<void>((resolve) => (release = resolve));
+    const run = r.session.ask("x");
+    await vi.waitFor(() => expect(r.session.state.phase).toBe("working"));
+    expect(await r.session.switchProject("AbC123")).toEqual({ ok: false, message: "Stop the AI first" });
+    expect(r.session.state).toMatchObject({ phase: "working", activeKey: "Zed999" });
+    await r.session.cancel();
+    release();
+    await run;
+  });
+
+  it("while sending to Figma: refuses with a reason and never interrupts the push", async () => {
+    const r = await rig();
+    await r.session.openProject(LINK);
+    await r.session.ask("x");
+    await r.session.openProject(LINK2);
+    await r.session.switchProject("AbC123");
+    let release = (): void => undefined;
+    const real = r.sync.push.getMockImplementation() as (o: unknown) => Promise<unknown>;
+    r.sync.push.mockImplementationOnce(async (o: unknown) => {
+      await new Promise<void>((resolve) => (release = resolve));
+      return real(o);
+    });
+    const sending = r.session.send();
+    await vi.waitFor(() => expect(r.session.state.phase).toBe("sending"));
+    expect(await r.session.switchProject("Zed999")).toEqual({ ok: false, message: "Wait until sending finishes" });
+    expect(r.session.state.phase).toBe("sending");
+    release();
+    await sending;
+    expect(r.session.state.activeKey).toBe("AbC123");
   });
 });

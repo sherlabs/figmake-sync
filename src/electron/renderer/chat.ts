@@ -257,6 +257,8 @@ export function createChatPanel(host: ChatHost): ChatPanel {
     );
   }
 
+  const openErrs = new Set<string>();
+
   function assistant(m: ChatMessage, isLast: boolean): HTMLElement {
     const kids: Child[] = [];
     m.parts.forEach((p, i) => kids.push(p.type === "text" ? renderMarkdown(p.text) : actGroup(m, i, p.items)));
@@ -264,8 +266,10 @@ export function createChatPanel(host: ChatHost): ChatPanel {
     if (m.status === "stopped") kids.push(h("p", { class: "snote" }, icon("stop", true), "Stopped. Nothing was changed."));
     if (m.status === "error") {
       const live = isLast && sess?.phase === "error";
+      const lines = m.error?.details ?? [];
+      const more = lines.length > 0 ? h("details", { class: "errdetails", open: openErrs.has(m.id) ? "" : null, ontoggle: (e: Event) => { if ((e.currentTarget as HTMLDetailsElement).open) openErrs.add(m.id); else openErrs.delete(m.id); } }, h("summary", {}, "Show details"), h("pre", { class: "errlog", tabindex: "0", "aria-label": "Recent output" }, lines.join("\n"))) : null;
       kids.push(
-        h("div", { class: "errmsg", role: live ? "alert" : null }, icon("warn"), h("div", { class: "et" }, h("p", {}, m.error?.message ?? "Something went wrong."), live ? h("div", { class: "eacts" }, h("button", { type: "button", class: "btn primary sm", onclick: () => void api.retry() }, "Try again"), h("button", { type: "button", class: "btn sm", onclick: () => host.report() }, "Report")) : null)),
+        h("div", { class: "errmsg", role: live ? "alert" : null }, icon("warn"), h("div", { class: "et" }, h("p", {}, m.error?.message ?? "Something went wrong."), more, live ? h("div", { class: "eacts" }, h("button", { type: "button", class: "btn primary sm", onclick: () => void api.retry() }, m.error?.code === "agent_signin_required" ? "Sign in" : "Try again"), h("button", { type: "button", class: "btn sm", onclick: () => host.report() }, "Report")) : null)),
       );
     }
     return h("article", { class: `msg assistant ${m.status}`, "data-id": m.id }, h("span", { class: "av", "aria-hidden": "true" }, icon("mark")), h("div", { class: "mbody" }, h("span", { class: "sr-only" }, "Assistant: "), ...nodes(...kids), m.status === "error" ? null : actions(m)));

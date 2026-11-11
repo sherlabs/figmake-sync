@@ -47,7 +47,7 @@ const message = z.object({
       fate: z.enum(["active", "undone", "sent"]).default("active"),
     })
     .optional(),
-  error: z.object({ message: z.string().max(500), code: z.enum(ERROR_CODES).catch("unknown") }).optional(),
+  error: z.object({ message: z.string().max(500), code: z.enum(ERROR_CODES).catch("unknown"), details: z.array(z.string().max(300)).max(20).optional() }).optional(),
 });
 
 const chatFileSchema = z.object({

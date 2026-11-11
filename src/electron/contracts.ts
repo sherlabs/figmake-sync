@@ -26,6 +26,9 @@ export const ERROR_CODES = [
   "figma_ui_changed",
   "figma_unreachable",
   "agent_failed",
+  "agent_signin_required",
+  "agent_limit",
+  "agent_unreachable",
   "runtime_install_failed",
   "preview_failed",
   "push_failed",
@@ -42,6 +45,9 @@ export interface ReportRequest {
   message: string;
   phase: Phase;
 }
+
+export type SwitchResult = { ok: true } | { ok: false; message: string };
+export type SignOutAgentResult = { ok: true } | { ok: false; command: string };
 
 export type ProjectStatus = "synced" | "changes" | "attention";
 
@@ -269,7 +275,7 @@ export interface ChatMessage {
   plan?: ChatPlanStep[];
   change?: ChatChange;
   /** Present on a failed turn: one plain sentence and a stable code. */
-  error?: { message: string; code: ErrorCode };
+  error?: { message: string; code: ErrorCode; /** The last lines of the AI's own output, cleaned, for "Show details". */ details?: string[] };
 }
 
 /** The conversation of the open project. */
@@ -331,7 +337,8 @@ export interface FigmakeApi {
   copyText(text: string): Promise<void>;
   /** Undoes the newest change, or (with an index) that change and every later one. */
   undo(index?: number): Promise<void>;
-  switchProject(key: string): Promise<void>;
+  /** Opens another project. `ok: false` carries the one-line reason it did not switch (shown as a toast). */
+  switchProject(key: string): Promise<SwitchResult>;
   /** Takes the project off the list; files are deleted only when `deleteFiles` is true. */
   removeProject(key: string, deleteFiles: boolean): Promise<void>;
   /** Before/after of the files one change touched. */
@@ -340,6 +347,10 @@ export interface FigmakeApi {
   cancel(): Promise<void>;
   retry(): Promise<void>;
   setAgent(agent: AgentChoice): Promise<void>;
+  /** Signs in to the chosen AI again (opens its browser sign-in). */
+  signInAgent(): Promise<void>;
+  /** Signs the chosen AI out. `command` is what to run in a terminal when the app couldn't do it. */
+  signOutAgent(): Promise<SignOutAgentResult>;
   chooseWorkspace(): Promise<void>;
   signOutFigma(): Promise<void>;
   setUpdates(enabled: boolean): Promise<void>;

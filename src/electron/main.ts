@@ -262,7 +262,7 @@ function registerIpc(s: Session): void {
     });
   });
   ipcMain.handle("figmake:undo", (_e, index: unknown) => s.undo(typeof index === "number" && Number.isInteger(index) ? index : undefined));
-  ipcMain.handle("figmake:switch", (_e, key: unknown) => (typeof key === "string" ? s.switchProject(key.slice(0, 256)) : undefined));
+  ipcMain.handle("figmake:switch", (_e, key: unknown) => (typeof key === "string" ? s.switchProject(key.slice(0, 256)) : { ok: true }));
   ipcMain.handle("figmake:remove-project", (_e, key: unknown, deleteFiles: unknown) =>
     typeof key === "string" ? s.removeProject(key.slice(0, 256), deleteFiles === true) : undefined,
   );
@@ -324,6 +324,8 @@ function registerIpc(s: Session): void {
   ipcMain.handle("figmake:cancel", () => s.cancel());
   ipcMain.handle("figmake:retry", () => s.retry());
   ipcMain.handle("figmake:set-agent", (_e, agent: unknown) => (agent === "claude" || agent === "codex" ? s.setAgent(agent) : undefined));
+  ipcMain.handle("figmake:sign-in-agent", () => s.signInAgent());
+  ipcMain.handle("figmake:sign-out-agent", () => s.signOutAgent());
   ipcMain.handle("figmake:choose-workspace", () => s.chooseWorkspace());
   ipcMain.handle("figmake:sign-out", () => s.signOutFigma());
   ipcMain.handle("figmake:browser", () => preview?.getState() ?? { tabs: [], activeId: 1 });
