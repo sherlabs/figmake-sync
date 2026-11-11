@@ -58,8 +58,9 @@ const plist = h("ul", { class: "plist", role: "listbox", "aria-labelledby": "pro
 const sideEmpty = h("p", { class: "side-empty" }, "No projects yet. Paste a Figma Make link to start.");
 const addBtn = h("button", { type: "button", class: "sbtn", "aria-label": "Add project", onclick: () => openSheet({ kind: "add" }) }, icon("plus"), h("span", { class: "lbl" }, "Add project"));
 const supportBtn = h("button", { type: "button", class: "support", "aria-label": "Support Sherlabs", title: "Support Sherlabs: opens sherlabs.com in your browser", onclick: () => openSupport() }, icon("heart"), h("span", { class: "t" }, h("b", {}, "Support Sherlabs"), h("span", {}, "Free app. Chip in if it helps.")));
+const sideToggle = h("button", { type: "button", class: "btn icon fm-sidetoggle", "aria-controls": "fm-side", "aria-expanded": "true", "aria-label": "Collapse sidebar", "aria-keyshortcuts": "Meta+B Control+B", title: `Collapse sidebar (${MOD}B)`, onclick: () => toggleSide() }, icon("sidebar"));
 const sideHandle = h("div", { class: "side-handle", role: "separator", "aria-orientation": "vertical", "aria-label": "Resize sidebar", "aria-controls": "fm-side", tabindex: "0", title: "Drag to resize, double-click to collapse or expand" });
-const side = h("aside", { class: "side", id: "fm-side", "aria-label": "Projects" }, h("div", { class: "side-top", "aria-hidden": "true" }), h("h2", { id: "projects-h", class: "side-h" }, "Projects"), plist, sideEmpty, addBtn, h("div", { class: "spacer" }), supportBtn, sideHandle);
+const side = h("aside", { class: "side", id: "fm-side", "aria-label": "Projects" }, h("div", { class: "side-top" }, sideToggle), h("h2", { id: "projects-h", class: "side-h" }, "Projects"), plist, sideEmpty, addBtn, h("div", { class: "spacer" }), supportBtn, sideHandle);
 
 const title = h("h1", {}, "figmake-sync");
 const chip = h("span", { class: "chip status", role: "status" });
@@ -68,8 +69,7 @@ const sendBtn = h("button", { type: "button", class: "btn primary send", "aria-k
 const gearBtn = h("button", { type: "button", class: "btn icon gear", "aria-label": "Settings", title: `Settings (${MOD},)`, onclick: () => openSheet({ kind: "settings" }) }, icon("gear"));
 const syncBtn = h("button", { type: "button", class: "btn sy-btn", "aria-haspopup": "menu", onclick: () => showSyncMenu() }, icon("refresh", true), h("span", { class: "bl" }, "Sync with Figma"));
 const chatBtn = h("button", { type: "button", class: "btn icon chat-toggle", "aria-label": "Side panel", "aria-pressed": "true", "aria-keyshortcuts": "Meta+J Control+J", title: `Side panel (${MOD}J)`, onclick: () => setChatOpen(!chatOpen) }, icon("panel"), h("span", { class: "pip", hidden: true }));
-const sideToggle = h("button", { type: "button", class: "btn icon fm-sidetoggle", "aria-controls": "fm-side", "aria-expanded": "true", "aria-label": "Collapse sidebar", "aria-keyshortcuts": "Meta+B Control+B", title: `Collapse sidebar (${MOD}B)`, onclick: () => toggleSide() }, icon("sidebar"));
-const toolbar = h("header", { class: "toolbar" }, h("div", { class: "ttl row-ttl" }, sideToggle, title, chip), h("div", { class: "tright" }, updateBtn, chatBtn, syncBtn, sendBtn, gearBtn));
+const toolbar = h("header", { class: "toolbar" }, h("div", { class: "ttl row-ttl" }, title, chip), h("div", { class: "tright" }, updateBtn, chatBtn, syncBtn, sendBtn, gearBtn));
 
 const banner = h("div", { class: "errbanner", role: "alert", hidden: true });
 const pgCard = h("div", { class: "pg-card", role: "group", "aria-label": "Sending to Figma", hidden: true });

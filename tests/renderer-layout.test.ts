@@ -969,6 +969,11 @@ describe("renderer layout", () => {
           expect(await page.locator(".lv-time").innerText()).toMatch(/^1m \d\ds$/u);
           expect(await page.locator(".tk").count()).toBe(3);
           expect(await page.locator(".lv-acts-list li").count()).toBe(3);
+          // The timeline: a step count in the header, and only the newest step marked as running.
+          expect(await page.locator(".lv-acts-h").innerText()).toMatch(/Working\s*3 steps/u);
+          expect(await page.locator(".lv-acts-list li.run").count()).toBe(1);
+          expect(await page.locator(".lv-acts-list li").last().getAttribute("class")).toContain("run");
+          expect(await page.locator(".lv-acts-list li").first().innerText()).toBe("Read Button.tsx");
           for (const r of [now, time, plan]) {
             expect(r).not.toBeNull();
             expect((r?.x ?? 0) + (r?.w ?? 0)).toBeLessThanOrEqual((panel?.x ?? 0) + (panel?.w ?? 0) + 0.5);
@@ -982,6 +987,15 @@ describe("renderer layout", () => {
           await page.evaluate((c) => (window as unknown as { __pushChat: (v: object) => void }).__pushChat(c), { ...chatState, active: false, messages: chatState.messages.map((m) => (m.id === "a1" ? { ...m, status: "done", now: undefined, startedAt: undefined, plan: undefined } : m)) });
           await page.waitForSelector(".acts-t");
           expect(await page.locator(".lv-now, .tasks, .lv-time, .lv-acts").count()).toBe(0);
+          // The finished timeline is one summary line that opens from the keyboard.
+          expect(await page.locator(".acts-t").getAttribute("aria-expanded")).toBe("false");
+          expect(await page.locator(".acts-t .tl-n").innerText()).toBe("3 steps");
+          await page.locator(".acts-t").focus();
+          await page.keyboard.press("Enter");
+          await page.waitForSelector('.acts-t[aria-expanded="true"]');
+          expect(await page.locator(".acts-list li").count()).toBe(3);
+          expect(await page.locator(".acts-list li.run").count()).toBe(0);
+          expect(await overflowX(page)).toBeLessThanOrEqual(0);
           await page.context().close();
         });
       }

@@ -4,7 +4,7 @@ import type { AgentChoice, ChangedFile, ChatChange, ChatMessage, ChatPart, ChatS
 import { ELEMENT_HINT } from "../../app/elementKinds.js";
 import { createAttachStrip, messageThumbs } from "./attach.js";
 import { diffPanel } from "./diff.js";
-import { h, icon, nodes, type Child } from "./dom.js";
+import { h, icon, nodes, plural, splitPath, type Child } from "./dom.js";
 import { chipText, modelLocked } from "./modelMenu.js";
 
 /* The conversation panel. Draws ChatState + SessionState; every action goes through window.figmake.
@@ -58,6 +58,8 @@ export function renderMarkdown(text: string): HTMLElement {
 }
 
 const textOf = (m: ChatMessage): string => (m.role === "user" ? m.text : m.parts.flatMap((p) => (p.type === "text" ? [p.text] : [])).join("\n\n"));
+
+type Activity = Extract<ChatPart, { type: "activity" }>["items"][number];
 
 export interface ChatPanel {
   el: HTMLElement;
@@ -210,23 +212,49 @@ export function createChatPanel(host: ChatHost): ChatPanel {
   const stamp = (m: ChatMessage): HTMLElement => h("time", { class: "stamp", datetime: m.at, title: fullTime(m.at) }, clock(m.at));
   const actions = (m: ChatMessage): HTMLElement => h("div", { class: "mactions" }, stamp(m), textOf(m) ? copyButton(m) : null);
 
-  function actGroup(m: ChatMessage, i: number, items: Extract<ChatPart, { type: "activity" }>["items"]): HTMLElement {
+  /** One timeline row: what was done (verb) and to what (target), from what the chat already stores. */
+  function stepRow(it: Activity, running: boolean): HTMLElement {
+    const mark = it.kind === "look" ? (it.file ? "doc" : "search") : it.kind === "edit" ? "pencil" : it.kind === "add" ? "plus" : it.kind === "check" ? "check" : it.kind === "helper" ? "sparkle" : "gear";
+    const cut = it.label.indexOf(" ");
+    const [verb, target] =
+      it.file && it.kind === "look" ? ["Read", it.file]
+      : it.file && it.kind === "edit" ? ["Edited", it.file]
+      : it.file && it.kind === "add" ? ["Created", it.file]
+      : it.kind === "helper" && it.label.startsWith("Helper: ") ? ["Helper", it.label.slice(8)]
+      : cut < 0 ? [it.label, ""] : [it.label.slice(0, cut), it.label.slice(cut + 1)];
+    return h(
+      "li",
+      { class: `tl-row ${it.kind}${running ? " run" : ""}`, title: it.label },
+      h("span", { class: "tl-m", "aria-hidden": "true" }, icon(mark, true)),
+      h("span", { class: "tl-tx" }, h("span", { class: "tl-v" }, verb), target ? " " : null, target ? h("span", { class: "tl-x" }, target) : null),
+    );
+  }
+
+  /** The steps of one stretch of work, as a timeline: open with a spinner while it runs, one summary line after. */
+  function actGroup(m: ChatMessage, i: number, items: Activity[]): HTMLElement {
     const key = `${m.id}:${i}`;
-    // While the AI is still working, its newest group is open and read-only so progress is always visible.
-    const livePart = m.status === "streaming" && m.parts.reduce((last, p, n) => (p.type === "activity" ? n : last), -1) === i;
-    const open = livePart || openActs.has(key);
-    const icn = (kind: string): ReturnType<typeof icon> => icon(kind === "look" ? "search" : kind === "edit" ? "pencil" : kind === "add" ? "plus" : kind === "check" ? "check" : "sparkle", true);
-    if (livePart) {
+    const isTail = i === m.parts.length - 1;
+    const count = h("span", { class: "tl-n" }, plural(items.length, "step"));
+    // Running is only known for the newest step of the part still being added to; older parts are finished.
+    if (m.status === "streaming" && isTail) {
       const shown = items.slice(-LIVE_ITEMS);
-      return h("div", { class: "acts open lv-acts" }, h("div", { class: "lv-acts-h" }, activitySummary(items)), h("ul", { class: "acts-list lv-acts-list", "aria-label": "What the AI is doing" }, ...shown.map((it) => h("li", { class: it.kind }, icn(it.kind), it.label))));
+      return h(
+        "div",
+        { class: "acts tl open lv-acts" },
+        h("div", { class: "tl-h lv-acts-h" }, h("span", { class: "tl-m", "aria-hidden": "true" }, h("span", { class: "spin" })), h("span", { class: "tl-ht" }, "Working"), count),
+        h("ul", { class: "acts-list lv-acts-list", "aria-label": "What the AI is doing" }, ...shown.map((it, n) => stepRow(it, n === shown.length - 1))),
+      );
     }
+    const open = openActs.has(key);
+    // A turn that failed or was stopped mid-work ends on this group: say so on the group, not on one step.
+    const cut = isTail && !m.change && (m.status === "error" || m.status === "stopped") ? m.status : null;
     const toggle = h("button", { type: "button", class: "acts-t", "data-fk": `act-${key}`, "aria-expanded": String(open), onclick: () => {
       if (openActs.has(key)) openActs.delete(key);
       else openActs.add(key);
       draw();
-    } }, icon("chev-r", true), h("span", { class: "acts-l" }, activitySummary(items)));
-    const list = open ? h("ul", { class: "acts-list" }, ...items.map((it) => h("li", { class: it.kind }, icn(it.kind), it.label))) : null;
-    return h("div", { class: `acts${open ? " open" : ""}` }, toggle, list);
+    } }, h("span", { class: "tl-m", "aria-hidden": "true" }, icon(cut === "error" ? "x" : cut === "stopped" ? "stop" : "check", true)), cut ? h("span", { class: "sr-only" }, cut === "error" ? "Didn't finish: " : "Stopped: ") : null, h("span", { class: "acts-l" }, activitySummary(items)), count, icon("chev-r", true));
+    const list = open ? h("ul", { class: "acts-list", "aria-label": "Steps" }, ...items.map((it) => stepRow(it, false))) : null;
+    return h("div", { class: `acts tl${open ? " open" : ""}${cut ? " cut" : ""}` }, toggle, list);
   }
 
   function changeIndex(c: ChatChange): number {
@@ -237,13 +265,41 @@ export function createChatPanel(host: ChatHost): ChatPanel {
     return `${c.turnId}|${sess?.changeIds.join(",") ?? ""}`;
   }
 
+  /** Lines added and removed per file name, once "View changes" has loaded them. Skips anything it can't count exactly. */
+  function lineCounts(c: ChatChange): Map<string, { adds: number; dels: number }> {
+    const out = new Map<string, { adds: number; dels: number }>();
+    const loaded = diffs.get(diffKey(c));
+    if (!Array.isArray(loaded)) return out;
+    const names = loaded.map((f) => splitPath(f.path).name);
+    loaded.forEach((f, n) => {
+      const name = names[n] ?? "";
+      if (f.binary || f.truncated || names.indexOf(name) !== names.lastIndexOf(name)) return;
+      out.set(name, { adds: f.rows.filter((r) => r.right?.mark === "add").length, dels: f.rows.filter((r) => r.left?.mark === "del").length });
+    });
+    return out;
+  }
+
+  const MAX_FILE_ROWS = 5;
+
   function changeCard(c: ChatChange, tail: boolean): HTMLElement {
     const idx = changeIndex(c);
     const live = c.fate === "active" && idx >= 0;
     const open = openDiffs.has(c.turnId) && live;
     const idle = sess?.phase === "ready";
-    const chips = c.files.slice(0, 4).map((f) => h("span", { class: `fchip ${f.status}`, title: f.status }, icon(f.status === "added" ? "plus" : f.status === "removed" ? "trash" : "pencil", true), f.name));
-    if (c.files.length > 4) chips.push(h("span", { class: "fchip more" }, `+${c.files.length - 4} more`));
+    const counts = lineCounts(c);
+    const once = (name: string): boolean => c.files.filter((f) => f.name === name).length === 1;
+    const rows = c.files.slice(0, MAX_FILE_ROWS).map((f) => {
+      const n = once(f.name) ? counts.get(f.name) : undefined;
+      const word = f.status === "added" ? "new" : f.status === "removed" ? "removed" : null;
+      return h(
+        "li",
+        { class: `tl-file ${f.status}`, title: f.status },
+        h("span", { class: "tl-m", "aria-hidden": "true" }, icon(f.status === "added" ? "plus" : f.status === "removed" ? "trash" : "pencil", true)),
+        h("span", { class: "tl-fn" }, f.name),
+        n ? h("span", { class: "tl-ct", title: `${plural(n.adds, "line")} added, ${n.dels} removed` }, h("b", { class: "p" }, `+${n.adds}`), h("b", { class: "m" }, `−${n.dels}`)) : word ? h("span", { class: "tl-ct" }, word) : null,
+      );
+    });
+    if (c.files.length > MAX_FILE_ROWS) rows.push(h("li", { class: "tl-file more" }, `+${c.files.length - MAX_FILE_ROWS} more`));
     const note = c.fate === "undone" ? h("span", { class: "cnote undone" }, icon("undo", true), "Undone") : c.fate === "sent" ? h("span", { class: "cnote sent" }, icon("check", true), "Sent to Figma") : c.previewUpdated ? h("span", { class: "cnote" }, icon("check", true), "Preview updated") : null;
     const view = live
       ? h("button", { type: "button", class: "plain quiet", "data-fk": `view-${c.turnId}`, "aria-expanded": String(open), onclick: () => {
@@ -264,7 +320,8 @@ export function createChatPanel(host: ChatHost): ChatPanel {
     return h(
       "section",
       { class: `chcard ${c.fate}${tail ? " last" : ""}`, "aria-label": "Change made" },
-      h("div", { class: "chcard-top" }, h("span", { class: "tick" }, icon(c.fate === "undone" ? "undo" : "pencil", true)), h("div", { class: "chcard-t" }, h("p", { class: "chcard-title" }, c.summary), chips.length ? h("div", { class: "fchips" }, ...chips) : null)),
+      h("div", { class: "chcard-top" }, h("span", { class: "tl-m", "aria-hidden": "true" }, icon(c.fate === "undone" ? "undo" : "pencil", true)), h("p", { class: "chcard-title" }, c.summary), c.files.length ? h("span", { class: "tl-n" }, plural(c.files.length, "file")) : null),
+      rows.length ? h("ul", { class: "tl-files", "aria-label": "Files changed" }, ...rows) : null,
       h("div", { class: "chcard-foot" }, note, h("span", { class: "sp" }), view, undo),
       body,
     );
@@ -362,7 +419,7 @@ export function createChatPanel(host: ChatHost): ChatPanel {
     const time = live?.startedAt ? h("span", { class: "lv-time", "data-since": String(live.startedAt) }, elapsed(live.startedAt)) : null;
     return h(
       "div",
-      { class: "msg assistant working", role: "status", "data-id": "working" },
+      { class: `msg assistant working${live && live.parts.length > 0 ? " cont" : ""}`, role: "status", "data-id": "working" },
       h("span", { class: "av", "aria-hidden": "true" }, icon("mark")),
       h("div", { class: "mbody lv-wrap" }, h("div", { class: "lv-main" }, h("span", { class: "dots", "aria-hidden": "true" }, h("i"), h("i"), h("i")), h("span", { class: "lv-now" }, label), time), steps),
     );
