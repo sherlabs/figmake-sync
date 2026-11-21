@@ -13,6 +13,16 @@
         "[data-testid=\"header-nav-toolbar\"]"
       ]
     },
+    "emptyStateRoot": {
+      "goal": "Figma Make's 'What do you want to make?' start screen of a file that has no code yet (no Files / Code view exists).",
+      "kind": "container",
+      "healable": false,
+      "selectors": [
+        "[data-testid=\"empty-state-chat-input\"]",
+        "[data-testid=\"empty-state-chat-send-button\"]",
+        "[data-testid=\"figmake-empty-state-chat-more-actions-button\"]"
+      ]
+    },
     "codeModeButton": {
       "goal": "Find the control that switches Figma Make from the Browser (preview) view to the Files / Code view (the file explorer + code editor).",
       "kind": "click",
@@ -57,6 +67,37 @@
         ".cm-content[role=\"textbox\"]",
         ".cm-editor",
         ".monaco-editor"
+      ]
+    },
+    "filesWorkspaceRoot": {
+      "goal": "The Files view itself (file explorer + header). Proves code mode even when the selected file renders as a preview (e.g. AGENTS.md) instead of a code editor.",
+      "kind": "container",
+      "healable": false,
+      "selectors": [
+        "[data-testid=\"files-workspace-header\"]",
+        "[data-testid=\"virtualized-file-tree-container\"]",
+        "[data-testid=\"files-header-actions-menu-button\"]"
+      ]
+    },
+    "markdownPreview": {
+      "goal": "The rendered preview Figma Make shows instead of the code editor when a Markdown file is opened.",
+      "kind": "container",
+      "healable": false,
+      "selectors": [
+        "[data-testid=\"markdown-file-preview\"]"
+      ]
+    },
+    "markdownPreviewToggle": {
+      "goal": "Find the 'Markdown preview' toggle in the Files header that switches an opened Markdown file from its rendered preview to the code editor.",
+      "kind": "click",
+      "healable": true,
+      "expectTerms": ["markdown", "preview"],
+      "selectors": [
+        "[data-testid=\"markdown-preview-toggle\"]",
+        "input[type=\"checkbox\"][data-tooltip=\"Markdown preview\" i]",
+        "[aria-label=\"Markdown preview\" i]",
+        "internal:role=checkbox[name=/markdown preview/i]",
+        "internal:role=switch[name=/markdown preview/i]"
       ]
     },
     "fileTreeRoot": {

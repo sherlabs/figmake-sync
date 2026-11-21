@@ -58,6 +58,8 @@ export interface FakeExplorerOptions {
   scrollerHeight?: number;
   /** Rows mount only this long after the Files tab opens (slow live load). */
   mountDelayMs?: number;
+  /** Live: a .md file opens as a rendered preview (no editor) until the header "Markdown preview" toggle is switched off. */
+  markdownPreview?: boolean;
 }
 
 const ROOT_FILES = [
@@ -135,6 +137,7 @@ export function fakeExplorerHtml(tree: FakeNode[], options: FakeExplorerOptions 
   const height = options.scrollerHeight ?? 826;
   const mountDelay = options.mountDelayMs ?? 0;
   const faults = JSON.stringify(options.faults ?? {});
+  const markdownPreview = options.markdownPreview === true;
   const data = JSON.stringify(tree);
 
   return `<!doctype html><html><head><meta charset="utf-8">
@@ -163,12 +166,14 @@ export function fakeExplorerHtml(tree: FakeNode[], options: FakeExplorerOptions 
 <div id="browser" data-testid="figmake-full-view">preview of the app</div>
 <div id="files" hidden>
   <button data-testid="files-header-actions-menu-button" aria-label="File actions" id="am" type="button">...</button>
+  <input type="checkbox" data-testid="markdown-preview-toggle" data-tooltip="Markdown preview" id="mdt" checked hidden>
   <div role="menu" id="menu" hidden></div>
   <input type="file" multiple hidden data-testid="image-attachment-input">
   <input type="file" multiple hidden data-testid="upload-file-input">
   <div style="display:flex;gap:12px">
     <div id="scroller"><div role="tree" data-testid="virtualized-file-tree-container" id="tree"></div><div id="spacer"></div></div>
     <div>
+      <div data-testid="markdown-file-preview" id="mdp" hidden></div>
       <div data-testid="code-layer-persistence-status" data-code-layer-persistence-status="unknown">
         <div data-testid="code-editor" id="editor"></div>
       </div>
@@ -182,6 +187,7 @@ export function fakeExplorerHtml(tree: FakeNode[], options: FakeExplorerOptions 
   const DATA = ${data};
   const ROW = 32;
   const MOUNT_DELAY = ${mountDelay};
+  const MD_PREVIEW = ${markdownPreview};
   let mountedAt = null;
   window.__fault = ${faults};
   const fault = () => window.__fault || {};
@@ -341,9 +347,17 @@ export function fakeExplorerHtml(tree: FakeNode[], options: FakeExplorerOptions 
     focus: () => cm.focus(),
   } };
   function renderEditor() {
+    const md = MD_PREVIEW && state.open !== null && /\\.md$/i.test(state.open);
+    const preview = md && $('mdt').checked;
+    $('mdt').hidden = !md;
+    $('mdp').hidden = !preview;
+    $('editor').hidden = preview;
+    $('mdp').textContent = preview ? content(state.open) : '';
     if (state.open !== null && !cm.isConnected) $('editor').appendChild(cm);
     cm.textContent = state.open === null ? '' : content(state.open);
   }
+
+  $('mdt').addEventListener('change', () => { log('mdpreview:' + $('mdt').checked); renderEditor(); });
 
   // ---- interactions ----
   function onRowClick(r) {

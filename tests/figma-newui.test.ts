@@ -6,7 +6,7 @@ import fs from "fs-extra";
 import { chromium, type Browser, type Page } from "playwright";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { PlaywrightFigmaMakeProjectSession, type AdapterContext } from "../src/figma/adapter.js";
+import { EmptyProjectError, PlaywrightFigmaMakeProjectSession, type AdapterContext } from "../src/figma/adapter.js";
 import { parseLocalSelectors } from "../src/figma/selectors.js";
 import { gateSelector } from "../src/heal/gate.js";
 import { HealSession } from "../src/heal/heal.js";
@@ -89,6 +89,7 @@ function makeSession(heal?: HealContext, overrides: Record<string, string[]> = {
 type Priv = {
   ensureCodeSurfaceReady(): Promise<void>;
   saveEditor(): Promise<void>;
+  readActiveEditorContent(): Promise<string>;
 };
 const priv = (s: PlaywrightFigmaMakeProjectSession): Priv => s as unknown as Priv;
 
@@ -146,6 +147,93 @@ describe("new Figma Make UI (Browser / Files tabs)", { timeout: 40_000 }, () => 
     });
     await s.submitPrompt("make the header blue");
     expect(await page.locator('[data-testid="code-chat-chat-box"]').innerText()).toBe("");
+  });
+});
+
+// A Make file with no code yet (verified live): the workspace shell + "What do you want to make?" composer, no Files tab.
+const EMPTY_STATE = `
+<div data-testid="figmake-full-view">
+  <h1>What do you want to make?</h1>
+  <div data-testid="empty-state-chat-input" role="textbox" contenteditable="true" style="width:200px;height:30px"></div>
+  <button data-testid="empty-state-chat-send-button" aria-label="Send" type="button">^</button>
+</div>`;
+
+describe("empty Make file (start screen, no code yet)", { timeout: 40_000 }, () => {
+  it("fails fast with EmptyProjectError instead of UiChangedError, and never asks the healer", async () => {
+    await page.setContent(EMPTY_STATE);
+    const healer = vi.fn<Healer>(async () => null);
+    const s = makeSession(ctx(healer));
+    (s as unknown as { codeModeWaitMs: number }).codeModeWaitMs = 10_000;
+    const t0 = Date.now();
+    await expect(priv(s).ensureCodeSurfaceReady()).rejects.toBeInstanceOf(EmptyProjectError);
+    expect(Date.now() - t0).toBeLessThan(5_000);
+    expect(healer).not.toHaveBeenCalled();
+  });
+
+  it("a real Files tab still wins when both are on the page", async () => {
+    await page.setContent(NEW_UI);
+    await page.evaluate(() => {
+      const d = document.createElement("div");
+      d.setAttribute("data-testid", "empty-state-chat-input");
+      d.textContent = "x";
+      document.body.prepend(d);
+    });
+    await priv(makeSession()).ensureCodeSurfaceReady();
+    expect(await page.locator('[data-testid="code-editor"]').isVisible()).toBe(true);
+  });
+});
+
+describe("Files view opens on a previewed file (AGENTS.md), no code editor yet", { timeout: 40_000 }, () => {
+  const PREVIEW_UI = NEW_UI.replace(
+    /<div data-testid="code-editor"[^>]*>code<\/div>/u,
+    '<div data-testid="markdown-file-preview">figma-make-app: this file doesn\'t exist yet</div>',
+  ).replace('<button data-testid="files-header-actions-menu-button"', '<div data-testid="files-workspace-header">AGENTS.md</div>\n  <button data-testid="files-header-actions-menu-button"');
+
+  it("accepts the Files view as code mode and downloads the code", async () => {
+    expect(PREVIEW_UI).not.toContain('data-testid="code-editor"');
+    await page.setContent(PREVIEW_UI);
+    const s = makeSession();
+    await priv(s).ensureCodeSurfaceReady();
+    expect(await page.locator("#files").isVisible()).toBe(true);
+    const res = await s.downloadLatestCodeZip(path.join(dir, "dl"));
+    expect(res.suggestedFileName).toBe("Project.zip");
+  });
+
+  // Live: the Files header has a "Markdown preview" checkbox; unchecking it swaps the preview for the code editor.
+  const MD_UI = NEW_UI.replace(
+    /<div data-testid="code-editor"[^>]*>code<\/div>/u,
+    '<div data-testid="markdown-file-preview" id="mdp"># Agents</div><div data-testid="code-editor" id="ed" role="textbox" contenteditable="true" style="width:200px;height:40px" hidden># Agents</div>',
+  ).replace(
+    '<button data-testid="files-header-actions-menu-button"',
+    '<input type="checkbox" id="mdt" data-x="md-src" aria-label="Markdown preview" checked>\n  <button data-testid="files-header-actions-menu-button"',
+  ).replace(
+    "</script>",
+    "document.getElementById('mdt').addEventListener('change', (e) => { $('mdp').hidden = e.target.checked === false; $('ed').hidden = e.target.checked; });\n</script>",
+  );
+
+  it("a renamed Markdown preview toggle is healed; the post-condition is that the code editor appears", async () => {
+    await page.setContent(MD_UI);
+    await page.evaluate(() => {
+      const t = document.getElementById("mdt") as HTMLElement;
+      t.removeAttribute("aria-label");
+      t.setAttribute("title", "Render markdown");
+    });
+    const healer = vi.fn<Healer>(async (req) => (req.key === "markdownPreviewToggle" ? { selectors: ['button[aria-label="Send"]', 'input[data-x="md-src"]'] } : null));
+    const c = ctx(healer);
+    const s = makeSession(c);
+    await priv(s).ensureCodeSurfaceReady();
+    expect(await priv(s).readActiveEditorContent()).toBe("# Agents");
+    expect(await page.locator("#ed").isVisible()).toBe(true);
+    expect(healer.mock.calls.map((call) => call[0].key)).toEqual(["markdownPreviewToggle"]);
+    expect(c.store.get("markdownPreviewToggle")).toEqual(['input[data-x="md-src"]']);
+  });
+
+  it("without the toggle and without a healer it fails naming the toggle, not the editor", async () => {
+    await page.setContent(MD_UI);
+    await page.evaluate(() => document.getElementById("mdt")?.remove());
+    const s = makeSession();
+    await priv(s).ensureCodeSurfaceReady();
+    await expect(priv(s).readActiveEditorContent()).rejects.toMatchObject({ code: "SELECTOR_NOT_FOUND", message: expect.stringContaining("markdownPreviewToggle") });
   });
 });
 

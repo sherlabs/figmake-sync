@@ -358,6 +358,13 @@ describe("errorCode", () => {
     expect(errorCode(new Error("x"), "project")).toBe("preview_failed");
     expect(errorCode(new Error("x"), "agent")).toBe("agent_failed");
     expect(errorCode(new Error("Backup failed"), "figma")).toBe("backup_failed");
+    expect(errorCode(Object.assign(new Error("empty"), { code: "PROJECT_EMPTY" }), "figma")).toBe("figma_project_empty");
+  });
+
+  it("an empty Make file gets its own plain sentence, not 'Couldn't reach Figma'", () => {
+    const text = plainError(Object.assign(new Error("empty"), { code: "PROJECT_EMPTY" }), "figma");
+    expect(text).toMatch(/no code yet/u);
+    expect(text).not.toMatch(/Couldn't reach Figma/u);
   });
 });
 

@@ -331,4 +331,24 @@ describe("slow loads and the first open", { timeout: 40_000 }, () => {
     expect(Date.now() - t0).toBeLessThan(5_000);
     expect(logger.warn).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining("could not independently confirm"));
   });
+
+  it("a Markdown file that opens as a rendered preview is switched to the code editor, then written", async () => {
+    const tree = makeProject();
+    const before = flattenFiles(tree)["AGENTS.md"]!;
+    await page.setContent(fakeExplorerHtml(tree, { markdownPreview: true }));
+    await openFilesTab();
+    await page.locator('[role="treeitem"][aria-label="AGENTS.md"] button').click();
+    expect(await page.locator('[data-testid="markdown-file-preview"]').isVisible()).toBe(true);
+    expect(await page.locator('[data-testid="code-editor"]').isVisible()).toBe(false);
+
+    const s = makeSession();
+    expect(await s.replaceFileContents("AGENTS.md", "# Agents\n\nupdated\n", { expectedNormalizedHash: hashOf(before) })).toEqual({ status: "written" });
+    const m = await model();
+    expect(m.files["AGENTS.md"]).toBe("# Agents\n\nupdated\n");
+    expect(m.events).toContain("mdpreview:false");
+    expect(m.writes).toBe(1);
+    // Other Markdown files are reachable the same way within one session.
+    expect(await s.replaceFileContents("README.md", "readme\n")).toEqual({ status: "written" });
+    expect((await model()).files["README.md"]).toBe("readme\n");
+  });
 });

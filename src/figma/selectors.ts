@@ -15,8 +15,12 @@ import defaultsJson from "./selectors.default.json" with { type: "json" };
 
 export const SELECTOR_KEYS = [
   "workspaceRoot",
+  "emptyStateRoot",
   "codeModeButton",
   "codeEditorRoot",
+  "filesWorkspaceRoot",
+  "markdownPreview",
+  "markdownPreviewToggle",
   "fileTreeRoot",
   "treeRow",
   "persistenceStatus",

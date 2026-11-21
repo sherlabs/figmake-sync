@@ -110,6 +110,7 @@ export function plainError(error: unknown, kind: Failing, agent?: AgentChoice | 
   const raw = error instanceof Error ? error.message : String(error);
   if (/newer changes/iu.test(raw)) return "Couldn't check Figma for newer changes. Try again.";
   if (/backup failed/iu.test(raw)) return "Couldn't make a backup, so nothing was changed.";
+  if ((error as { code?: unknown } | null)?.code === "PROJECT_EMPTY") return "This Figma Make file has no code yet. Make something in it in Figma first, then try again.";
   if (kind === "figma") return "Couldn't reach Figma. Try again.";
   if (kind === "project") return "Couldn't start the project. Try again.";
   return `Couldn't reach ${AGENT_NAMES[agent ?? "claude"]}. Try again.`;
@@ -121,6 +122,7 @@ export function errorCode(error: unknown, kind: Failing): ErrorCode {
   const code = (error as { code?: unknown } | null)?.code;
   if (/backup failed/iu.test(raw)) return "backup_failed";
   if (code === "UI_CHANGED" || code === "SELECTOR_NOT_FOUND") return "figma_ui_changed";
+  if (code === "PROJECT_EMPTY") return "figma_project_empty";
   if (code === "AUTH_REQUIRED") return "figma_signin_required";
   if (kind === "project") return "preview_failed";
   if (kind === "agent") return "agent_failed";
@@ -132,6 +134,7 @@ export function errorCode(error: unknown, kind: Failing): ErrorCode {
 export function pushStopCode(code: string): ErrorCode {
   if (["EXPLORER_MISMATCH", "TREE_INDEX_INCOMPLETE", "UI_CHANGED", "SELECTOR_NOT_FOUND", "LEFTOVER_FILE", "AMBIGUOUS_REMOTE_PATH"].includes(code)) return "figma_ui_changed";
   if (code === "AUTH_REQUIRED") return "figma_signin_required";
+  if (code === "PROJECT_EMPTY") return "figma_project_empty";
   if (code === "TIMEOUT" || code === "PROJECT_UNAVAILABLE") return "figma_unreachable";
   return "push_failed";
 }

@@ -192,6 +192,7 @@ export interface Issue {
 const TITLES: Record<ErrorCode, string> = {
   figma_signin_required: "Could not sign in to Figma",
   figma_ui_changed: "Figma's page did not look as expected",
+  figma_project_empty: "The Figma Make file has no code yet",
   figma_unreachable: "Could not reach Figma",
   agent_failed: "The AI assistant did not respond",
   agent_signin_required: "The AI assistant is not signed in",

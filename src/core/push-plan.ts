@@ -130,6 +130,8 @@ export function pushMessage(code: string, relativePath?: string, extra?: { folde
       return "Couldn't check Figma for newer changes, so nothing was sent. Try again.";
     case "AUTH_REQUIRED":
       return "You're signed out of Figma. Sign in and try again.";
+    case "PROJECT_EMPTY":
+      return "This Figma Make file has no code yet. Make something in it in Figma first, then send again.";
     case "UI_CHANGED":
     case "SELECTOR_NOT_FOUND":
       return `Figma's page looks different from what this app expects (${file}). Nothing more was changed. Please send a report.`;

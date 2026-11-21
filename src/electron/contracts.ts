@@ -25,6 +25,7 @@ export type Phase = (typeof PHASES)[number];
 export const ERROR_CODES = [
   "figma_signin_required",
   "figma_ui_changed",
+  "figma_project_empty",
   "figma_unreachable",
   "agent_failed",
   "agent_signin_required",
